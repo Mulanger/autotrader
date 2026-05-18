@@ -1,0 +1,737 @@
+:root {
+  color-scheme: light;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f5f7fa;
+  color: #16202d;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --ink: #16202d;
+  --muted: #6f7a88;
+  --line: #dfe5ec;
+  --soft: #eef3f8;
+  --surface: #ffffff;
+  --accent: #1769ff;
+  --accent-soft: #e6efff;
+  --green: #0f8f5f;
+  --green-soft: #e8f8f0;
+  --red: #c43b47;
+  --red-soft: #fff0f1;
+  --amber: #9c6a00;
+  --amber-soft: #fff6d8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+}
+
+button,
+a {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 22px 18px;
+  border-right: 1px solid var(--line);
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brandMark {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.brand strong,
+.brand span {
+  display: block;
+}
+
+.brand span,
+.eyebrow,
+.muted,
+.lastSync,
+.feedMeta,
+.positionRow small,
+.traderTop span,
+.emptyState span {
+  color: var(--muted);
+}
+
+.modeSwitch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.modeSwitch button,
+.tabs button {
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 7px;
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.modeSwitch button.active,
+.tabs button.active {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(22, 32, 45, 0.08);
+}
+
+.sidebarBlock {
+  display: grid;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin: 0;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 760;
+}
+
+.statusLine,
+.riskLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.statusLine {
+  justify-content: flex-start;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c7d0db;
+  flex: 0 0 auto;
+}
+
+.dot.active {
+  background: var(--green);
+  box-shadow: 0 0 0 4px var(--green-soft);
+}
+
+.workspace {
+  min-width: 0;
+  padding: 24px;
+}
+
+.topbar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto auto;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.topbar h1,
+.sectionHead h2,
+.realPanel h2 {
+  margin: 3px 0 0;
+  letter-spacing: 0;
+}
+
+.topbar h1 {
+  font-size: clamp(1.55rem, 3vw, 2.3rem);
+}
+
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+}
+
+.tabs button {
+  padding: 0 12px;
+  text-transform: capitalize;
+}
+
+.topActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.iconButton,
+.textButton {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: 8px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  text-decoration: none;
+}
+
+.iconButton {
+  width: 36px;
+}
+
+.textButton {
+  padding: 0 12px;
+}
+
+.dashboardGrid,
+.realGrid,
+.profitGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 18px;
+  align-items: start;
+}
+
+.mainColumn,
+.sideColumn {
+  display: grid;
+  gap: 18px;
+}
+
+.metricStrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.metric,
+.panel,
+.realPanel {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 8px;
+}
+
+.metric {
+  min-height: 92px;
+  padding: 14px;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
+}
+
+.metric svg {
+  color: var(--accent);
+}
+
+.metric span {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.metric strong {
+  font-size: 1.35rem;
+}
+
+.panel,
+.realPanel {
+  padding: 16px;
+}
+
+.fullPanel {
+  min-height: 70vh;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.sectionHead h2 {
+  font-size: 1rem;
+}
+
+.feedList,
+.positionList,
+.traderList,
+.adapterList,
+.recentTradeStack {
+  display: grid;
+  gap: 10px;
+}
+
+.feedPanel {
+  min-height: 520px;
+}
+
+.feedRow,
+.positionRow,
+.traderCard {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.feedRow {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 190px;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.feedRow.watched {
+  border-color: #b8cdfd;
+  background: #fbfdff;
+}
+
+.marketThumb,
+.avatar {
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.marketThumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+}
+
+.marketThumb img,
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.feedBody {
+  min-width: 0;
+}
+
+.feedTitle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.feedTitle span,
+.feedMeta span {
+  white-space: nowrap;
+}
+
+.feedBody p,
+.positionRow p {
+  margin: 3px 0;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+
+.decisionCell {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  min-width: 0;
+}
+
+.decisionCell small {
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.25;
+}
+
+.decisionPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 740;
+}
+
+.decisionPill.copied {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.decisionPill.skipped {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.decisionPill.ignored {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.positionsPanel {
+  min-height: 280px;
+}
+
+.positionRow {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.positionList.expanded .positionRow {
+  grid-template-columns: 42px minmax(0, 1fr) auto 38px;
+}
+
+.positionNumbers {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.positive {
+  color: var(--green);
+}
+
+.negative {
+  color: var(--red);
+}
+
+.neutral {
+  color: var(--ink);
+}
+
+.traderList {
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+}
+
+.traderList.compact {
+  grid-template-columns: 1fr;
+}
+
+.traderCard {
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.traderTop {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.traderTop strong,
+.traderTop span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.traderTop em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.traderStats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.traderStats span {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.traderStats b {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.miniTrade {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.miniTrade span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.miniTrade em {
+  font-style: normal;
+  text-transform: capitalize;
+}
+
+.realGrid {
+  grid-template-columns: 390px minmax(0, 1fr);
+}
+
+.realPanel {
+  min-height: 420px;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.realPanel p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.lockPlate {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.profitHero {
+  min-height: 310px;
+  display: grid;
+  align-content: space-between;
+}
+
+.profitNumber strong {
+  display: block;
+  font-size: clamp(2.4rem, 8vw, 5rem);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.profitNumber span,
+.profitBreakdown span {
+  color: var(--muted);
+}
+
+.profitBreakdown {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.profitBreakdown span {
+  display: grid;
+  gap: 4px;
+}
+
+.chartPanel {
+  min-height: 310px;
+}
+
+.barChart {
+  min-height: 220px;
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  padding-top: 20px;
+}
+
+.barWrap {
+  flex: 1;
+  min-width: 18px;
+  height: 170px;
+  display: grid;
+  align-items: end;
+  gap: 8px;
+}
+
+.bar {
+  border-radius: 6px 6px 0 0;
+  min-height: 8px;
+}
+
+.positiveBar {
+  background: var(--green);
+}
+
+.negativeBar {
+  background: var(--red);
+}
+
+.barWrap span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  writing-mode: vertical-rl;
+}
+
+.emptyState {
+  min-height: 140px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.emptyState strong {
+  color: var(--ink);
+}
+
+@media (max-width: 1180px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+    display: grid;
+    grid-template-columns: 1fr 260px 1fr;
+  }
+
+  .dashboardGrid,
+  .profitGrid,
+  .realGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .metricStrip {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .traderList {
+    grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 780px) {
+  .workspace,
+  .sidebar {
+    padding: 16px;
+  }
+
+  .sidebar {
+    grid-template-columns: 1fr;
+  }
+
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .tabs,
+  .topActions {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .metricStrip,
+  .traderList,
+  .profitBreakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .feedRow {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .decisionCell {
+    grid-column: 1 / -1;
+    justify-items: start;
+  }
+
+  .decisionCell small {
+    text-align: left;
+  }
+
+  .positionRow,
+  .positionList.expanded .positionRow {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .positionNumbers,
+  .positionList.expanded .iconButton {
+    grid-column: 2;
+    justify-self: start;
+    justify-items: start;
+  }
+}

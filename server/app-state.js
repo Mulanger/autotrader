@@ -1,0 +1,148 @@
+import { WATCHED_WALLETS } from './config.js';
+import { createDemoState, evaluateDemoCopy, markToMarket, updateOpenPositionPrices } from './demo-engine.js';
+import { nowIso, shortWallet } from './format.js';
+
+const watchedSet = new Set(WATCHED_WALLETS.map((wallet) => wallet.toLowerCase()));
+
+export function createAppState() {
+  const traders = {};
+  for (const wallet of WATCHED_WALLETS) {
+    traders[wallet.toLowerCase()] = {
+      wallet: wallet.toLowerCase(),
+      label: shortWallet(wallet),
+      displayName: null,
+      pseudonym: null,
+      profileImage: null,
+      allTimeProfitUsd: null,
+      allTimeWinRatePct: null,
+      allTimePnlTradeCount: null,
+      recentFormResults: [],
+      recentTrades: [],
+      observedCount: 0,
+      copiedCount: 0,
+      skippedCount: 0,
+      lastSeenAt: null,
+    };
+  }
+
+  return {
+    service: {
+      startedAt: nowIso(),
+      streamStatus: 'booting',
+      streamLastMessageAt: null,
+      pollStatus: 'idle',
+      pollLastRunAt: null,
+      lastError: null,
+    },
+    watchedWallets: [...WATCHED_WALLETS],
+    traders,
+    allTrades: [],
+    copiedFeed: [],
+    seenTradeIds: new Set(),
+    demo: createDemoState(),
+    real: {
+      armed: false,
+      adapter: 'not_configured',
+      copiedCount: 0,
+      rejectedCount: 0,
+      notes: [
+        'Real execution is disabled.',
+        'A Polymarket execution adapter, wallet signing, and risk confirmations must be added before live orders are possible.',
+      ],
+    },
+  };
+}
+
+export function ingestTrade(state, trade, source = 'unknown', options = {}) {
+  if (!trade?.id || state.seenTradeIds.has(trade.id)) return null;
+  const copyEligible = options.copyEligible !== false;
+
+  state.seenTradeIds.add(trade.id);
+  updateOpenPositionPrices(state.demo, trade);
+
+  const watched = watchedSet.has(trade.trader.proxyWallet);
+  const event = {
+    id: trade.id,
+    source,
+    watched,
+    trade,
+    copyDecision: null,
+    realDecision: {
+      action: watched ? 'blocked' : 'ignored',
+      reason: watched ? 'Real trading adapter is disabled' : 'Wallet is not in copy list',
+    },
+    observedAt: nowIso(),
+  };
+
+  if (watched) {
+    const trader = state.traders[trade.trader.proxyWallet];
+    trader.displayName = trade.trader.displayName || trader.displayName;
+    trader.pseudonym = trade.trader.pseudonym || trader.pseudonym;
+    trader.profileImage = trade.trader.profileImage || trader.profileImage;
+    trader.observedCount += 1;
+    trader.lastSeenAt = event.observedAt;
+    trader.recentTrades.unshift({ ...trade, status: trade.resolution.status || 'open' });
+    trader.recentTrades = trader.recentTrades.slice(0, 8);
+
+    event.copyDecision = copyEligible
+      ? evaluateDemoCopy(state.demo, trade)
+      : {
+          action: 'observed',
+          reason: 'Historical bootstrap; not copied',
+          at: nowIso(),
+        };
+    if (event.copyDecision?.action === 'copied') trader.copiedCount += 1;
+    if (event.copyDecision?.action === 'skipped') trader.skippedCount += 1;
+    state.copiedFeed.unshift(event);
+    state.copiedFeed = state.copiedFeed.slice(0, 200);
+  } else {
+    event.copyDecision = {
+      action: 'ignored',
+      reason: 'Wallet is not in copy list',
+      at: nowIso(),
+    };
+  }
+
+  state.allTrades.unshift(event);
+  state.allTrades = state.allTrades.slice(0, 300);
+  return event;
+}
+
+export function applyLeaderboardRows(state, rows = []) {
+  for (const row of rows) {
+    const wallet = String(row.proxyWallet || '').toLowerCase();
+    const trader = state.traders[wallet];
+    if (!trader) continue;
+    trader.displayName = row.displayName || trader.displayName;
+    trader.pseudonym = row.pseudonym || trader.pseudonym;
+    trader.profileImage = row.profileImage || trader.profileImage;
+    trader.rank = row.rank ?? trader.rank;
+    trader.allTimeProfitUsd = numberOrNull(row.allTimeProfitUsd);
+    trader.allTimeWinRatePct = numberOrNull(row.allTimeWinRatePct);
+    trader.allTimePnlTradeCount = numberOrNull(row.allTimePnlTradeCount);
+    trader.recentFormResults = Array.isArray(row.recentFormResults) ? row.recentFormResults : trader.recentFormResults;
+  }
+}
+
+export function snapshotState(state) {
+  const demoMetrics = markToMarket(state.demo);
+  return {
+    service: state.service,
+    watchedWallets: state.watchedWallets,
+    traders: Object.values(state.traders),
+    demo: {
+      metrics: demoMetrics,
+      openPositions: state.demo.openPositions,
+      closedPositions: state.demo.closedPositions.slice(0, 50),
+      decisions: state.demo.decisions.slice(0, 100),
+    },
+    real: state.real,
+    allTrades: state.allTrades,
+    copiedFeed: state.copiedFeed,
+  };
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}

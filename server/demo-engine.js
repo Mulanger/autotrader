@@ -1,0 +1,198 @@
+import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from './config.js';
+import { getTradeCurrentPriceCents } from './trade-normalizer.js';
+import { nowIso } from './format.js';
+
+export function createDemoState() {
+  return {
+    startingCapitalUsd: DEMO_STARTING_CAPITAL_USD,
+    cashUsd: DEMO_STARTING_CAPITAL_USD,
+    fixedStakeUsd: DEMO_STAKE_USD,
+    realizedPnlUsd: 0,
+    copiedCount: 0,
+    skippedCount: 0,
+    totalNotionalCopiedUsd: 0,
+    openPositions: [],
+    closedPositions: [],
+    decisions: [],
+    copiedSourceTradeIds: new Set(),
+  };
+}
+
+export function evaluateDemoCopy(demo, trade) {
+  if (!trade || demo.copiedSourceTradeIds.has(trade.id)) {
+    return null;
+  }
+
+  const side = trade.side;
+  if (side === 'BUY') return copyBuy(demo, trade);
+  if (side === 'SELL') return copySell(demo, trade);
+
+  return recordDecision(demo, trade, {
+    action: 'skipped',
+    reason: `Unsupported side ${side}`,
+  });
+}
+
+export function markToMarket(demo) {
+  const openValueUsd = demo.openPositions.reduce((sum, position) => {
+    return sum + position.shares * (position.currentPriceCents / 100);
+  }, 0);
+
+  const unrealizedPnlUsd = demo.openPositions.reduce((sum, position) => {
+    return sum + (position.currentPriceCents - position.entryPriceCents) / 100 * position.shares;
+  }, 0);
+
+  return {
+    cashUsd: demo.cashUsd,
+    startingCapitalUsd: demo.startingCapitalUsd,
+    equityUsd: demo.cashUsd + openValueUsd,
+    openValueUsd,
+    realizedPnlUsd: demo.realizedPnlUsd,
+    unrealizedPnlUsd,
+    totalPnlUsd: demo.realizedPnlUsd + unrealizedPnlUsd,
+    copiedCount: demo.copiedCount,
+    skippedCount: demo.skippedCount,
+    totalNotionalCopiedUsd: demo.totalNotionalCopiedUsd,
+    fixedStakeUsd: demo.fixedStakeUsd,
+    openPositionCount: demo.openPositions.length,
+    closedPositionCount: demo.closedPositions.length,
+  };
+}
+
+export function updateOpenPositionPrices(demo, trade) {
+  const price = getTradeCurrentPriceCents(trade);
+  if (!Number.isFinite(price)) return;
+
+  for (const position of demo.openPositions) {
+    if (position.marketSlug === trade.market.slug && sameOutcome(position.outcome, trade.outcome)) {
+      position.currentPriceCents = price;
+      position.updatedAt = nowIso();
+      position.unrealizedPnlUsd = (position.currentPriceCents - position.entryPriceCents) / 100 * position.shares;
+      position.unrealizedPnlPct = position.entryPriceCents
+        ? ((position.currentPriceCents - position.entryPriceCents) / position.entryPriceCents) * 100
+        : 0;
+    }
+  }
+}
+
+function copyBuy(demo, trade) {
+  const price = getTradeCurrentPriceCents(trade);
+  if (!Number.isFinite(price) || price <= 0) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'No usable execution price',
+    });
+  }
+
+  if (demo.cashUsd < demo.fixedStakeUsd) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'Demo cash below fixed stake',
+    });
+  }
+
+  const shares = demo.fixedStakeUsd / (price / 100);
+  const position = {
+    id: `demo-${trade.id}`,
+    sourceTradeId: trade.id,
+    traderWallet: trade.trader.proxyWallet,
+    traderName: trade.trader.displayName || trade.trader.pseudonym || trade.trader.proxyWallet,
+    marketSlug: trade.market.slug,
+    marketTitle: trade.market.title,
+    marketIcon: trade.market.icon,
+    polymarketUrl: trade.market.polymarketUrl,
+    side: trade.side,
+    outcome: trade.outcome,
+    stakeUsd: demo.fixedStakeUsd,
+    shares,
+    entryPriceCents: price,
+    currentPriceCents: price,
+    openedAt: new Date(trade.timestamp * 1000).toISOString(),
+    updatedAt: nowIso(),
+    status: 'open',
+    unrealizedPnlUsd: 0,
+    unrealizedPnlPct: 0,
+  };
+
+  demo.cashUsd -= demo.fixedStakeUsd;
+  demo.copiedCount += 1;
+  demo.totalNotionalCopiedUsd += demo.fixedStakeUsd;
+  demo.openPositions.unshift(position);
+  demo.copiedSourceTradeIds.add(trade.id);
+
+  return recordDecision(demo, trade, {
+    action: 'copied',
+    reason: `Copied BUY with fixed $${demo.fixedStakeUsd} demo stake`,
+    copyId: position.id,
+  });
+}
+
+function copySell(demo, trade) {
+  const price = getTradeCurrentPriceCents(trade);
+  if (!Number.isFinite(price) || price <= 0) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'No usable sell price',
+    });
+  }
+
+  const index = demo.openPositions.findIndex((position) => {
+    return position.marketSlug === trade.market.slug && sameOutcome(position.outcome, trade.outcome);
+  });
+
+  if (index === -1) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'SELL observed but demo has no matching inventory',
+    });
+  }
+
+  const [position] = demo.openPositions.splice(index, 1);
+  const exitValueUsd = position.shares * (price / 100);
+  const pnlUsd = exitValueUsd - position.stakeUsd;
+  const closed = {
+    ...position,
+    status: pnlUsd >= 0 ? 'win' : 'loss',
+    exitPriceCents: price,
+    exitValueUsd,
+    realizedPnlUsd: pnlUsd,
+    closedAt: new Date(trade.timestamp * 1000).toISOString(),
+    closeSourceTradeId: trade.id,
+  };
+
+  demo.cashUsd += exitValueUsd;
+  demo.realizedPnlUsd += pnlUsd;
+  demo.closedPositions.unshift(closed);
+  demo.copiedCount += 1;
+  demo.copiedSourceTradeIds.add(trade.id);
+
+  return recordDecision(demo, trade, {
+    action: 'copied',
+    reason: `Copied SELL as close: ${pnlUsd >= 0 ? 'profit' : 'loss'} ${formatSignedUsd(pnlUsd)}`,
+    copyId: closed.id,
+  });
+}
+
+function recordDecision(demo, trade, decision) {
+  if (decision.action === 'skipped') demo.skippedCount += 1;
+  const entry = {
+    id: `${trade.id}-${decision.action}`,
+    tradeId: trade.id,
+    action: decision.action,
+    reason: decision.reason,
+    copyId: decision.copyId || null,
+    at: nowIso(),
+  };
+  demo.decisions.unshift(entry);
+  demo.decisions = demo.decisions.slice(0, 200);
+  return entry;
+}
+
+function sameOutcome(a, b) {
+  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+function formatSignedUsd(value) {
+  const prefix = value >= 0 ? '+' : '-';
+  return `${prefix}$${Math.abs(value).toFixed(2)}`;
+}
