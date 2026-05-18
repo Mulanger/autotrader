@@ -36,7 +36,7 @@ const WATCHED_WALLETS = [
 ];
 
 function App() {
-  const { state, connected, refresh, resetDemo } = useAutotraderState();
+  const { state, connected, refresh } = useAutotraderState();
   const [mode, setMode] = React.useState('demo');
   const [tab, setTab] = React.useState('overview');
 
@@ -52,7 +52,6 @@ function App() {
           tab={tab}
           setTab={setTab}
           refresh={refresh}
-          resetDemo={resetDemo}
           service={data.service}
         />
 
@@ -72,11 +71,6 @@ function useAutotraderState() {
 
   const refresh = React.useCallback(async () => {
     const response = await fetch(`${API_BASE}/api/state`);
-    setState(await response.json());
-  }, []);
-
-  const resetDemo = React.useCallback(async () => {
-    const response = await fetch(`${API_BASE}/api/demo/reset`, { method: 'POST' });
     setState(await response.json());
   }, []);
 
@@ -130,7 +124,7 @@ function useAutotraderState() {
     };
   }, [refresh]);
 
-  return { state, connected, refresh, resetDemo };
+  return { state, connected, refresh };
 }
 
 function Sidebar({ mode, setMode, connected, service }) {
@@ -176,7 +170,7 @@ function Sidebar({ mode, setMode, connected, service }) {
   );
 }
 
-function Topbar({ mode, tab, setTab, refresh, resetDemo, service }) {
+function Topbar({ mode, tab, setTab, refresh, service }) {
   const tabs = ['overview', 'profit', 'positions', 'traders'];
   return (
     <header className="topbar">
@@ -194,7 +188,6 @@ function Topbar({ mode, tab, setTab, refresh, resetDemo, service }) {
       <div className="topActions">
         <span className="lastSync">Last poll {formatTimeAgo(service?.pollLastRunAt)}</span>
         <button className="iconButton" onClick={refresh} aria-label="Refresh state"><RefreshCcw size={16} /></button>
-        {mode === 'demo' && <button className="textButton" onClick={resetDemo}>Reset demo</button>}
       </div>
     </header>
   );

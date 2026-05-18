@@ -28,18 +28,6 @@ app.get('/api/state', (_request, response) => {
   response.json(snapshotState(state));
 });
 
-app.post('/api/demo/reset', (_request, response) => {
-  const fresh = createAppState();
-  state.demo = fresh.demo;
-  state.copiedFeed = [];
-  for (const trader of Object.values(state.traders)) {
-    trader.copiedCount = 0;
-    trader.skippedCount = 0;
-  }
-  broadcast();
-  response.json(snapshotState(state));
-});
-
 if (existsSync(indexPath)) {
   app.use(express.static(distPath, {
     index: false,
