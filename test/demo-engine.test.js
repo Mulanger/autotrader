@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDemoState, evaluateDemoCopy } from '../server/demo-engine.js';
+import { createDemoState, evaluateDemoCopy, settleDemoPosition } from '../server/demo-engine.js';
 
 function trade(overrides = {}) {
   return {
@@ -47,25 +47,48 @@ describe('demo copy engine', () => {
     expect(demo.cashUsd).toBe(90);
   });
 
-  it('closes matching inventory on SELL and realizes pnl', () => {
+  it('does not close demo inventory on SELL because settlement waits for resolution', () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, trade({ id: 'open', priceCents: 50, yesPriceCents: 50 }));
-    const close = evaluateDemoCopy(demo, trade({ id: 'close', side: 'SELL', priceCents: 75, yesPriceCents: 75 }));
+    const sell = evaluateDemoCopy(demo, trade({ id: 'close', side: 'SELL', priceCents: 75, yesPriceCents: 75 }));
 
-    expect(close.action).toBe('copied');
-    expect(demo.openPositions).toHaveLength(0);
-    expect(demo.closedPositions).toHaveLength(1);
-    expect(demo.closedPositions[0].status).toBe('win');
-    expect(demo.realizedPnlUsd).toBeCloseTo(5, 5);
-    expect(demo.cashUsd).toBeCloseTo(105, 5);
+    expect(sell.action).toBe('skipped');
+    expect(sell.reason).toMatch(/official market resolution/i);
+    expect(demo.openPositions).toHaveLength(1);
+    expect(demo.closedPositions).toHaveLength(0);
+    expect(demo.cashUsd).toBe(90);
   });
 
-  it('skips SELL when there is no matching inventory', () => {
+  it('skips SELL without placing a demo close order', () => {
     const demo = createDemoState();
     const decision = evaluateDemoCopy(demo, trade({ side: 'SELL' }));
 
     expect(decision.action).toBe('skipped');
-    expect(decision.reason).toMatch(/no matching inventory/i);
+    expect(decision.reason).toMatch(/resolution/i);
     expect(demo.skippedCount).toBe(1);
+  });
+
+  it('settles an open position from an official win resolution', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({ id: 'open', priceCents: 50, yesPriceCents: 50 }));
+    const closed = settleDemoPosition(demo, demo.openPositions[0].id, {
+      status: 'win',
+      exitPriceCents: 100,
+      exitValueUsd: 20,
+      realizedPnlUsd: 10,
+      resolvedAt: '2026-05-18T12:00:00.000Z',
+      resolutionStatus: 'resolved_win',
+      winningOutcome: 'YES',
+      settlementSource: 'test',
+      sourceTradeId: 'open',
+      reason: 'Official market resolution: won +$10.00',
+    });
+
+    expect(closed.status).toBe('win');
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.closedPositions).toHaveLength(1);
+    expect(demo.cashUsd).toBe(110);
+    expect(demo.realizedPnlUsd).toBe(10);
+    expect(demo.decisions[0].action).toBe('settled');
   });
 });

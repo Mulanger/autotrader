@@ -1,13 +1,15 @@
 import WebSocket from 'ws';
-import { POLL_INTERVAL_MS, POLYWHALE_WS_URL } from './config.js';
+import { POLL_INTERVAL_MS, POLYWHALE_WS_URL, RESOLUTION_POLL_INTERVAL_MS } from './config.js';
 import { applyLeaderboardRows, ingestTrade } from './app-state.js';
-import { fetchBootstrapTrades, fetchProfitLeaderboard, fetchRecentWhales } from './polywhale-client.js';
+import { fetchBootstrapTrades, fetchProfitLeaderboard, fetchRecentWhales, fetchWhaleTrade } from './polywhale-client.js';
+import { reconcileOpenDemoPositions } from './resolution-engine.js';
 import { normalizeStreamMessage } from './trade-normalizer.js';
 import { nowIso } from './format.js';
 
 export function startIngestion(state, broadcast, storage) {
   let socket = null;
   let reconnectTimer = null;
+  let resolutionRunning = false;
 
   async function bootstrap() {
     try {
@@ -101,8 +103,33 @@ export function startIngestion(state, broadcast, storage) {
     }
   }
 
+  async function reconcileResolutions() {
+    if (resolutionRunning) return;
+    resolutionRunning = true;
+    try {
+      state.service.resolutionStatus = 'polling';
+      broadcast();
+      const result = await reconcileOpenDemoPositions(state, fetchWhaleTrade);
+      state.service.resolutionStatus = 'ready';
+      state.service.resolutionLastRunAt = nowIso();
+      state.service.resolutionLastCheckedCount = result.checked;
+      if (result.settled.length) state.service.resolutionLastSettledAt = nowIso();
+      if (result.errors.length) state.service.lastError = `Resolution checks failed: ${result.errors.slice(0, 2).join('; ')}`;
+      if (result.changed) storage.queueSave(state);
+      broadcast();
+    } catch (error) {
+      state.service.resolutionStatus = 'error';
+      state.service.lastError = error.message;
+      broadcast();
+    } finally {
+      resolutionRunning = false;
+    }
+  }
+
   bootstrap().finally(() => {
     connect();
     setInterval(poll, POLL_INTERVAL_MS);
+    setInterval(reconcileResolutions, RESOLUTION_POLL_INTERVAL_MS);
+    reconcileResolutions();
   });
 }

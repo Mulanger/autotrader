@@ -25,7 +25,12 @@ export function evaluateDemoCopy(demo, trade) {
 
   const side = trade.side;
   if (side === 'BUY') return copyBuy(demo, trade);
-  if (side === 'SELL') return copySell(demo, trade);
+  if (side === 'SELL') {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'SELL observed; demo positions settle from official market resolution',
+    });
+  }
 
   return recordDecision(demo, trade, {
     action: 'skipped',
@@ -122,55 +127,49 @@ function copyBuy(demo, trade) {
 
   return recordDecision(demo, trade, {
     action: 'copied',
-    reason: `Copied BUY with fixed $${demo.fixedStakeUsd} demo stake`,
+    reason: `Copied BUY with fixed $${demo.fixedStakeUsd} demo stake; awaiting market resolution`,
     copyId: position.id,
   });
 }
 
-function copySell(demo, trade) {
-  const price = getTradeCurrentPriceCents(trade);
-  if (!Number.isFinite(price) || price <= 0) {
-    return recordDecision(demo, trade, {
-      action: 'skipped',
-      reason: 'No usable sell price',
-    });
-  }
-
-  const index = demo.openPositions.findIndex((position) => {
-    return position.marketSlug === trade.market.slug && sameOutcome(position.outcome, trade.outcome);
-  });
-
-  if (index === -1) {
-    return recordDecision(demo, trade, {
-      action: 'skipped',
-      reason: 'SELL observed but demo has no matching inventory',
-    });
-  }
+export function settleDemoPosition(demo, positionId, settlement) {
+  const index = demo.openPositions.findIndex((position) => position.id === positionId);
+  if (index === -1) return null;
 
   const [position] = demo.openPositions.splice(index, 1);
-  const exitValueUsd = position.shares * (price / 100);
-  const pnlUsd = exitValueUsd - position.stakeUsd;
+  const exitValueUsd = settlement.exitValueUsd;
+  const realizedPnlUsd = settlement.realizedPnlUsd;
   const closed = {
     ...position,
-    status: pnlUsd >= 0 ? 'win' : 'loss',
-    exitPriceCents: price,
+    status: settlement.status,
+    exitPriceCents: settlement.exitPriceCents,
     exitValueUsd,
-    realizedPnlUsd: pnlUsd,
-    closedAt: new Date(trade.timestamp * 1000).toISOString(),
-    closeSourceTradeId: trade.id,
+    payoutUsd: exitValueUsd,
+    realizedPnlUsd,
+    closedAt: settlement.resolvedAt || nowIso(),
+    resolvedAt: settlement.resolvedAt || nowIso(),
+    closeSourceTradeId: settlement.sourceTradeId || position.sourceTradeId,
+    resolutionStatus: settlement.resolutionStatus || settlement.status,
+    winningOutcome: settlement.winningOutcome || null,
+    settlementSource: settlement.settlementSource || 'resolution',
+    settlementReason: settlement.reason || null,
+    unrealizedPnlUsd: 0,
+    unrealizedPnlPct: 0,
   };
 
   demo.cashUsd += exitValueUsd;
-  demo.realizedPnlUsd += pnlUsd;
+  demo.realizedPnlUsd += realizedPnlUsd;
   demo.closedPositions.unshift(closed);
-  demo.copiedCount += 1;
-  demo.copiedSourceTradeIds.add(trade.id);
+  demo.closedPositions = demo.closedPositions.slice(0, 500);
 
-  return recordDecision(demo, trade, {
-    action: 'copied',
-    reason: `Copied SELL as close: ${pnlUsd >= 0 ? 'profit' : 'loss'} ${formatSignedUsd(pnlUsd)}`,
+  recordDecision(demo, { id: position.sourceTradeId }, {
+    action: 'settled',
+    reason: settlement.reason || `Settled from official resolution: ${formatSignedUsd(realizedPnlUsd)}`,
     copyId: closed.id,
+    at: closed.closedAt,
   });
+
+  return closed;
 }
 
 function recordDecision(demo, trade, decision) {
@@ -181,7 +180,7 @@ function recordDecision(demo, trade, decision) {
     action: decision.action,
     reason: decision.reason,
     copyId: decision.copyId || null,
-    at: nowIso(),
+    at: decision.at || nowIso(),
   };
   demo.decisions.unshift(entry);
   demo.decisions = demo.decisions.slice(0, 200);

@@ -28,6 +28,21 @@ export async function fetchProfitLeaderboard(limit = 100) {
   return Array.isArray(json.items) ? json.items : [];
 }
 
+export async function fetchWhaleTrade(tradeId) {
+  if (!tradeId) return null;
+
+  try {
+    const url = new URL(`/v1/whales/${encodeURIComponent(tradeId)}`, POLYWHALE_API_BASE_URL);
+    return normalizeTrade(await fetchJson(url));
+  } catch (error) {
+    const detailUrl = new URL(`/v1/whales/${encodeURIComponent(tradeId)}/detail`, POLYWHALE_API_BASE_URL);
+    const detail = await fetchJson(detailUrl);
+    const trade = detail.trade || detail.item || detail;
+    if (detail.market && trade.market) trade.market = { ...trade.market, ...detail.market };
+    return normalizeTrade(trade);
+  }
+}
+
 export async function fetchBootstrapTrades() {
   const [recent, watched] = await Promise.all([
     fetchRecentWhales(100),

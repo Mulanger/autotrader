@@ -3,7 +3,7 @@ import { serializeDurableState } from './app-state.js';
 import { nowIso } from './format.js';
 
 const STATE_KEY = 'default';
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export async function createStorage(state) {
   const info = state.service.storage;
@@ -194,11 +194,20 @@ async function migrate(pool) {
       exit_price_cents numeric,
       exit_value_usd numeric,
       realized_pnl_usd numeric,
+      resolution_status text,
+      winning_outcome text,
+      resolved_at timestamptz,
+      settlement_source text,
       opened_at timestamptz,
       closed_at timestamptz,
       payload jsonb not null,
       updated_at timestamptz not null default now()
     );
+
+    alter table demo_positions add column if not exists resolution_status text;
+    alter table demo_positions add column if not exists winning_outcome text;
+    alter table demo_positions add column if not exists resolved_at timestamptz;
+    alter table demo_positions add column if not exists settlement_source text;
 
     create index if not exists demo_positions_status_idx on demo_positions (status);
     create index if not exists demo_positions_source_trade_id_idx on demo_positions (source_trade_id);
@@ -372,9 +381,10 @@ async function upsertDemoPosition(client, position) {
       insert into demo_positions (
         id, source_trade_id, close_source_trade_id, trader_wallet, market_slug, market_title, outcome, status,
         stake_usd, shares, entry_price_cents, current_price_cents, exit_price_cents, exit_value_usd,
-        realized_pnl_usd, opened_at, closed_at, payload, updated_at
+        realized_pnl_usd, resolution_status, winning_outcome, resolved_at, settlement_source,
+        opened_at, closed_at, payload, updated_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, now())
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22::jsonb, now())
       on conflict (id)
       do update set
         close_source_trade_id = excluded.close_source_trade_id,
@@ -383,6 +393,10 @@ async function upsertDemoPosition(client, position) {
         exit_price_cents = excluded.exit_price_cents,
         exit_value_usd = excluded.exit_value_usd,
         realized_pnl_usd = excluded.realized_pnl_usd,
+        resolution_status = excluded.resolution_status,
+        winning_outcome = excluded.winning_outcome,
+        resolved_at = excluded.resolved_at,
+        settlement_source = excluded.settlement_source,
         closed_at = excluded.closed_at,
         payload = excluded.payload,
         updated_at = now()
@@ -403,6 +417,10 @@ async function upsertDemoPosition(client, position) {
       numberOrNull(position.exitPriceCents),
       numberOrNull(position.exitValueUsd),
       numberOrNull(position.realizedPnlUsd),
+      position.resolutionStatus || null,
+      position.winningOutcome || null,
+      dateOrNull(position.resolvedAt),
+      position.settlementSource || null,
       dateOrNull(position.openedAt),
       dateOrNull(position.closedAt),
       JSON.stringify(position),

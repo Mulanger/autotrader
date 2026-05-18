@@ -32,6 +32,10 @@ export function createAppState() {
       streamLastMessageAt: null,
       pollStatus: 'idle',
       pollLastRunAt: null,
+      resolutionStatus: 'idle',
+      resolutionLastRunAt: null,
+      resolutionLastSettledAt: null,
+      resolutionLastCheckedCount: 0,
       lastError: null,
       storage: {
         mode: 'memory',

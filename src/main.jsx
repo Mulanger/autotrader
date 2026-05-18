@@ -154,6 +154,10 @@ function Sidebar({ mode, setMode, connected, service, watchedWalletCount }) {
           label={`REST poll ${service?.pollStatus || 'idle'}`}
         />
         <StatusLine
+          active={['ready', 'polling', 'idle'].includes(service?.resolutionStatus)}
+          label={`Resolution tracker ${service?.resolutionStatus || 'idle'}`}
+        />
+        <StatusLine
           active={service?.storage?.durable && ['ready', 'saving'].includes(service?.storage?.status)}
           label={storageLabel(service?.storage)}
         />
@@ -362,7 +366,7 @@ function PositionsView({ positions }) {
 
 function PositionList({ positions, expanded = false }) {
   if (!positions.length) {
-    return <EmptyState title="No open demo positions" text="The next watched BUY trade will open a $10 simulated position." />;
+    return <EmptyState title="No open demo positions" text="The next watched BUY trade will open a $10 simulated position and wait for official resolution." />;
   }
 
   return (
@@ -377,7 +381,9 @@ function PositionList({ positions, expanded = false }) {
             <div>
               <strong>{position.outcome}</strong>
               <p>{position.marketTitle}</p>
-              <small>{shortWallet(position.traderWallet)} - entry {position.entryPriceCents.toFixed(1)}c</small>
+              <small>
+                {shortWallet(position.traderWallet)} - entry {position.entryPriceCents.toFixed(1)}c - awaiting resolution
+              </small>
             </div>
             <div className="positionNumbers">
               <strong>{position.currentPriceCents.toFixed(1)}c</strong>
@@ -439,8 +445,8 @@ function TraderCard({ trader, compact }) {
             <div className="miniTrade" key={trade.id}>
               <span>{trade.side} {trade.outcome}</span>
               <strong>{usd(trade.usdSize)}</strong>
-              <em className={trade.status === 'win' ? 'positive' : trade.status === 'loss' ? 'negative' : ''}>
-                {trade.status || 'open'}
+              <em className={statusTone(trade.status)}>
+                {statusLabel(trade.status)}
               </em>
             </div>
           ))}
@@ -459,7 +465,7 @@ function ProfitView({ metrics, closedPositions }) {
         <p className="eyebrow">Demo performance</p>
         <div className="profitNumber">
           <strong className={pnlTone(metrics.totalPnlUsd)}>{signedUsd(metrics.totalPnlUsd)}</strong>
-          <span>Total P/L on {metrics.copiedCount} copied actions</span>
+          <span>Total P/L on {metrics.copiedCount} copied demo positions</span>
         </div>
         <div className="profitBreakdown">
           <span>Realized <b className={pnlTone(metrics.realizedPnlUsd)}>{signedUsd(metrics.realizedPnlUsd)}</b></span>
@@ -481,7 +487,7 @@ function ProfitView({ metrics, closedPositions }) {
               <span>{signedUsd(bar.value)}</span>
             </div>
           ))}
-          {!bars.length && <EmptyState title="No closed demo trades" text="SELL copies will close matching demo positions and appear here." />}
+          {!bars.length && <EmptyState title="No closed demo trades" text="Official market resolutions will settle demo positions and appear here." />}
         </div>
       </section>
       <section className="panel historyPanel">
@@ -499,7 +505,7 @@ function ProfitView({ metrics, closedPositions }) {
 
 function ClosedHistory({ positions }) {
   if (!positions.length) {
-    return <EmptyState title="No closed trades yet" text="Closed copied trades will persist here once Postgres storage is connected." />;
+    return <EmptyState title="No closed trades yet" text="Resolved copied trades will persist here once the watched markets finish." />;
   }
 
   return (
@@ -509,10 +515,15 @@ function ClosedHistory({ positions }) {
           <div>
             <strong>{position.outcome}</strong>
             <p>{position.marketTitle}</p>
-            <small>{shortWallet(position.traderWallet)} - closed {formatTimeAgo(position.closedAt)}</small>
+            <small>
+              {shortWallet(position.traderWallet)} - resolved {formatTimeAgo(position.resolvedAt || position.closedAt)}
+              {position.winningOutcome ? ` - winner ${position.winningOutcome}` : ''}
+            </small>
           </div>
           <div>
-            <span className={position.status === 'win' ? 'positive' : 'negative'}>{position.status}</span>
+            <span className={position.status === 'win' ? 'positive' : position.status === 'loss' ? 'negative' : ''}>
+              {statusLabel(position.status)}
+            </span>
             <strong className={pnlTone(position.realizedPnlUsd)}>{signedUsd(position.realizedPnlUsd)}</strong>
           </div>
         </article>
@@ -608,6 +619,23 @@ function pnlTone(value) {
   if (number > 0.005) return 'positive';
   if (number < -0.005) return 'negative';
   return 'neutral';
+}
+
+function statusLabel(status) {
+  const value = String(status || 'open').toLowerCase();
+  if (value === 'resolved_win' || value === 'win') return 'win';
+  if (value === 'resolved_loss' || value === 'loss') return 'loss';
+  if (value === 'invalid') return 'refunded';
+  if (value === 'resolved') return 'resolved';
+  if (value === 'closed') return 'closed';
+  return 'open';
+}
+
+function statusTone(status) {
+  const value = String(status || '').toLowerCase();
+  if (value === 'resolved_win' || value === 'win') return 'positive';
+  if (value === 'resolved_loss' || value === 'loss') return 'negative';
+  return '';
 }
 
 function shortWallet(wallet = '') {

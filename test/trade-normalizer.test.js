@@ -51,4 +51,29 @@ describe('trade normalizer', () => {
     expect(getTradeCurrentPriceCents(yes)).toBe(45);
     expect(getTradeCurrentPriceCents(no)).toBe(55);
   });
+
+  it('normalizes nested resolution blocks from the whale API', () => {
+    const normalized = normalizeTrade({
+      id: 'resolved',
+      side: 'BUY',
+      outcome: 'YES',
+      priceCents: 50,
+      market: { title: 'Market' },
+      trader: { proxyWallet: '0x1111111111111111111111111111111111111111' },
+      resolution: {
+        status: 'resolved_win',
+        winningOutcome: 'YES',
+        payoutUsd: 20,
+        pnlUsd: 10,
+        resolvedAt: 1_779_120_000,
+        closed: true,
+      },
+    });
+
+    expect(normalized.resolution.status).toBe('resolved_win');
+    expect(normalized.resolution.winningOutcome).toBe('YES');
+    expect(normalized.resolution.pnlUsd).toBe(10);
+    expect(normalized.resolution.closed).toBe(true);
+    expect(normalized.resolution.resolvedAt).toBe('2026-05-18T16:00:00.000Z');
+  });
 });

@@ -12,6 +12,8 @@ export const HOST = process.env.HOST || '0.0.0.0';
 
 export const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS || 20_000);
 
+export const RESOLUTION_POLL_INTERVAL_MS = Number(process.env.RESOLUTION_POLL_INTERVAL_MS || 60_000);
+
 export const DEMO_STARTING_CAPITAL_USD = 100;
 
 export const DEMO_STAKE_USD = 10;

@@ -69,15 +69,83 @@ export function getTradeCurrentPriceCents(trade) {
 }
 
 function normalizeResolution(input) {
-  const status = String(input.status || input.resolutionStatus || input.outcomeStatus || '').toLowerCase();
-  const pnlUsd = numberOrNull(input.pnlUsd ?? input.profitUsd ?? input.realizedPnlUsd);
-  if (status.includes('resolved_win') || status === 'win') return { status: 'win', pnlUsd };
-  if (status.includes('resolved_loss') || status === 'loss') return { status: 'loss', pnlUsd };
-  if (pnlUsd !== null) return { status: pnlUsd >= 0 ? 'win' : 'loss', pnlUsd };
-  return { status: 'open', pnlUsd: null };
+  const source = firstObject(input.resolution, input.outcomeResolution, input.market?.resolution, input.outcomeStatus) || {};
+  const rawStatus = String(
+    source.status ||
+      input.status ||
+      input.resolutionStatus ||
+      input.outcomeStatus ||
+      ''
+  ).toLowerCase();
+  const winningOutcome = stringOrNull(
+    source.winningOutcome ??
+      source.winner ??
+      input.winningOutcome ??
+      input.market?.winningOutcome
+  );
+  const payoutUsd = numberOrNull(source.payoutUsd ?? input.payoutUsd);
+  const pnlUsd = numberOrNull(source.pnlUsd ?? input.pnlUsd ?? input.profitUsd ?? input.realizedPnlUsd);
+  const resolvedAt = isoTimeOrNull(source.resolvedAt ?? input.resolvedAt ?? input.closedAt ?? input.market?.resolvedAt);
+  const closed = Boolean(source.closed) || isClosedStatus(rawStatus) || Boolean(resolvedAt && rawStatus !== 'open');
+  const status = normalizeResolutionStatus(rawStatus, { pnlUsd, closed, winningOutcome });
+
+  return {
+    status,
+    rawStatus: rawStatus || null,
+    winningOutcome,
+    payoutUsd,
+    pnlUsd,
+    resolvedAt,
+    closed: status !== 'open' || closed,
+  };
 }
 
 function numberOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function firstObject(...values) {
+  return values.find((value) => value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function stringOrNull(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function normalizeResolutionStatus(rawStatus, { pnlUsd, closed, winningOutcome }) {
+  if (rawStatus.includes('invalid') || rawStatus.includes('void') || rawStatus.includes('cancel')) {
+    return 'invalid';
+  }
+  if (rawStatus.includes('resolved_win') || rawStatus === 'win' || rawStatus === 'won') {
+    return 'resolved_win';
+  }
+  if (rawStatus.includes('resolved_loss') || rawStatus === 'loss' || rawStatus === 'lost') {
+    return 'resolved_loss';
+  }
+  if (rawStatus.includes('resolved')) return 'resolved';
+  if (rawStatus.includes('closed')) return 'closed';
+  if (pnlUsd !== null) return pnlUsd >= 0 ? 'resolved_win' : 'resolved_loss';
+  if (closed && winningOutcome) return 'resolved';
+  if (closed) return 'closed';
+  return 'open';
+}
+
+function isClosedStatus(status) {
+  return ['closed', 'resolved', 'resolved_win', 'resolved_loss', 'invalid'].some((closedStatus) => {
+    return status.includes(closedStatus);
+  });
+}
+
+function isoTimeOrNull(value) {
+  if (!value) return null;
+  let millis;
+  if (typeof value === 'number') {
+    millis = value > 10_000_000_000 ? value : value * 1000;
+  } else {
+    millis = Date.parse(value);
+  }
+  return Number.isFinite(millis) ? new Date(millis).toISOString() : null;
 }

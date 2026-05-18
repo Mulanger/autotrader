@@ -31,7 +31,8 @@ The dashboard is a demo/paper-trading system right now:
 - Only watched wallets can appear in the main copy-list tape.
 - Historical trades loaded during startup are displayed as context but are not copied.
 - New eligible watched `BUY` trades after service startup can open demo positions.
-- Watched `SELL` trades only close a demo position when matching inventory exists.
+- Watched `SELL` trades are observed but do not close demo positions.
+- Open demo positions are settled by a separate resolution loop after Polywhale reports the official market outcome.
 
 ## Watched Wallets
 
@@ -110,6 +111,7 @@ Production/Railway:
 - `HOST`: bind host. Defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
+- `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
 
@@ -151,8 +153,10 @@ The primary durable model is normalized. `autotrader_snapshots` keeps a compact 
 7. Every normalized trade is added to the backend state once by `trade.id`.
 8. If the trade wallet is watched, it enters `copiedFeed`; otherwise it stays out of the main tape.
 9. Demo copy rules run only for watched events when copy eligibility is true.
-10. After meaningful state changes, backend queues a normalized Postgres save and broadcasts the updated state to connected browsers.
-11. On Railway shutdown, the server attempts one final storage flush before closing the pool.
+10. A second backend reconciliation loop checks every open demo position by source trade id every `RESOLUTION_POLL_INTERVAL_MS`.
+11. When Polywhale returns `resolved_win`, `resolved_loss`, or `invalid`, the demo position is settled exactly once and moved into closed history.
+12. After meaningful state changes, backend queues a normalized Postgres save and broadcasts the updated state to connected browsers.
+13. On Railway shutdown, the server attempts one final storage flush before closing the pool.
 
 ## API Endpoints
 
@@ -166,6 +170,8 @@ Polywhale upstream endpoints used:
 
 - `GET /v1/whales?limit=100&minUsd=10000`
 - `GET /v1/whales?limit=...&minUsd=10000&traderWallet=<wallet>`
+- `GET /v1/whales/<tradeId>`
+- `GET /v1/whales/<tradeId>/detail` as a fallback for resolution/detail refreshes.
 - `GET /v1/leaderboard?sort=profit&limit=100`
 - `WS /v1/whales/stream`
 
@@ -180,14 +186,19 @@ Implemented in `server/demo-engine.js`.
   - Reduces cash by `$10`.
   - Adds the source trade id to `copiedSourceTradeIds`.
 - `SELL`:
-  - Requires a usable positive price.
-  - Searches for a matching open position by market slug and outcome.
-  - If found, closes the position, realizes P/L, and returns cash.
-  - If no matching inventory exists, logs a skipped decision.
+  - Is recorded as skipped for demo execution.
+  - Does not close paper inventory.
+  - This is intentional: the demo follows the source BUY into the market and waits for the final market outcome.
+- Resolution settlement:
+  - Runs from `server/resolution-engine.js`.
+  - Polls every open demo position's `sourceTradeId`.
+  - `resolved_win`: pays `$1` per copied share and records realized profit.
+  - `resolved_loss`: pays `$0` and records the fixed stake as realized loss.
+  - `invalid`: refunds the fixed stake and records zero realized P/L.
+  - Moves settled positions from `openPositions` to `closedPositions`.
+  - Writes settlement metadata: `resolutionStatus`, `winningOutcome`, `resolvedAt`, and `settlementSource`.
 - Any unsupported side is skipped.
 - Historical startup rows are never copied.
-
-Important current limitation: the demo does not yet resolve positions from market resolution data. It only marks closed win/loss when a watched `SELL` closes demo inventory. Future work should reconcile open demo positions against resolved market outcomes.
 
 ## Dashboard Views
 
@@ -215,6 +226,7 @@ Sidebar statuses:
 - `Dashboard live updates online`: browser is connected to `/events`.
 - `Whale stream connected`: backend websocket to Polywhale is open.
 - `REST poll ready/polling`: REST fallback is healthy. `polling` is active and should be green.
+- `Resolution tracker ready/polling`: open demo positions are being checked for official market outcomes.
 - `Storage ready/saving`: Postgres persistence is active.
 - `Storage postgres_error`: `DATABASE_URL` exists but Postgres setup failed; inspect `/api/health` for `lastError`.
 - `Storage memory only`: no `DATABASE_URL`; not durable.
@@ -248,6 +260,7 @@ Persisted fields include:
 - demo cash, realized P/L, copied/skipped counts
 - open positions
 - closed positions
+- settlement metadata for resolved positions
 - copy decisions
 - copied source trade ids
 - real-page status notes
@@ -286,7 +299,7 @@ The `Real` tab is currently read-only and should stay blocked until those pieces
 ## Recommended Next Work
 
 1. Add a proper history/export page with filters by wallet, market, copied/skipped, and win/loss.
-2. Add market-resolution reconciliation so open demo positions close from authoritative outcomes, not only watched `SELL` events.
+2. Add a direct Polymarket market-resolution fallback if Polywhale resolution data lags or is unavailable.
 3. Add a durable `service_events` table for stream disconnects, poll failures, deploy starts, and storage errors.
 4. Add end-to-end tests against a disposable Postgres instance.
 5. Add authentication before any real-money execution controls exist on a public URL.
