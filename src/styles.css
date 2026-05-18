@@ -605,6 +605,42 @@ button {
   min-height: 310px;
 }
 
+.historyPanel {
+  grid-column: 1 / -1;
+}
+
+.historyList {
+  display: grid;
+  gap: 10px;
+}
+
+.historyRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.historyRow p {
+  margin: 3px 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.historyRow small {
+  color: var(--muted);
+}
+
+.historyRow div:last-child {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
 .barChart {
   min-height: 220px;
   display: flex;

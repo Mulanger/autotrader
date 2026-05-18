@@ -33,6 +33,14 @@ export function createAppState() {
       pollStatus: 'idle',
       pollLastRunAt: null,
       lastError: null,
+      storage: {
+        mode: 'memory',
+        status: 'starting',
+        durable: false,
+        lastLoadedAt: null,
+        lastSavedAt: null,
+        lastError: null,
+      },
     },
     watchedWallets: [...WATCHED_WALLETS],
     traders,
@@ -51,6 +59,57 @@ export function createAppState() {
       ],
     },
   };
+}
+
+export function serializeDurableState(state) {
+  return {
+    version: 1,
+    savedAt: nowIso(),
+    watchedWallets: state.watchedWallets,
+    traders: state.traders,
+    allTrades: state.allTrades,
+    copiedFeed: state.copiedFeed,
+    demo: {
+      ...state.demo,
+      copiedSourceTradeIds: [...state.demo.copiedSourceTradeIds],
+    },
+    real: state.real,
+  };
+}
+
+export function restoreDurableState(state, stored) {
+  if (!stored || typeof stored !== 'object') return false;
+
+  if (stored.traders && typeof stored.traders === 'object') {
+    for (const [wallet, trader] of Object.entries(stored.traders)) {
+      if (state.traders[wallet]) state.traders[wallet] = { ...state.traders[wallet], ...trader };
+    }
+  }
+
+  state.allTrades = Array.isArray(stored.allTrades) ? stored.allTrades.slice(0, 300) : state.allTrades;
+  state.copiedFeed = Array.isArray(stored.copiedFeed) ? stored.copiedFeed.slice(0, 200) : state.copiedFeed;
+
+  if (stored.demo && typeof stored.demo === 'object') {
+    const restoredDemo = { ...createDemoState(), ...stored.demo };
+    restoredDemo.openPositions = Array.isArray(stored.demo.openPositions) ? stored.demo.openPositions : [];
+    restoredDemo.closedPositions = Array.isArray(stored.demo.closedPositions) ? stored.demo.closedPositions : [];
+    restoredDemo.decisions = Array.isArray(stored.demo.decisions) ? stored.demo.decisions : [];
+    restoredDemo.copiedSourceTradeIds = new Set(
+      Array.isArray(stored.demo.copiedSourceTradeIds) ? stored.demo.copiedSourceTradeIds : []
+    );
+    state.demo = restoredDemo;
+  }
+
+  if (stored.real && typeof stored.real === 'object') {
+    state.real = { ...state.real, ...stored.real };
+  }
+
+  state.seenTradeIds = new Set([
+    ...state.allTrades.map((event) => event.id).filter(Boolean),
+    ...state.demo.copiedSourceTradeIds,
+  ]);
+
+  return true;
 }
 
 export function ingestTrade(state, trade, source = 'unknown', options = {}) {

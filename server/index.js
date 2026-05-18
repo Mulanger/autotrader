@@ -4,9 +4,10 @@ import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createAppState, snapshotState } from './app-state.js';
+import { createAppState, restoreDurableState, snapshotState } from './app-state.js';
 import { HOST, PORT } from './config.js';
 import { startIngestion } from './stream-service.js';
+import { createStorage } from './storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,9 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/events' });
 const state = createAppState();
+const storage = await createStorage(state);
+const storedState = await storage.load();
+restoreDurableState(state, storedState);
 
 app.use(express.json());
 
@@ -51,7 +55,17 @@ function broadcast() {
   }
 }
 
-startIngestion(state, broadcast);
+startIngestion(state, broadcast, storage);
+
+process.on('SIGINT', async () => {
+  await storage.close();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  await storage.close();
+  process.exit(0);
+});
 
 server.listen(PORT, HOST, () => {
   console.log(`Autotrader server listening on http://${HOST}:${PORT}`);

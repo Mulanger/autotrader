@@ -32,6 +32,8 @@ Healthcheck: /api/health
 
 `npm start` serves the built React dashboard from `dist/`, keeps `/api/*` on the same origin, and exposes dashboard updates through `/events`.
 
+For durable demo state, add Railway Postgres to the service so Railway injects `DATABASE_URL`. Without `DATABASE_URL`, the app still runs but clearly reports `Storage memory only`, and demo history resets when the process restarts.
+
 ## Environment
 
 Optional:
@@ -40,5 +42,6 @@ Optional:
 - `HOST`: server bind host, defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: defaults to `https://whaleserver-production.up.railway.app`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
+- `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
 Real-money trading is not implemented in this scaffold. Do not put wallet private keys into this app until a real execution adapter, signing flow, and risk gates are reviewed.

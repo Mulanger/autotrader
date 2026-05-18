@@ -5,7 +5,7 @@ import { fetchBootstrapTrades, fetchProfitLeaderboard, fetchRecentWhales } from 
 import { normalizeStreamMessage } from './trade-normalizer.js';
 import { nowIso } from './format.js';
 
-export function startIngestion(state, broadcast) {
+export function startIngestion(state, broadcast, storage) {
   let socket = null;
   let reconnectTimer = null;
 
@@ -23,6 +23,7 @@ export function startIngestion(state, broadcast) {
       for (const trade of trades) ingestTrade(state, trade, 'bootstrap', { copyEligible: false });
       state.service.pollStatus = 'ready';
       state.service.pollLastRunAt = nowIso();
+      storage.queueSave(state);
       broadcast();
     } catch (error) {
       state.service.pollStatus = 'error';
@@ -55,7 +56,10 @@ export function startIngestion(state, broadcast) {
           return;
         }
         const event = ingestTrade(state, normalized, 'websocket');
-        if (event) broadcast();
+        if (event) {
+          storage.queueSave(state);
+          broadcast();
+        }
       } catch (error) {
         state.service.lastError = error.message;
         broadcast();
@@ -86,7 +90,10 @@ export function startIngestion(state, broadcast) {
       }
       state.service.pollStatus = 'ready';
       state.service.pollLastRunAt = nowIso();
-      if (changed) broadcast();
+      if (changed) {
+        storage.queueSave(state);
+        broadcast();
+      }
     } catch (error) {
       state.service.pollStatus = 'error';
       state.service.lastError = error.message;

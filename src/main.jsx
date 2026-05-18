@@ -158,6 +158,10 @@ function Sidebar({ mode, setMode, connected, service }) {
           active={['ready', 'polling', 'bootstrapping'].includes(service?.pollStatus)}
           label={`REST poll ${service?.pollStatus || 'idle'}`}
         />
+        <StatusLine
+          active={service?.storage?.durable && ['ready', 'saving'].includes(service?.storage?.status)}
+          label={storageLabel(service?.storage)}
+        />
       </div>
 
       <div className="sidebarBlock">
@@ -168,6 +172,13 @@ function Sidebar({ mode, setMode, connected, service }) {
       </div>
     </aside>
   );
+}
+
+function storageLabel(storage) {
+  if (!storage) return 'Storage starting';
+  if (storage.durable) return `Storage ${storage.status}`;
+  if (storage.status === 'memory_only') return 'Storage memory only';
+  return `Storage ${storage.status || 'unknown'}`;
 }
 
 function Topbar({ mode, tab, setTab, refresh, service }) {
@@ -471,6 +482,39 @@ function ProfitView({ metrics, closedPositions }) {
           {!bars.length && <EmptyState title="No closed demo trades" text="SELL copies will close matching demo positions and appear here." />}
         </div>
       </section>
+      <section className="panel historyPanel">
+        <div className="sectionHead">
+          <div>
+            <p className="eyebrow">Trade history</p>
+            <h2>Closed demo trades</h2>
+          </div>
+        </div>
+        <ClosedHistory positions={closedPositions} />
+      </section>
+    </div>
+  );
+}
+
+function ClosedHistory({ positions }) {
+  if (!positions.length) {
+    return <EmptyState title="No closed trades yet" text="Closed copied trades will persist here once Postgres storage is connected." />;
+  }
+
+  return (
+    <div className="historyList">
+      {positions.map((position) => (
+        <article className="historyRow" key={`${position.id}-${position.closedAt}`}>
+          <div>
+            <strong>{position.outcome}</strong>
+            <p>{position.marketTitle}</p>
+            <small>{shortWallet(position.traderWallet)} · closed {formatTimeAgo(position.closedAt)}</small>
+          </div>
+          <div>
+            <span className={position.status === 'win' ? 'positive' : 'negative'}>{position.status}</span>
+            <strong className={pnlTone(position.realizedPnlUsd)}>{signedUsd(position.realizedPnlUsd)}</strong>
+          </div>
+        </article>
+      ))}
     </div>
   );
 }
