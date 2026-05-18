@@ -32,7 +32,7 @@ Healthcheck: /api/health
 
 `npm start` serves the built React dashboard from `dist/`, keeps `/api/*` on the same origin, and exposes dashboard updates through `/events`.
 
-For durable demo state, add Railway Postgres to the service so Railway injects `DATABASE_URL`. Without `DATABASE_URL`, the app still runs but clearly reports `Storage memory only`, and demo history resets when the process restarts.
+For durable demo state, add Railway Postgres to the service so Railway injects `DATABASE_URL`. Without `DATABASE_URL`, the app still runs but clearly reports `Storage memory only`, and demo history resets when the process restarts. With Postgres connected, the app writes normalized audit tables for observed trades, copy decisions, demo positions, trader profiles, and the demo account.
 
 ## Environment
 

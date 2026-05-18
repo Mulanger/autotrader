@@ -37,8 +37,11 @@ export function createAppState() {
         mode: 'memory',
         status: 'starting',
         durable: false,
+        schemaVersion: null,
         lastLoadedAt: null,
         lastSavedAt: null,
+        lastFlushDurationMs: null,
+        lastLoadedRows: null,
         lastError: null,
       },
     },
@@ -69,6 +72,7 @@ export function serializeDurableState(state) {
     traders: state.traders,
     allTrades: state.allTrades,
     copiedFeed: state.copiedFeed,
+    seenTradeIds: [...state.seenTradeIds],
     demo: {
       ...state.demo,
       copiedSourceTradeIds: [...state.demo.copiedSourceTradeIds],
@@ -105,6 +109,7 @@ export function restoreDurableState(state, stored) {
   }
 
   state.seenTradeIds = new Set([
+    ...(Array.isArray(stored.seenTradeIds) ? stored.seenTradeIds : []),
     ...state.allTrades.map((event) => event.id).filter(Boolean),
     ...state.demo.copiedSourceTradeIds,
   ]);
@@ -145,7 +150,7 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
 
     event.copyDecision = copyEligible
       ? evaluateDemoCopy(state.demo, trade)
-        : {
+      : {
           action: 'observed',
           reason: 'Loaded at startup; not copied',
           at: nowIso(),
@@ -192,8 +197,8 @@ export function snapshotState(state) {
     demo: {
       metrics: demoMetrics,
       openPositions: state.demo.openPositions,
-      closedPositions: state.demo.closedPositions.slice(0, 50),
-      decisions: state.demo.decisions.slice(0, 100),
+      closedPositions: state.demo.closedPositions.slice(0, 250),
+      decisions: state.demo.decisions.slice(0, 250),
     },
     real: state.real,
     allTrades: state.allTrades,

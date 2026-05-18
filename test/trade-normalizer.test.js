@@ -1,0 +1,54 @@
+import { describe, expect, it } from 'vitest';
+import { getTradeCurrentPriceCents, normalizeTrade } from '../server/trade-normalizer.js';
+
+describe('trade normalizer', () => {
+  it('normalizes Polywhale whale records', () => {
+    const normalized = normalizeTrade({
+      id: 'abc',
+      side: 'buy',
+      outcome: 'NO',
+      usdSize: '123.45',
+      shares: '200',
+      priceCents: '62',
+      timestamp: 1_779_120_000,
+      market: {
+        slug: 'market-slug',
+        title: 'Market title',
+        yesPriceCents: 38,
+        noPriceCents: 62,
+      },
+      trader: {
+        proxyWallet: '0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD',
+        displayName: 'Tester',
+      },
+    });
+
+    expect(normalized.id).toBe('abc');
+    expect(normalized.side).toBe('BUY');
+    expect(normalized.trader.proxyWallet).toBe('0xabcdefabcdefabcdefabcdefabcdefabcdefabcd');
+    expect(normalized.usdSize).toBe(123.45);
+    expect(normalized.market.slug).toBe('market-slug');
+  });
+
+  it('uses outcome-specific market price when available', () => {
+    const yes = normalizeTrade({
+      id: 'yes',
+      side: 'BUY',
+      outcome: 'YES',
+      priceCents: 40,
+      market: { title: 'Market', yesPriceCents: 45, noPriceCents: 55 },
+      trader: { proxyWallet: '0x1111111111111111111111111111111111111111' },
+    });
+    const no = normalizeTrade({
+      id: 'no',
+      side: 'BUY',
+      outcome: 'NO',
+      priceCents: 40,
+      market: { title: 'Market', yesPriceCents: 45, noPriceCents: 55 },
+      trader: { proxyWallet: '0x1111111111111111111111111111111111111111' },
+    });
+
+    expect(getTradeCurrentPriceCents(yes)).toBe(45);
+    expect(getTradeCurrentPriceCents(no)).toBe(55);
+  });
+});

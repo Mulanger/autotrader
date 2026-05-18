@@ -35,7 +35,7 @@ The dashboard is a demo/paper-trading system right now:
 
 ## Watched Wallets
 
-Defined in `server/config.js` and duplicated in `src/main.jsx` for display fallback:
+Defined in `server/watched-wallets.js` and re-exported by `server/config.js`. The frontend reads the active list from `/api/state`; do not duplicate wallet constants in `src/`.
 
 ```text
 0x531b33c5e7b8c2610917f883a13a1b8b1a706022
@@ -64,7 +64,8 @@ D:\autotrader
   index.html            Vite HTML shell.
   server/
     index.js            Express server, API routes, static serving, websocket fanout.
-    config.js           API URLs, ports, demo risk settings, watched wallets.
+    config.js           API URLs, ports, demo risk settings.
+    watched-wallets.js  Single backend-owned watched wallet list.
     stream-service.js   Polywhale websocket connection, reconnect, REST polling, bootstrap.
     polywhale-client.js REST reads from Polywhale API.
     trade-normalizer.js Normalizes API/websocket whale trade records.
@@ -124,17 +125,20 @@ Healthcheck: /api/health
 
 Add Railway Postgres to the project/service. Railway should inject `DATABASE_URL`. Without `DATABASE_URL`, the app works but displays `Storage memory only`, and demo state resets on process restart or redeploy.
 
-The app creates this table automatically:
+The app creates normalized durable tables automatically:
 
 ```sql
-create table if not exists autotrader_state (
-  key text primary key,
-  payload jsonb not null,
-  updated_at timestamptz not null default now()
-);
+autotrader_schema_migrations
+autotrader_snapshots
+autotrader_state          -- legacy JSON snapshot fallback only
+demo_account
+observed_trades
+copy_decisions
+demo_positions
+trader_profiles
 ```
 
-Current storage strategy is one JSON document under key `default`. This is acceptable for the early demo, but a future version should split trades, positions, balance snapshots, and copy decisions into normalized tables for querying and auditability.
+The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
 
 ## Runtime Data Flow
 
@@ -147,7 +151,8 @@ Current storage strategy is one JSON document under key `default`. This is accep
 7. Every normalized trade is added to the backend state once by `trade.id`.
 8. If the trade wallet is watched, it enters `copiedFeed`; otherwise it stays out of the main tape.
 9. Demo copy rules run only for watched events when copy eligibility is true.
-10. After meaningful state changes, backend queues a Postgres save and broadcasts the updated state to connected browsers.
+10. After meaningful state changes, backend queues a normalized Postgres save and broadcasts the updated state to connected browsers.
+11. On Railway shutdown, the server attempts one final storage flush before closing the pool.
 
 ## API Endpoints
 
@@ -222,7 +227,17 @@ Invoke-RestMethod -Uri 'https://autotrader-production-317c.up.railway.app/api/he
 
 ## Persistence Model
 
-Durable state is serialized from `server/app-state.js` by `serializeDurableState()` and restored by `restoreDurableState()`.
+Durable state is serialized from `server/app-state.js` by `serializeDurableState()` and restored by `restoreDurableState()`. Storage is implemented in `server/storage.js`.
+
+Current table responsibilities:
+
+- `demo_account`: paper account cash, fixed stake, realized P/L, copied/skipped counts, notional copied.
+- `observed_trades`: every retained whale event seen by the service, including source and watched flag.
+- `copy_decisions`: every retained demo decision, including copied/skipped/observed and reason.
+- `demo_positions`: open and closed paper positions with entry/exit prices, P/L, and full payload.
+- `trader_profiles`: watched trader metadata, leaderboard rank/profit fields, and recent trade context.
+- `autotrader_snapshots`: app-level restore snapshot.
+- `autotrader_state`: legacy fallback from the earlier single JSON implementation.
 
 Persisted fields include:
 
@@ -236,6 +251,7 @@ Persisted fields include:
 - copy decisions
 - copied source trade ids
 - real-page status notes
+- all known seen trade ids, so redeploys do not duplicate-copy old source trades
 
 Without Postgres, all of the above is only in process memory and will be lost on redeploy/restart.
 
@@ -269,26 +285,22 @@ The `Real` tab is currently read-only and should stay blocked until those pieces
 
 ## Recommended Next Work
 
-1. Attach Railway Postgres and confirm the sidebar shows durable storage instead of `Storage memory only`.
-2. Split the single JSON state document into normalized tables:
-   - `observed_trades`
-   - `copy_decisions`
-   - `demo_positions`
-   - `demo_balance_snapshots`
-   - `service_events`
-3. Add a proper history/export page with filters by wallet, market, copied/skipped, and win/loss.
-4. Add market-resolution reconciliation so open demo positions close from authoritative outcomes, not only watched `SELL` events.
+1. Add a proper history/export page with filters by wallet, market, copied/skipped, and win/loss.
+2. Add market-resolution reconciliation so open demo positions close from authoritative outcomes, not only watched `SELL` events.
+3. Add a durable `service_events` table for stream disconnects, poll failures, deploy starts, and storage errors.
+4. Add end-to-end tests against a disposable Postgres instance.
 5. Add authentication before any real-money execution controls exist on a public URL.
-6. Add tests for `demo-engine.js`, `trade-normalizer.js`, and persistence restore/save behavior.
+6. Expand tests for persistence restore/save behavior against real SQL, not only unit-level state restore.
 
 ## Verification Checklist
 
 Before pushing:
 
 1. Run `npm run build`.
-2. Check `/api/health` locally or on Railway.
-3. Confirm the sidebar stream/poll/storage states are understandable.
-4. Confirm the main tape only shows watched-wallet trades.
-5. Confirm no reset control exists.
-6. Confirm `Real` mode still cannot place live trades.
-7. If persistence changed, test restore behavior with a real or local Postgres `DATABASE_URL`.
+2. Run `npm test`.
+3. Check `/api/health` locally or on Railway.
+4. Confirm the sidebar stream/poll/storage states are understandable.
+5. Confirm the main tape only shows watched-wallet trades.
+6. Confirm no reset control exists.
+7. Confirm `Real` mode still cannot place live trades.
+8. If persistence changed, test restore behavior with a real or local Postgres `DATABASE_URL`.

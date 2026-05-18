@@ -76,11 +76,13 @@ async function initializeStorageAndIngestion() {
 }
 
 process.on('SIGINT', async () => {
+  await storage.flush(state);
   await storage.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
+  await storage.flush(state);
   await storage.close();
   process.exit(0);
 });
