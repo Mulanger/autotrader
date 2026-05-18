@@ -8,20 +8,14 @@ export async function createStorage(state) {
   const info = state.service.storage;
 
   if (!process.env.DATABASE_URL) {
-    info.mode = 'memory';
-    info.status = 'memory_only';
-    info.durable = false;
-    return {
-      info,
-      load: async () => null,
-      queueSave: () => {},
-      close: async () => {},
-    };
+    return createMemoryStorage(info, 'memory_only');
   }
 
   const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: shouldUseSsl(process.env.DATABASE_URL) ? { rejectUnauthorized: false } : false,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 8_000,
   });
 
   try {
@@ -40,7 +34,9 @@ export async function createStorage(state) {
     info.status = 'error';
     info.durable = false;
     info.lastError = error.message;
-    throw error;
+    console.error(`Postgres setup failed: ${error.message}`);
+    await pool.end().catch(() => {});
+    return createMemoryStorage(info, 'postgres_error');
   }
 
   let queuedPayload = null;
@@ -95,6 +91,18 @@ export async function createStorage(state) {
     load,
     queueSave,
     close: () => pool.end(),
+  };
+}
+
+export function createMemoryStorage(info, status = 'memory_only') {
+  info.mode = status === 'postgres_error' ? 'postgres' : 'memory';
+  info.status = status;
+  info.durable = false;
+  return {
+    info,
+    load: async () => null,
+    queueSave: () => {},
+    close: async () => {},
   };
 }
 

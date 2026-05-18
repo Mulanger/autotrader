@@ -101,6 +101,7 @@ Production/Railway:
 - Start: `npm start`
 - Healthcheck: `/api/health`
 - `server/index.js` serves `dist/` and keeps `/api/*` plus `/events` on the same origin.
+- Express starts before Postgres initialization finishes, so `/api/health` remains available even when database variables are wrong or the database is temporarily unavailable.
 
 ## Environment Variables
 
@@ -210,6 +211,7 @@ Sidebar statuses:
 - `Whale stream connected`: backend websocket to Polywhale is open.
 - `REST poll ready/polling`: REST fallback is healthy. `polling` is active and should be green.
 - `Storage ready/saving`: Postgres persistence is active.
+- `Storage postgres_error`: `DATABASE_URL` exists but Postgres setup failed; inspect `/api/health` for `lastError`.
 - `Storage memory only`: no `DATABASE_URL`; not durable.
 
 Use the live health endpoint for direct verification:

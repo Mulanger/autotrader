@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createAppState, restoreDurableState, snapshotState } from './app-state.js';
 import { HOST, PORT } from './config.js';
 import { startIngestion } from './stream-service.js';
-import { createStorage } from './storage.js';
+import { createMemoryStorage, createStorage } from './storage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,9 +18,8 @@ const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/events' });
 const state = createAppState();
-const storage = await createStorage(state);
-const storedState = await storage.load();
-restoreDurableState(state, storedState);
+let storage = createMemoryStorage(state.service.storage, 'starting');
+let ingestionStarted = false;
 
 app.use(express.json());
 
@@ -55,7 +54,26 @@ function broadcast() {
   }
 }
 
-startIngestion(state, broadcast, storage);
+async function initializeStorageAndIngestion() {
+  try {
+    storage = await createStorage(state);
+    const storedState = await storage.load();
+    restoreDurableState(state, storedState);
+    console.log(`Storage initialized: ${state.service.storage.mode}/${state.service.storage.status}`);
+  } catch (error) {
+    state.service.storage.mode = 'postgres';
+    state.service.storage.status = 'error';
+    state.service.storage.durable = false;
+    state.service.storage.lastError = error.message;
+    console.error(`Storage initialization failed: ${error.message}`);
+  } finally {
+    if (!ingestionStarted) {
+      ingestionStarted = true;
+      startIngestion(state, broadcast, storage);
+    }
+    broadcast();
+  }
+}
 
 process.on('SIGINT', async () => {
   await storage.close();
@@ -69,4 +87,5 @@ process.on('SIGTERM', async () => {
 
 server.listen(PORT, HOST, () => {
   console.log(`Autotrader server listening on http://${HOST}:${PORT}`);
+  initializeStorageAndIngestion();
 });
