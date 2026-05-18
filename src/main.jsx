@@ -81,24 +81,53 @@ function useAutotraderState() {
   }, []);
 
   React.useEffect(() => {
-    refresh().catch(() => {});
+    let socket;
+    let reconnectTimer;
+    let stopped = false;
+
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = window.location.port === '5173' ? '127.0.0.1:4101' : window.location.host;
-    const socket = new WebSocket(`${wsProtocol}//${wsHost}/events`);
+    const wsUrl = `${wsProtocol}//${wsHost}/events`;
 
-    socket.addEventListener('open', () => setConnected(true));
-    socket.addEventListener('close', () => setConnected(false));
-    socket.addEventListener('error', () => setConnected(false));
-    socket.addEventListener('message', (event) => {
-      try {
-        const parsed = JSON.parse(event.data);
-        if (parsed.type === 'state') setState(parsed.payload);
-      } catch {
+    const connect = () => {
+      if (stopped) return;
+      socket = new WebSocket(wsUrl);
+
+      socket.addEventListener('open', () => {
+        setConnected(true);
+        refresh().catch(() => {});
+      });
+
+      socket.addEventListener('close', () => {
         setConnected(false);
-      }
-    });
+        if (!stopped) reconnectTimer = window.setTimeout(connect, 2_000);
+      });
 
-    return () => socket.close();
+      socket.addEventListener('error', () => {
+        setConnected(false);
+        socket.close();
+      });
+
+      socket.addEventListener('message', (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          if (parsed.type === 'state') setState(parsed.payload);
+        } catch {
+          setConnected(false);
+        }
+      });
+    };
+
+    refresh().catch(() => {});
+    connect();
+    const fallbackRefresh = window.setInterval(() => refresh().catch(() => {}), 15_000);
+
+    return () => {
+      stopped = true;
+      window.clearTimeout(reconnectTimer);
+      window.clearInterval(fallbackRefresh);
+      socket?.close();
+    };
   }, [refresh]);
 
   return { state, connected, refresh, resetDemo };
@@ -126,7 +155,7 @@ function Sidebar({ mode, setMode, connected, service }) {
 
       <div className="sidebarBlock">
         <span className="eyebrow">Signal source</span>
-        <StatusLine active={connected} label={connected ? 'Dashboard socket online' : 'Dashboard socket offline'} />
+        <StatusLine active={connected} label={connected ? 'Dashboard live updates online' : 'Dashboard live updates reconnecting'} />
         <StatusLine
           active={service?.streamStatus === 'connected'}
           label={`Whale stream ${service?.streamStatus || 'booting'}`}
