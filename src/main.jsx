@@ -160,7 +160,10 @@ function Sidebar({ mode, setMode, connected, service }) {
           active={service?.streamStatus === 'connected'}
           label={`Whale stream ${service?.streamStatus || 'booting'}`}
         />
-        <StatusLine active={service?.pollStatus === 'ready'} label={`REST poll ${service?.pollStatus || 'idle'}`} />
+        <StatusLine
+          active={['ready', 'polling', 'bootstrapping'].includes(service?.pollStatus)}
+          label={`REST poll ${service?.pollStatus || 'idle'}`}
+        />
       </div>
 
       <div className="sidebarBlock">
