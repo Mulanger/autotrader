@@ -106,6 +106,7 @@ export function restoreDurableState(state, stored) {
       Array.isArray(stored.demo.copiedSourceTradeIds) ? stored.demo.copiedSourceTradeIds : []
     );
     state.demo = restoredDemo;
+    repairPrematureResolutionSettlements(state.demo);
   }
 
   if (stored.real && typeof stored.real === 'object') {
@@ -213,4 +214,77 @@ export function snapshotState(state) {
 function numberOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function repairPrematureResolutionSettlements(demo) {
+  const reopened = [];
+  const retainedClosed = [];
+  let cashAdjustmentUsd = 0;
+  let realizedPnlAdjustmentUsd = 0;
+
+  for (const position of demo.closedPositions || []) {
+    if (!isPrematureResolutionSettlement(position)) {
+      retainedClosed.push(position);
+      continue;
+    }
+
+    const currentPriceCents = numberOrFallback(position.currentPriceCents, position.entryPriceCents);
+    const entryPriceCents = numberOrFallback(position.entryPriceCents, currentPriceCents);
+    const shares = numberOrFallback(position.shares, 0);
+    const unrealizedPnlUsd = (currentPriceCents - entryPriceCents) / 100 * shares;
+
+    reopened.push({
+      ...position,
+      status: 'open',
+      exitPriceCents: null,
+      exitValueUsd: null,
+      payoutUsd: null,
+      realizedPnlUsd: null,
+      closedAt: null,
+      resolvedAt: null,
+      closeSourceTradeId: null,
+      settlementSource: null,
+      settlementReason: null,
+      currentPriceCents,
+      resolutionStatus: 'open',
+      resolutionRepairNote: 'Reopened after a premature null-PnL settlement',
+      unrealizedPnlUsd,
+      unrealizedPnlPct: entryPriceCents ? ((currentPriceCents - entryPriceCents) / entryPriceCents) * 100 : 0,
+      updatedAt: nowIso(),
+    });
+
+    cashAdjustmentUsd += numberOrFallback(position.exitValueUsd, 0);
+    realizedPnlAdjustmentUsd += numberOrFallback(position.realizedPnlUsd, 0);
+  }
+
+  if (!reopened.length) return;
+
+  const reopenedIds = new Set(reopened.map((position) => position.id));
+  demo.cashUsd -= cashAdjustmentUsd;
+  demo.realizedPnlUsd -= realizedPnlAdjustmentUsd;
+  demo.openPositions = [...reopened, ...(demo.openPositions || [])];
+  demo.closedPositions = retainedClosed;
+  demo.decisions = (demo.decisions || []).filter((decision) => {
+    return !(decision.action === 'settled' && reopenedIds.has(decision.copyId));
+  });
+  demo.decisions.unshift({
+    id: `repair-${Date.now()}`,
+    tradeId: reopened[0]?.sourceTradeId || 'repair',
+    action: 'reopened',
+    reason: `Reopened ${reopened.length} premature resolution settlement${reopened.length === 1 ? '' : 's'}`,
+    copyId: reopened[0]?.id || null,
+    at: nowIso(),
+  });
+}
+
+function isPrematureResolutionSettlement(position) {
+  return (
+    position?.settlementSource === 'polywhale-resolution' &&
+    String(position.resolutionStatus || '').toLowerCase() === 'open'
+  );
+}
+
+function numberOrFallback(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }

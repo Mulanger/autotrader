@@ -59,4 +59,45 @@ describe('app state', () => {
     expect(restored.demo.openPositions).toHaveLength(1);
     expect(restored.seenTradeIds.has('restore-trade')).toBe(true);
   });
+
+  it('reopens premature resolution settlements saved with open status', () => {
+    const state = createAppState();
+    const restored = createAppState();
+    const payload = {
+      demo: {
+        cashUsd: 100.63829787234043,
+        realizedPnlUsd: 0.6382978723404253,
+        openPositions: [],
+        closedPositions: [
+          {
+            id: 'demo-bad',
+            sourceTradeId: 'bad',
+            status: 'win',
+            settlementSource: 'polywhale-resolution',
+            resolutionStatus: 'open',
+            stakeUsd: 10,
+            shares: 10.638297872340425,
+            entryPriceCents: 94,
+            currentPriceCents: 94,
+            exitValueUsd: 10.638297872340425,
+            realizedPnlUsd: 0.6382978723404253,
+          },
+        ],
+        decisions: [{ id: 'bad-settled', tradeId: 'bad', action: 'settled', copyId: 'demo-bad' }],
+        copiedSourceTradeIds: ['bad'],
+      },
+      traders: state.traders,
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: ['bad'],
+    };
+
+    restoreDurableState(restored, payload);
+
+    expect(restored.demo.openPositions).toHaveLength(1);
+    expect(restored.demo.closedPositions).toHaveLength(0);
+    expect(restored.demo.cashUsd).toBeCloseTo(90, 5);
+    expect(restored.demo.realizedPnlUsd).toBeCloseTo(0, 5);
+    expect(restored.demo.decisions[0].action).toBe('reopened');
+  });
 });

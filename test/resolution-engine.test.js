@@ -78,6 +78,21 @@ describe('resolution engine', () => {
     expect(settlement.realizedPnlUsd).toBe(0);
   });
 
+  it('does not settle open resolutions with null pnl', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({ priceCents: 50 }));
+
+    const settlement = buildSettlementForPosition(demo.openPositions[0], trade({
+      resolution: {
+        status: 'open',
+        winningOutcome: null,
+        pnlUsd: null,
+      },
+    }));
+
+    expect(settlement).toBeNull();
+  });
+
   it('reconciles open positions and settles each source trade once', async () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, trade({ id: 'copy-1', priceCents: 50 }));

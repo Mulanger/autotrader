@@ -94,7 +94,7 @@ export function buildSettlementForPosition(position, trade) {
 function isResolvableStatus(status, resolution) {
   if (status === 'invalid' || status === 'resolved_win' || status === 'resolved_loss') return true;
   if (status === 'resolved' && resolution.winningOutcome) return true;
-  return Number.isFinite(Number(resolution.pnlUsd));
+  return hasNumericValue(resolution.pnlUsd);
 }
 
 function inferWin(position, resolution) {
@@ -105,7 +105,7 @@ function inferWin(position, resolution) {
   const match = outcomeMatches(position.outcome, resolution.winningOutcome);
   if (match !== null) return match;
 
-  if (Number.isFinite(Number(resolution.pnlUsd))) {
+  if (hasNumericValue(resolution.pnlUsd)) {
     return Number(resolution.pnlUsd) >= 0;
   }
 
@@ -125,6 +125,11 @@ function normalizeOutcomeLabel(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim().toUpperCase();
   return text || null;
+}
+
+function hasNumericValue(value) {
+  if (value === null || value === undefined || value === '') return false;
+  return Number.isFinite(Number(value));
 }
 
 function formatSignedUsd(value) {
