@@ -140,14 +140,14 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
     trader.profileImage = trade.trader.profileImage || trader.profileImage;
     trader.observedCount += 1;
     trader.lastSeenAt = event.observedAt;
-    trader.recentTrades.unshift({ ...trade, status: trade.resolution.status || 'open' });
+    trader.recentTrades.unshift({ ...trade, status: trade.resolution?.status || 'open' });
     trader.recentTrades = trader.recentTrades.slice(0, 8);
 
     event.copyDecision = copyEligible
       ? evaluateDemoCopy(state.demo, trade)
-      : {
+        : {
           action: 'observed',
-          reason: 'Historical bootstrap; not copied',
+          reason: 'Loaded at startup; not copied',
           at: nowIso(),
         };
     if (event.copyDecision?.action === 'copied') trader.copiedCount += 1;

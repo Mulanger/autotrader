@@ -213,7 +213,7 @@ function DemoWorkspace({ data, metrics, tab }) {
     <div className="dashboardGrid">
       <section className="mainColumn">
         <MetricStrip metrics={metrics} />
-        <LiveFeed events={data.allTrades} />
+        <LiveFeed events={data.copiedFeed} />
       </section>
       <section className="sideColumn">
         <OpenPositionsCard positions={data.demo.openPositions} />
@@ -244,7 +244,7 @@ function RealWorkspace({ data, tab }) {
         </div>
       </section>
       <section>
-        <LiveFeed events={data.copiedFeed.length ? data.copiedFeed : data.allTrades} realMode />
+        <LiveFeed events={data.copiedFeed} realMode />
       </section>
     </div>
   );
@@ -278,8 +278,8 @@ function LiveFeed({ events, realMode = false }) {
     <section className="panel feedPanel">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">Live tape</p>
-          <h2>Whale trades and copy decisions</h2>
+          <p className="eyebrow">Copy-list tape</p>
+          <h2>Watched trades and copy decisions</h2>
         </div>
         <ListFilter size={18} />
       </div>
@@ -287,7 +287,7 @@ function LiveFeed({ events, realMode = false }) {
         {visible.map((event) => (
           <TradeEventRow key={`${event.id}-${event.observedAt}`} event={event} realMode={realMode} />
         ))}
-        {!visible.length && <EmptyState title="Waiting for trades" text="The service is connecting to the whale stream." />}
+        {!visible.length && <EmptyState title="Waiting for watched-wallet trades" text="Only trades from the copy list appear here." />}
       </div>
     </section>
   );
@@ -316,7 +316,7 @@ function TradeEventRow({ event, realMode }) {
         <div className="feedMeta">
           <span>{formatTimeAgo(trade.timestamp * 1000)}</span>
           <span>{trade.priceCents ? `${trade.priceCents.toFixed(1)}c` : 'price unknown'}</span>
-          <span>{event.source}</span>
+          <span>{sourceLabel(event.source)}</span>
         </div>
       </div>
       <div className="decisionCell">
@@ -327,6 +327,13 @@ function TradeEventRow({ event, realMode }) {
       </div>
     </article>
   );
+}
+
+function sourceLabel(source) {
+  if (source === 'bootstrap') return 'loaded at startup';
+  if (source === 'websocket') return 'live stream';
+  if (source === 'poll') return 'poll sync';
+  return source || 'unknown source';
 }
 
 function OpenPositionsCard({ positions }) {
