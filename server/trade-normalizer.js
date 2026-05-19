@@ -51,6 +51,7 @@ export function normalizeTrade(input) {
       tradeCount: numberOrNull(input.trader?.tradeCount ?? input.tradeCount),
     },
     transactionHash: input.transactionHash || input.txHash || null,
+    fees: normalizeFees(input, market),
     resolution: normalizeResolution(input),
   };
 
@@ -101,8 +102,54 @@ function normalizeResolution(input) {
 }
 
 function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function normalizeFees(input, market) {
+  const source = firstObject(input.fees, input.feeInfo, market.fees, market.feeInfo) || {};
+  const feesEnabled = booleanOrNull(
+    source.feesEnabled ??
+      source.fees_enabled ??
+      input.feesEnabled ??
+      input.fees_enabled ??
+      market.feesEnabled ??
+      market.fees_enabled
+  );
+  const feeRateBps = numberOrNull(
+    source.feeRateBps ??
+      source.fee_rate_bps ??
+      input.feeRateBps ??
+      input.fee_rate_bps ??
+      market.feeRateBps ??
+      market.fee_rate_bps
+  );
+  const feeRate = numberOrNull(
+    source.feeRate ??
+      source.fee_rate ??
+      input.feeRate ??
+      input.fee_rate ??
+      market.feeRate ??
+      market.fee_rate
+  );
+  const feeUsd = numberOrNull(
+    source.feeUsd ??
+      source.fee_usd ??
+      source.takerFeeUsd ??
+      input.feeUsd ??
+      input.fee_usd ??
+      input.takerFeeUsd ??
+      input.taker_fee_usd
+  );
+
+  return {
+    feesEnabled,
+    feeRateBps,
+    feeRate,
+    feeUsd,
+    source: feeUsd !== null || feeRateBps !== null || feeRate !== null || feesEnabled !== null ? 'upstream' : 'unavailable',
+  };
 }
 
 function firstObject(...values) {
@@ -113,6 +160,15 @@ function stringOrNull(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text || null;
+}
+
+function booleanOrNull(value) {
+  if (value === true || value === false) return value;
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim().toLowerCase();
+  if (text === 'true') return true;
+  if (text === 'false') return false;
+  return null;
 }
 
 function normalizeResolutionStatus(rawStatus, { pnlUsd, closed, winningOutcome }) {

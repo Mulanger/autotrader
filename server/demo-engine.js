@@ -1,4 +1,5 @@
 import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from './config.js';
+import { buildEntryFeeModel } from './fee-model.js';
 import { getTradeCurrentPriceCents } from './trade-normalizer.js';
 import { nowIso } from './format.js';
 
@@ -39,6 +40,7 @@ export function evaluateDemoCopy(demo, trade) {
 }
 
 export function markToMarket(demo) {
+  const positions = [...demo.openPositions, ...demo.closedPositions];
   const openValueUsd = demo.openPositions.reduce((sum, position) => {
     return sum + position.shares * (position.currentPriceCents / 100);
   }, 0);
@@ -58,6 +60,8 @@ export function markToMarket(demo) {
     copiedCount: demo.copiedCount,
     skippedCount: demo.skippedCount,
     totalNotionalCopiedUsd: demo.totalNotionalCopiedUsd,
+    knownEntryFeesUsd: positions.reduce((sum, position) => sum + (numberOrNull(position.entryFeeUsd) ?? 0), 0),
+    feeUnknownCount: positions.filter((position) => position.feeStatus === 'unknown' || !position.feeStatus).length,
     fixedStakeUsd: demo.fixedStakeUsd,
     openPositionCount: demo.openPositions.length,
     closedPositionCount: demo.closedPositions.length,
@@ -96,7 +100,8 @@ function copyBuy(demo, trade) {
     });
   }
 
-  const shares = demo.fixedStakeUsd / (price / 100);
+  const grossShares = demo.fixedStakeUsd / (price / 100);
+  const fee = buildEntryFeeModel(trade, { priceCents: price, shares: grossShares });
   const position = {
     id: `demo-${trade.id}`,
     sourceTradeId: trade.id,
@@ -109,7 +114,16 @@ function copyBuy(demo, trade) {
     side: trade.side,
     outcome: trade.outcome,
     stakeUsd: demo.fixedStakeUsd,
-    shares,
+    shares: fee.netShares ?? grossShares,
+    grossShares,
+    entryFeeUsd: fee.entryFeeUsd,
+    feeShares: fee.feeShares,
+    feeStatus: fee.status,
+    feeSource: fee.source,
+    feeCollection: fee.collection,
+    feeRate: fee.feeRate,
+    feeRateBps: fee.feeRateBps,
+    feesEnabled: fee.feesEnabled,
     entryPriceCents: price,
     currentPriceCents: price,
     openedAt: new Date(trade.timestamp * 1000).toISOString(),
@@ -189,6 +203,12 @@ function recordDecision(demo, trade, decision) {
 
 function sameOutcome(a, b) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+}
+
+function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function formatSignedUsd(value) {

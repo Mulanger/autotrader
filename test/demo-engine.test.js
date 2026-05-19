@@ -37,6 +37,18 @@ describe('demo copy engine', () => {
     expect(demo.copiedSourceTradeIds.has('trade-1')).toBe(true);
   });
 
+  it('tracks fee status and adjusts buy shares when fee data is available', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, {
+      ...trade({ priceCents: 50 }),
+      fees: { feesEnabled: true, feeRateBps: 300 },
+    });
+
+    expect(demo.openPositions[0].grossShares).toBe(20);
+    expect(demo.openPositions[0].entryFeeUsd).toBe(0.15);
+    expect(demo.openPositions[0].shares).toBe(19.7);
+  });
+
   it('does not copy the same source trade twice', () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, trade({ id: 'duplicate' }));

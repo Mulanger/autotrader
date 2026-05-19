@@ -30,6 +30,25 @@ describe('trade normalizer', () => {
     expect(normalized.market.slug).toBe('market-slug');
   });
 
+  it('normalizes upstream fee metadata when present', () => {
+    const normalized = normalizeTrade({
+      id: 'fee-trade',
+      side: 'BUY',
+      outcome: 'YES',
+      priceCents: 50,
+      market: {
+        title: 'Market',
+        feesEnabled: true,
+        fee_rate_bps: '300',
+      },
+      trader: { proxyWallet: '0x1111111111111111111111111111111111111111' },
+    });
+
+    expect(normalized.fees.feesEnabled).toBe(true);
+    expect(normalized.fees.feeRateBps).toBe(300);
+    expect(normalized.fees.source).toBe('upstream');
+  });
+
   it('uses outcome-specific market price when available', () => {
     const yes = normalizeTrade({
       id: 'yes',

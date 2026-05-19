@@ -70,6 +70,7 @@ D:\autotrader
     stream-service.js   Polywhale websocket connection, reconnect, REST polling, bootstrap.
     polywhale-client.js REST reads from Polywhale API.
     trade-normalizer.js Normalizes API/websocket whale trade records.
+    fee-model.js        Paper fee handling when upstream fee metadata is available.
     demo-engine.js      Paper copy-trading rules and P/L math.
     app-state.js        In-memory app state, snapshots, serialization, restore.
     storage.js          Postgres persistence with memory fallback.
@@ -197,6 +198,14 @@ Implemented in `server/demo-engine.js`.
   - `invalid`: refunds the fixed stake and records zero realized P/L.
   - Moves settled positions from `openPositions` to `closedPositions`.
   - Writes settlement metadata: `resolutionStatus`, `winningOutcome`, `resolvedAt`, and `settlementSource`.
+- Fee handling:
+  - Runs from `server/fee-model.js`.
+  - Polymarket taker fee formula is `fee = shares * feeRate * price * (1 - price)`.
+  - Buy-side fees are modeled as share deductions because Polymarket collects buy fees in shares.
+  - If upstream provides explicit `feeUsd`, the demo treats the fee as known.
+  - If upstream provides `feesEnabled=true` plus `feeRateBps` or `feeRate`, the demo estimates the fee and reduces copied shares.
+  - If upstream says fees are disabled or fee rate is zero, the demo records a known `$0` fee.
+  - If upstream does not expose fee metadata, the demo marks the position `fee unknown` and leaves shares gross. Do not describe these P/L numbers as fully fee-net.
 - Any unsupported side is skipped.
 - Historical startup rows are never copied.
 
@@ -261,6 +270,7 @@ Persisted fields include:
 - open positions
 - closed positions
 - settlement metadata for resolved positions
+- fee status and known/estimated entry fees
 - copy decisions
 - copied source trade ids
 - real-page status notes
@@ -300,10 +310,11 @@ The `Real` tab is currently read-only and should stay blocked until those pieces
 
 1. Add a proper history/export page with filters by wallet, market, copied/skipped, and win/loss.
 2. Add a direct Polymarket market-resolution fallback if Polywhale resolution data lags or is unavailable.
-3. Add a durable `service_events` table for stream disconnects, poll failures, deploy starts, and storage errors.
-4. Add end-to-end tests against a disposable Postgres instance.
-5. Add authentication before any real-money execution controls exist on a public URL.
-6. Expand tests for persistence restore/save behavior against real SQL, not only unit-level state restore.
+3. Add direct CLOB fee-rate lookups by token id once token ids are available in the copied trade/market payload.
+4. Add a durable `service_events` table for stream disconnects, poll failures, deploy starts, and storage errors.
+5. Add end-to-end tests against a disposable Postgres instance.
+6. Add authentication before any real-money execution controls exist on a public URL.
+7. Expand tests for persistence restore/save behavior against real SQL, not only unit-level state restore.
 
 ## Verification Checklist
 

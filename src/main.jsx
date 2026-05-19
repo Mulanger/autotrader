@@ -383,6 +383,7 @@ function PositionList({ positions, expanded = false }) {
               <p>{position.marketTitle}</p>
               <small>
                 {shortWallet(position.traderWallet)} - entry {position.entryPriceCents.toFixed(1)}c - awaiting resolution
+                {' - '}{feeLabel(position)}
               </small>
             </div>
             <div className="positionNumbers">
@@ -470,6 +471,7 @@ function ProfitView({ metrics, closedPositions }) {
         <div className="profitBreakdown">
           <span>Realized <b className={pnlTone(metrics.realizedPnlUsd)}>{signedUsd(metrics.realizedPnlUsd)}</b></span>
           <span>Unrealized <b className={pnlTone(metrics.unrealizedPnlUsd)}>{signedUsd(metrics.unrealizedPnlUsd)}</b></span>
+          <span>Known fees <b>{feeMetric(metrics)}</b></span>
           <span>Notional copied <b>{usd(metrics.totalNotionalCopiedUsd)}</b></span>
         </div>
       </section>
@@ -518,6 +520,7 @@ function ClosedHistory({ positions }) {
             <small>
               {shortWallet(position.traderWallet)} - resolved {formatTimeAgo(position.resolvedAt || position.closedAt)}
               {position.winningOutcome ? ` - winner ${position.winningOutcome}` : ''}
+              {' - '}{feeLabel(position)}
             </small>
           </div>
           <div>
@@ -566,6 +569,8 @@ function emptyState() {
         copiedCount: 0,
         openPositionCount: 0,
         totalNotionalCopiedUsd: 0,
+        knownEntryFeesUsd: 0,
+        feeUnknownCount: 0,
       },
       openPositions: [],
       closedPositions: [],
@@ -606,6 +611,17 @@ function pct(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 'n/a';
   return `${number.toFixed(number >= 99 ? 0 : 1)}%`;
+}
+
+function feeMetric(metrics) {
+  if (metrics.feeUnknownCount > 0) return `${metrics.feeUnknownCount} unknown`;
+  return usd(metrics.knownEntryFeesUsd || 0);
+}
+
+function feeLabel(position) {
+  if (position.feeStatus === 'known') return `fee ${usd(position.entryFeeUsd || 0)}`;
+  if (position.feeStatus === 'estimated') return `est. fee ${usd(position.entryFeeUsd || 0)}`;
+  return 'fee unknown';
 }
 
 function signedPct(value) {
