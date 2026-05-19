@@ -113,6 +113,7 @@ Production/Railway:
 - `PORT`: server port. Railway provides this. Local default is `4101`.
 - `HOST`: bind host. Defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
+- `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: maximum BUY entry price to copy. Defaults to `75`.
@@ -158,9 +159,10 @@ The primary durable model is normalized. `autotrader_snapshots` keeps a compact 
 8. If the trade wallet is watched, it enters `copiedFeed`; otherwise it stays out of the main tape.
 9. Demo copy rules run only for watched events when copy eligibility is true.
 10. A second backend reconciliation loop checks every open demo position by source trade id every `RESOLUTION_POLL_INTERVAL_MS`.
-11. When Polywhale returns `resolved_win`, `resolved_loss`, or `invalid`, the demo position is settled exactly once and moved into closed history.
-12. After meaningful state changes, backend queues a normalized Postgres save and broadcasts the updated state to connected browsers.
-13. On Railway shutdown, the server attempts one final storage flush before closing the pool.
+11. If Polywhale still reports open, the loop checks Polymarket Gamma directly by condition id or slug.
+12. When Polywhale or Gamma returns a final outcome, the demo position is settled exactly once and moved into closed history.
+13. After meaningful state changes, backend queues a normalized Postgres save and broadcasts the updated state to connected browsers.
+14. On Railway shutdown, the server attempts one final storage flush before closing the pool.
 
 ## API Endpoints
 
@@ -178,6 +180,7 @@ Polywhale upstream endpoints used:
 - `GET /v1/whales/<tradeId>/detail` as a fallback for resolution/detail refreshes.
 - `GET /v1/leaderboard?sort=profit&limit=100`
 - `WS /v1/whales/stream`
+- `GET https://gamma-api.polymarket.com/markets?...` as a direct resolution fallback.
 
 ## Demo Copy Rules
 
@@ -199,6 +202,7 @@ Implemented in `server/demo-engine.js`.
 - Resolution settlement:
   - Runs from `server/resolution-engine.js`.
   - Polls every open demo position's `sourceTradeId`.
+  - Falls back to `server/polymarket-client.js` when Polywhale has not materialized a resolved outcome yet.
   - `resolved_win`: pays `$1` per copied share and records realized profit.
   - `resolved_loss`: pays `$0` and records the fixed stake as realized loss.
   - `invalid`: refunds the fixed stake and records zero realized P/L.

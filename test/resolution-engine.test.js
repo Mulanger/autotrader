@@ -114,4 +114,33 @@ describe('resolution engine', () => {
     expect(demo.openPositions).toHaveLength(0);
     expect(demo.closedPositions).toHaveLength(1);
   });
+
+  it('uses a Polymarket fallback resolution when the whale trade is still open', async () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({ id: 'copy-1', outcome: 'Thunder', priceCents: 68 }));
+    const state = { demo };
+
+    const result = await reconcileOpenDemoPositions(
+      state,
+      async (id) => trade({
+        id,
+        outcome: 'Thunder',
+        priceCents: 68,
+        marketSlug: 'nba-sas-okc-2026-05-20',
+        resolution: { status: 'open', pnlUsd: null },
+      }),
+      async () => ({
+        status: 'resolved',
+        winningOutcome: 'Thunder',
+        resolvedAt: '2026-05-21T03:00:00.000Z',
+        source: 'polymarket-gamma',
+        closed: true,
+      })
+    );
+
+    expect(result.settled).toHaveLength(1);
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.closedPositions[0].status).toBe('win');
+    expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
+  });
 });

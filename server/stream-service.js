@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import { POLL_INTERVAL_MS, POLYWHALE_WS_URL, RESOLUTION_POLL_INTERVAL_MS } from './config.js';
 import { applyLeaderboardRows, ingestTrade } from './app-state.js';
 import { fetchBootstrapTrades, fetchProfitLeaderboard, fetchRecentWhales, fetchWhaleTrade } from './polywhale-client.js';
+import { fetchGammaResolution } from './polymarket-client.js';
 import { reconcileOpenDemoPositions } from './resolution-engine.js';
 import { normalizeStreamMessage } from './trade-normalizer.js';
 import { nowIso } from './format.js';
@@ -109,7 +110,7 @@ export function startIngestion(state, broadcast, storage) {
     try {
       state.service.resolutionStatus = 'polling';
       broadcast();
-      const result = await reconcileOpenDemoPositions(state, fetchWhaleTrade);
+      const result = await reconcileOpenDemoPositions(state, fetchWhaleTrade, fetchGammaResolution);
       state.service.resolutionStatus = 'ready';
       state.service.resolutionLastRunAt = nowIso();
       state.service.resolutionLastCheckedCount = result.checked;

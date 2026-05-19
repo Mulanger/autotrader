@@ -43,6 +43,7 @@ Optional:
 - `PORT`: backend port, defaults to `4101`.
 - `HOST`: server bind host, defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: defaults to `https://whaleserver-production.up.railway.app`.
+- `POLYMARKET_GAMMA_URL`: defaults to `https://gamma-api.polymarket.com`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: defaults to `60000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: defaults to `75`.

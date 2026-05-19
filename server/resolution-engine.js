@@ -1,6 +1,6 @@
 import { settleDemoPosition, updateOpenPositionPrices } from './demo-engine.js';
 
-export async function reconcileOpenDemoPositions(state, fetchTradeById) {
+export async function reconcileOpenDemoPositions(state, fetchTradeById, fetchMarketResolution = null) {
   const openPositions = [...(state.demo?.openPositions || [])];
   if (!openPositions.length) {
     return { changed: false, checked: 0, settled: [], errors: [] };
@@ -37,7 +37,15 @@ export async function reconcileOpenDemoPositions(state, fetchTradeById) {
 
     if (previousPrice !== livePosition.currentPriceCents) changed = true;
 
-    const settlement = buildSettlementForPosition(livePosition, trade);
+    const gammaResolution = await fetchFallbackResolution(livePosition, trade, fetchMarketResolution);
+    const resolutionTrade = gammaResolution ? { ...trade, resolution: gammaResolution } : trade;
+    if (gammaResolution?.status && gammaResolution.status !== 'open') {
+      livePosition.resolutionStatus = gammaResolution.status;
+      livePosition.resolutionSource = gammaResolution.source;
+      if (gammaResolution.winningOutcome) livePosition.winningOutcome = gammaResolution.winningOutcome;
+    }
+
+    const settlement = buildSettlementForPosition(livePosition, resolutionTrade);
     if (!settlement) continue;
 
     const closed = settleDemoPosition(state.demo, livePosition.id, settlement);
@@ -65,7 +73,7 @@ export function buildSettlementForPosition(position, trade) {
       resolvedAt: resolution.resolvedAt,
       resolutionStatus,
       winningOutcome: resolution.winningOutcome || null,
-      settlementSource: 'polywhale-resolution',
+      settlementSource: resolution.source || 'polywhale-resolution',
       sourceTradeId: trade.id,
       reason: 'Market invalidated; demo stake refunded',
     };
@@ -85,10 +93,21 @@ export function buildSettlementForPosition(position, trade) {
     resolvedAt: resolution.resolvedAt,
     resolutionStatus,
     winningOutcome: resolution.winningOutcome || null,
-    settlementSource: 'polywhale-resolution',
+    settlementSource: resolution.source || 'polywhale-resolution',
     sourceTradeId: trade.id,
     reason: `Official market resolution: ${won ? 'won' : 'lost'} ${formatSignedUsd(realizedPnlUsd)}`,
   };
+}
+
+async function fetchFallbackResolution(position, trade, fetchMarketResolution) {
+  if (!fetchMarketResolution || isResolvableStatus(String(trade?.resolution?.status || '').toLowerCase(), trade?.resolution || {})) {
+    return null;
+  }
+
+  return fetchMarketResolution({
+    conditionId: trade?.market?.conditionId || position.marketConditionId || null,
+    slug: trade?.market?.slug || position.marketSlug || null,
+  });
 }
 
 function isResolvableStatus(status, resolution) {
