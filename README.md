@@ -5,6 +5,7 @@ Local copy-trading workbench for selected Polywhale leaderboard wallets.
 Current state:
 
 - Demo trading only: starts with `$100` cash and uses `$10` per copied buy.
+- Risk rule: only copies watched BUY trades priced at `75c` or lower.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
 - Real trading page is intentionally disabled until an execution adapter is added and explicitly armed.
 - Every observed trade is logged with a copied/skipped decision.
@@ -42,6 +43,8 @@ Optional:
 - `HOST`: server bind host, defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: defaults to `https://whaleserver-production.up.railway.app`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
+- `RESOLUTION_POLL_INTERVAL_MS`: defaults to `60000`.
+- `DEMO_MAX_ENTRY_PRICE_CENTS`: defaults to `75`.
 - `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
 Real-money trading is not implemented in this scaffold. Do not put wallet private keys into this app until a real execution adapter, signing flow, and risk gates are reviewed.

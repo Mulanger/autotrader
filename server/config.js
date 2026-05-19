@@ -18,4 +18,6 @@ export const DEMO_STARTING_CAPITAL_USD = 100;
 
 export const DEMO_STAKE_USD = 10;
 
+export const DEMO_MAX_ENTRY_PRICE_CENTS = Number(process.env.DEMO_MAX_ENTRY_PRICE_CENTS || 75);
+
 export { WATCHED_WALLETS };

@@ -37,6 +37,25 @@ describe('demo copy engine', () => {
     expect(demo.copiedSourceTradeIds.has('trade-1')).toBe(true);
   });
 
+  it('copies BUY trades priced at the 75c max entry boundary', () => {
+    const demo = createDemoState();
+    const decision = evaluateDemoCopy(demo, trade({ priceCents: 75 }));
+
+    expect(decision.action).toBe('copied');
+    expect(demo.openPositions).toHaveLength(1);
+    expect(demo.openPositions[0].entryPriceCents).toBe(75);
+  });
+
+  it('skips BUY trades above the 75c max entry rule', () => {
+    const demo = createDemoState();
+    const decision = evaluateDemoCopy(demo, trade({ priceCents: 76 }));
+
+    expect(decision.action).toBe('skipped');
+    expect(decision.reason).toMatch(/above 75\.0c max/i);
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.cashUsd).toBe(100);
+  });
+
   it('tracks fee status and adjusts buy shares when fee data is available', () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, {

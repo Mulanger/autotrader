@@ -1,4 +1,4 @@
-import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from './config.js';
+import { DEMO_MAX_ENTRY_PRICE_CENTS, DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from './config.js';
 import { buildEntryFeeModel } from './fee-model.js';
 import { getTradeCurrentPriceCents } from './trade-normalizer.js';
 import { nowIso } from './format.js';
@@ -8,6 +8,7 @@ export function createDemoState() {
     startingCapitalUsd: DEMO_STARTING_CAPITAL_USD,
     cashUsd: DEMO_STARTING_CAPITAL_USD,
     fixedStakeUsd: DEMO_STAKE_USD,
+    maxEntryPriceCents: DEMO_MAX_ENTRY_PRICE_CENTS,
     realizedPnlUsd: 0,
     copiedCount: 0,
     skippedCount: 0,
@@ -63,6 +64,7 @@ export function markToMarket(demo) {
     knownEntryFeesUsd: positions.reduce((sum, position) => sum + (numberOrNull(position.entryFeeUsd) ?? 0), 0),
     feeUnknownCount: positions.filter((position) => position.feeStatus === 'unknown' || !position.feeStatus).length,
     fixedStakeUsd: demo.fixedStakeUsd,
+    maxEntryPriceCents: demo.maxEntryPriceCents ?? DEMO_MAX_ENTRY_PRICE_CENTS,
     openPositionCount: demo.openPositions.length,
     closedPositionCount: demo.closedPositions.length,
   };
@@ -90,6 +92,14 @@ function copyBuy(demo, trade) {
     return recordDecision(demo, trade, {
       action: 'skipped',
       reason: 'No usable execution price',
+    });
+  }
+
+  const maxEntryPriceCents = demo.maxEntryPriceCents ?? DEMO_MAX_ENTRY_PRICE_CENTS;
+  if (price > maxEntryPriceCents) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: `Entry price ${formatCents(price)} above ${formatCents(maxEntryPriceCents)} max`,
     });
   }
 
@@ -214,4 +224,8 @@ function numberOrNull(value) {
 function formatSignedUsd(value) {
   const prefix = value >= 0 ? '+' : '-';
   return `${prefix}$${Math.abs(value).toFixed(2)}`;
+}
+
+function formatCents(value) {
+  return `${Number(value).toFixed(1)}c`;
 }

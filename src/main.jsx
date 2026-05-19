@@ -39,6 +39,7 @@ function App() {
         setMode={setMode}
         connected={connected}
         service={data.service}
+        metrics={metrics}
         watchedWalletCount={data.watchedWallets.length}
       />
       <section className="workspace">
@@ -122,7 +123,7 @@ function useAutotraderState() {
   return { state, connected, refresh };
 }
 
-function Sidebar({ mode, setMode, connected, service, watchedWalletCount }) {
+function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCount }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -167,6 +168,7 @@ function Sidebar({ mode, setMode, connected, service, watchedWalletCount }) {
         <span className="eyebrow">Risk model</span>
         <div className="riskLine"><span>Capital</span><strong>$100.00</strong></div>
         <div className="riskLine"><span>Copy size</span><strong>$10.00</strong></div>
+        <div className="riskLine"><span>Max entry</span><strong>{formatCents(metrics.maxEntryPriceCents || 75)}</strong></div>
         <div className="riskLine"><span>Wallets</span><strong>{watchedWalletCount}</strong></div>
       </div>
     </aside>
@@ -571,6 +573,7 @@ function emptyState() {
         totalNotionalCopiedUsd: 0,
         knownEntryFeesUsd: 0,
         feeUnknownCount: 0,
+        maxEntryPriceCents: 75,
       },
       openPositions: [],
       closedPositions: [],
@@ -611,6 +614,12 @@ function pct(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 'n/a';
   return `${number.toFixed(number >= 99 ? 0 : 1)}%`;
+}
+
+function formatCents(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'n/a';
+  return `${number.toFixed(1)}c`;
 }
 
 function feeMetric(metrics) {

@@ -28,6 +28,7 @@ The dashboard is a demo/paper-trading system right now:
 
 - Starting demo capital: `$100`.
 - Fixed copy size: `$10`.
+- Max copied entry price: `75c`. Watched BUY trades above this price are skipped.
 - Only watched wallets can appear in the main copy-list tape.
 - Historical trades loaded during startup are displayed as context but are not copied.
 - New eligible watched `BUY` trades after service startup can open demo positions.
@@ -113,6 +114,7 @@ Production/Railway:
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
+- `DEMO_MAX_ENTRY_PRICE_CENTS`: maximum BUY entry price to copy. Defaults to `75`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
 
@@ -182,6 +184,7 @@ Implemented in `server/demo-engine.js`.
 
 - `BUY`:
   - Requires a usable positive price.
+  - Requires price <= `DEMO_MAX_ENTRY_PRICE_CENTS`, default `75c`.
   - Requires demo cash >= `$10`.
   - Opens a demo position using `$10 / price`.
   - Reduces cash by `$10`.
