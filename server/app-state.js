@@ -1,5 +1,5 @@
 import { WATCHED_WALLETS } from './config.js';
-import { createDemoState, evaluateDemoCopy, markToMarket, updateOpenPositionPrices } from './demo-engine.js';
+import { createDemoState, evaluateDemoCopy, makeTraderMarketKey, markToMarket, updateOpenPositionPrices } from './demo-engine.js';
 import { nowIso, shortWallet } from './format.js';
 
 const watchedSet = new Set(WATCHED_WALLETS.map((wallet) => wallet.toLowerCase()));
@@ -80,6 +80,7 @@ export function serializeDurableState(state) {
     demo: {
       ...state.demo,
       copiedSourceTradeIds: [...state.demo.copiedSourceTradeIds],
+      copiedTraderMarketKeys: [...state.demo.copiedTraderMarketKeys],
     },
     real: state.real,
   };
@@ -105,6 +106,7 @@ export function restoreDurableState(state, stored) {
     restoredDemo.copiedSourceTradeIds = new Set(
       Array.isArray(stored.demo.copiedSourceTradeIds) ? stored.demo.copiedSourceTradeIds : []
     );
+    restoredDemo.copiedTraderMarketKeys = restoreTraderMarketKeys(stored.demo);
     state.demo = restoredDemo;
     repairPrematureResolutionSettlements(state.demo);
   }
@@ -214,6 +216,15 @@ export function snapshotState(state) {
 function numberOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function restoreTraderMarketKeys(demo) {
+  const keys = new Set(Array.isArray(demo.copiedTraderMarketKeys) ? demo.copiedTraderMarketKeys : []);
+  for (const position of [...(demo.openPositions || []), ...(demo.closedPositions || [])]) {
+    const key = position.traderMarketKey || makeTraderMarketKey(position);
+    if (key) keys.add(key);
+  }
+  return keys;
 }
 
 function repairPrematureResolutionSettlements(demo) {

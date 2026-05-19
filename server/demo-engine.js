@@ -17,6 +17,7 @@ export function createDemoState() {
     closedPositions: [],
     decisions: [],
     copiedSourceTradeIds: new Set(),
+    copiedTraderMarketKeys: new Set(),
   };
 }
 
@@ -95,6 +96,14 @@ function copyBuy(demo, trade) {
     });
   }
 
+  const traderMarketKey = makeTraderMarketKey(trade);
+  if (traderMarketKey && demo.copiedTraderMarketKeys?.has(traderMarketKey)) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'Trader market already copied; ignoring repeat entry',
+    });
+  }
+
   const maxEntryPriceCents = demo.maxEntryPriceCents ?? DEMO_MAX_ENTRY_PRICE_CENTS;
   if (price > maxEntryPriceCents) {
     return recordDecision(demo, trade, {
@@ -115,6 +124,7 @@ function copyBuy(demo, trade) {
   const position = {
     id: `demo-${trade.id}`,
     sourceTradeId: trade.id,
+    traderMarketKey,
     traderWallet: trade.trader.proxyWallet,
     traderName: trade.trader.displayName || trade.trader.pseudonym || trade.trader.proxyWallet,
     marketSlug: trade.market.slug,
@@ -148,6 +158,7 @@ function copyBuy(demo, trade) {
   demo.totalNotionalCopiedUsd += demo.fixedStakeUsd;
   demo.openPositions.unshift(position);
   demo.copiedSourceTradeIds.add(trade.id);
+  if (traderMarketKey) demo.copiedTraderMarketKeys.add(traderMarketKey);
 
   return recordDecision(demo, trade, {
     action: 'copied',
@@ -219,6 +230,18 @@ function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+export function makeTraderMarketKey(tradeOrPosition) {
+  const wallet = String(tradeOrPosition?.trader?.proxyWallet || tradeOrPosition?.traderWallet || '').trim().toLowerCase();
+  const marketId = String(
+    tradeOrPosition?.market?.conditionId ||
+      tradeOrPosition?.market?.slug ||
+      tradeOrPosition?.marketSlug ||
+      tradeOrPosition?.marketTitle ||
+      ''
+  ).trim().toLowerCase();
+  return wallet && marketId ? `${wallet}:${marketId}` : null;
 }
 
 function formatSignedUsd(value) {

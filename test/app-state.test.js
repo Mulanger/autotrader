@@ -58,6 +58,43 @@ describe('app state', () => {
     expect(restored.demo.cashUsd).toBe(90);
     expect(restored.demo.openPositions).toHaveLength(1);
     expect(restored.seenTradeIds.has('restore-trade')).toBe(true);
+    expect(restored.demo.copiedTraderMarketKeys.size).toBe(1);
+  });
+
+  it('rebuilds trader-market dedupe keys from older stored positions', () => {
+    const state = createAppState();
+    const wallet = state.watchedWallets[0];
+    const restored = createAppState();
+
+    restoreDurableState(restored, {
+      demo: {
+        cashUsd: 90,
+        openPositions: [{
+          id: 'demo-old',
+          sourceTradeId: 'old',
+          traderWallet: wallet,
+          marketSlug: 'old-market',
+          status: 'open',
+          shares: 20,
+          stakeUsd: 10,
+          entryPriceCents: 50,
+          currentPriceCents: 50,
+        }],
+        closedPositions: [],
+        decisions: [],
+        copiedSourceTradeIds: ['old'],
+      },
+      traders: state.traders,
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: ['old'],
+    });
+
+    const event = ingestTrade(restored, trade(wallet, { id: 'repeat', marketSlug: 'old-market' }), 'websocket');
+
+    expect(event.copyDecision.action).toBe('skipped');
+    expect(event.copyDecision.reason).toMatch(/already copied/i);
+    expect(restored.demo.openPositions).toHaveLength(1);
   });
 
   it('reopens premature resolution settlements saved with open status', () => {

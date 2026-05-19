@@ -6,6 +6,7 @@ Current state:
 
 - Demo trading only: starts with `$100` cash and uses `$10` per copied buy.
 - Risk rule: only copies watched BUY trades priced at `75c` or lower.
+- Repeat-entry rule: only the first copied trade from a given wallet on a given market is copied.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
 - Real trading page is intentionally disabled until an execution adapter is added and explicitly armed.
 - Every observed trade is logged with a copied/skipped decision.

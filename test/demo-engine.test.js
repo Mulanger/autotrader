@@ -12,6 +12,7 @@ function trade(overrides = {}) {
     timestamp: overrides.timestamp ?? 1_779_120_000,
     market: {
       slug: overrides.marketSlug || 'test-market',
+      conditionId: overrides.conditionId || null,
       title: 'Test market',
       icon: null,
       polymarketUrl: 'https://polymarket.com/test',
@@ -19,7 +20,7 @@ function trade(overrides = {}) {
       noPriceCents: overrides.noPriceCents ?? 50,
     },
     trader: {
-      proxyWallet: '0x531b33c5e7b8c2610917f883a13a1b8b1a706022',
+      proxyWallet: overrides.wallet || '0x531b33c5e7b8c2610917f883a13a1b8b1a706022',
       displayName: 'Trader',
     },
   };
@@ -76,6 +77,42 @@ describe('demo copy engine', () => {
     expect(second).toBeNull();
     expect(demo.openPositions).toHaveLength(1);
     expect(demo.cashUsd).toBe(90);
+  });
+
+  it('copies only the first eligible BUY from the same trader on the same market', () => {
+    const demo = createDemoState();
+    const first = evaluateDemoCopy(demo, trade({ id: 'first', marketSlug: 'repeat-market', priceCents: 69 }));
+    const second = evaluateDemoCopy(demo, trade({ id: 'second', marketSlug: 'repeat-market', priceCents: 68 }));
+
+    expect(first.action).toBe('copied');
+    expect(second.action).toBe('skipped');
+    expect(second.reason).toMatch(/already copied/i);
+    expect(demo.openPositions).toHaveLength(1);
+    expect(demo.cashUsd).toBe(90);
+  });
+
+  it('allows the same market from a different trader wallet', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({ id: 'first', marketSlug: 'shared-market', priceCents: 69 }));
+    const second = evaluateDemoCopy(demo, trade({
+      id: 'second',
+      marketSlug: 'shared-market',
+      priceCents: 68,
+      wallet: '0x1887879a1bda615e88f280b582514c7d54e2678a',
+    }));
+
+    expect(second.action).toBe('copied');
+    expect(demo.openPositions).toHaveLength(2);
+  });
+
+  it('can copy a later lower-priced entry if the first trade was skipped by max price', () => {
+    const demo = createDemoState();
+    const expensive = evaluateDemoCopy(demo, trade({ id: 'expensive', marketSlug: 'same-market', priceCents: 94 }));
+    const eligible = evaluateDemoCopy(demo, trade({ id: 'eligible', marketSlug: 'same-market', priceCents: 69 }));
+
+    expect(expensive.action).toBe('skipped');
+    expect(eligible.action).toBe('copied');
+    expect(demo.openPositions).toHaveLength(1);
   });
 
   it('does not close demo inventory on SELL because settlement waits for resolution', () => {

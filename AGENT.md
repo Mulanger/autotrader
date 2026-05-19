@@ -32,6 +32,7 @@ The dashboard is a demo/paper-trading system right now:
 - Only watched wallets can appear in the main copy-list tape.
 - Historical trades loaded during startup are displayed as context but are not copied.
 - New eligible watched `BUY` trades after service startup can open demo positions.
+- Repeat entries from the same wallet on the same market are skipped after the first copied entry.
 - Watched `SELL` trades are observed but do not close demo positions.
 - Open demo positions are settled by a separate resolution loop after Polywhale reports the official market outcome.
 
@@ -185,10 +186,12 @@ Implemented in `server/demo-engine.js`.
 - `BUY`:
   - Requires a usable positive price.
   - Requires price <= `DEMO_MAX_ENTRY_PRICE_CENTS`, default `75c`.
+  - Requires that the same trader wallet has not already been copied on the same market.
   - Requires demo cash >= `$10`.
   - Opens a demo position using `$10 / price`.
   - Reduces cash by `$10`.
   - Adds the source trade id to `copiedSourceTradeIds`.
+  - Adds a `trader wallet + market` key to `copiedTraderMarketKeys` so later entries on the same market from the same trader are skipped.
 - `SELL`:
   - Is recorded as skipped for demo execution.
   - Does not close paper inventory.
