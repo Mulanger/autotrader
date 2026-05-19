@@ -109,6 +109,7 @@ export function restoreDurableState(state, stored) {
     restoredDemo.copiedTraderMarketKeys = restoreTraderMarketKeys(stored.demo);
     state.demo = restoredDemo;
     repairPrematureResolutionSettlements(state.demo);
+    pruneDuplicateTraderMarkets(state.demo);
   }
 
   if (stored.real && typeof stored.real === 'object') {
@@ -225,6 +226,93 @@ function restoreTraderMarketKeys(demo) {
     if (key) keys.add(key);
   }
   return keys;
+}
+
+function pruneDuplicateTraderMarkets(demo) {
+  const positions = [
+    ...(demo.openPositions || []).map((position) => ({ position, list: 'open' })),
+    ...(demo.closedPositions || []).map((position) => ({ position, list: 'closed' })),
+  ];
+  const grouped = new Map();
+
+  for (const item of positions) {
+    const key = item.position.traderMarketKey || makeTraderMarketKey(item.position);
+    if (!key) continue;
+    item.position.traderMarketKey = key;
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  }
+
+  const removed = [];
+  const keptKeys = new Set();
+
+  for (const [key, items] of grouped.entries()) {
+    if (items.length <= 1) {
+      keptKeys.add(key);
+      continue;
+    }
+
+    const sorted = [...items].sort(comparePositionAge);
+    const [keep, ...duplicates] = sorted;
+    keptKeys.add(key);
+    removed.push(...duplicates);
+    keep.position.duplicateRepairNote = keep.position.duplicateRepairNote || 'Kept as first copied trader-market entry';
+  }
+
+  if (!removed.length) {
+    demo.copiedTraderMarketKeys = keptKeys;
+    return;
+  }
+
+  const removedIds = new Set(removed.map((item) => item.position.id));
+  let cashAdjustmentUsd = 0;
+  let realizedPnlAdjustmentUsd = 0;
+  let notionalAdjustmentUsd = 0;
+
+  for (const { position, list } of removed) {
+    const stakeUsd = numberOrFallback(position.stakeUsd, 0);
+    const realizedPnlUsd = numberOrFallback(position.realizedPnlUsd, 0);
+    if (list === 'open') cashAdjustmentUsd += stakeUsd;
+    if (list === 'closed') {
+      cashAdjustmentUsd -= realizedPnlUsd;
+      realizedPnlAdjustmentUsd -= realizedPnlUsd;
+    }
+    notionalAdjustmentUsd += stakeUsd;
+  }
+
+  demo.cashUsd += cashAdjustmentUsd;
+  demo.realizedPnlUsd += realizedPnlAdjustmentUsd;
+  demo.totalNotionalCopiedUsd = Math.max(0, numberOrFallback(demo.totalNotionalCopiedUsd, 0) - notionalAdjustmentUsd);
+  demo.copiedCount = Math.max(0, Number(demo.copiedCount || 0) - removed.length);
+  demo.openPositions = (demo.openPositions || []).filter((position) => !removedIds.has(position.id));
+  demo.closedPositions = (demo.closedPositions || []).filter((position) => !removedIds.has(position.id));
+  demo.decisions = (demo.decisions || []).filter((decision) => !removedIds.has(decision.copyId));
+  demo.copiedSourceTradeIds = new Set(
+    [...(demo.copiedSourceTradeIds || [])].filter((tradeId) => {
+      return !removed.some(({ position }) => position.sourceTradeId === tradeId);
+    })
+  );
+  demo.copiedTraderMarketKeys = keptKeys;
+  demo.decisions.unshift({
+    id: `dedupe-${Date.now()}`,
+    tradeId: removed[0]?.position.sourceTradeId || 'dedupe',
+    action: 'repaired',
+    reason: `Removed ${removed.length} duplicate trader-market demo position${removed.length === 1 ? '' : 's'}`,
+    copyId: removed[0]?.position.id || null,
+    at: nowIso(),
+  });
+}
+
+function comparePositionAge(a, b) {
+  const aTime = dateValue(a.position.openedAt || a.position.createdAt || a.position.updatedAt);
+  const bTime = dateValue(b.position.openedAt || b.position.createdAt || b.position.updatedAt);
+  if (aTime !== bTime) return aTime - bTime;
+  return String(a.position.sourceTradeId || a.position.id).localeCompare(String(b.position.sourceTradeId || b.position.id));
+}
+
+function dateValue(value) {
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
 }
 
 function repairPrematureResolutionSettlements(demo) {

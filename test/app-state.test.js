@@ -97,6 +97,85 @@ describe('app state', () => {
     expect(restored.demo.openPositions).toHaveLength(1);
   });
 
+  it('prunes duplicate trader-market positions from restored durable state', () => {
+    const state = createAppState();
+    const wallet = state.watchedWallets[0];
+    const restored = createAppState();
+
+    restoreDurableState(restored, {
+      demo: {
+        cashUsd: 70,
+        realizedPnlUsd: -20,
+        copiedCount: 3,
+        totalNotionalCopiedUsd: 30,
+        openPositions: [
+          {
+            id: 'demo-open-duplicate',
+            sourceTradeId: 'open-duplicate',
+            traderWallet: wallet,
+            marketSlug: 'duplicate-market',
+            status: 'open',
+            openedAt: '2026-05-19T11:00:00.000Z',
+            shares: 14.7,
+            stakeUsd: 10,
+            entryPriceCents: 68,
+            currentPriceCents: 68,
+          },
+        ],
+        closedPositions: [
+          {
+            id: 'demo-first',
+            sourceTradeId: 'first',
+            traderWallet: wallet,
+            marketSlug: 'duplicate-market',
+            status: 'loss',
+            openedAt: '2026-05-19T10:00:00.000Z',
+            closedAt: '2026-05-19T12:00:00.000Z',
+            shares: 14.7,
+            stakeUsd: 10,
+            entryPriceCents: 68,
+            currentPriceCents: 68,
+            exitValueUsd: 0,
+            realizedPnlUsd: -10,
+          },
+          {
+            id: 'demo-closed-duplicate',
+            sourceTradeId: 'closed-duplicate',
+            traderWallet: wallet,
+            marketSlug: 'duplicate-market',
+            status: 'loss',
+            openedAt: '2026-05-19T10:30:00.000Z',
+            closedAt: '2026-05-19T12:00:00.000Z',
+            shares: 14.7,
+            stakeUsd: 10,
+            entryPriceCents: 68,
+            currentPriceCents: 68,
+            exitValueUsd: 0,
+            realizedPnlUsd: -10,
+          },
+        ],
+        decisions: [
+          { id: 'first-copied', tradeId: 'first', action: 'copied', copyId: 'demo-first' },
+          { id: 'open-copied', tradeId: 'open-duplicate', action: 'copied', copyId: 'demo-open-duplicate' },
+          { id: 'closed-copied', tradeId: 'closed-duplicate', action: 'copied', copyId: 'demo-closed-duplicate' },
+        ],
+        copiedSourceTradeIds: ['first', 'open-duplicate', 'closed-duplicate'],
+      },
+      traders: state.traders,
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: ['first', 'open-duplicate', 'closed-duplicate'],
+    });
+
+    expect(restored.demo.closedPositions.map((position) => position.id)).toEqual(['demo-first']);
+    expect(restored.demo.openPositions).toHaveLength(0);
+    expect(restored.demo.cashUsd).toBe(90);
+    expect(restored.demo.realizedPnlUsd).toBe(-10);
+    expect(restored.demo.copiedCount).toBe(1);
+    expect(restored.demo.totalNotionalCopiedUsd).toBe(10);
+    expect(restored.demo.decisions[0].action).toBe('repaired');
+  });
+
   it('reopens premature resolution settlements saved with open status', () => {
     const state = createAppState();
     const restored = createAppState();

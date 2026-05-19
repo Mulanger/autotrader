@@ -33,6 +33,7 @@ The dashboard is a demo/paper-trading system right now:
 - Historical trades loaded during startup are displayed as context but are not copied.
 - New eligible watched `BUY` trades after service startup can open demo positions.
 - Repeat entries from the same wallet on the same market are skipped after the first copied entry.
+- On restore, older duplicate positions are pruned so only the earliest copied trader-market position remains.
 - Watched `SELL` trades are observed but do not close demo positions.
 - Open demo positions are settled by a separate resolution loop after Polywhale reports the official market outcome.
 
@@ -269,6 +270,8 @@ Current table responsibilities:
 - `trader_profiles`: watched trader metadata, leaderboard rank/profit fields, and recent trade context.
 - `autotrader_snapshots`: app-level restore snapshot.
 - `autotrader_state`: legacy fallback from the earlier single JSON implementation.
+
+`saveNormalizedState()` deletes `demo_positions` rows that are no longer present in the current durable state. This is intentional: the demo state is the source of truth after restore-time repairs such as duplicate trader-market pruning.
 
 Persisted fields include:
 

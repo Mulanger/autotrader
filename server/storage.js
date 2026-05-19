@@ -293,8 +293,15 @@ async function saveNormalizedState(pool, payload) {
       await upsertCopyDecision(client, decision.tradeId, decision);
     }
 
-    for (const position of [...(demo.openPositions || []), ...(demo.closedPositions || [])]) {
+    const positions = [...(demo.openPositions || []), ...(demo.closedPositions || [])];
+    for (const position of positions) {
       await upsertDemoPosition(client, position);
+    }
+    const positionIds = positions.map((position) => position.id).filter(Boolean);
+    if (positionIds.length) {
+      await client.query('delete from demo_positions where not (id = any($1::text[]))', [positionIds]);
+    } else {
+      await client.query('delete from demo_positions');
     }
 
     await client.query('commit');
