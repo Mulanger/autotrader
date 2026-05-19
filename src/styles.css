@@ -443,20 +443,172 @@ button {
 
 .positionRow {
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(120px, auto);
   align-items: center;
   gap: 12px;
   padding: 12px;
 }
 
 .positionList.expanded .positionRow {
-  grid-template-columns: 42px minmax(0, 1fr) auto 38px;
+  grid-template-columns: 42px minmax(0, 1fr) minmax(150px, auto) 38px;
+}
+
+.positionsWorkspace {
+  display: grid;
+  align-content: start;
+}
+
+.positionSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.positionStat {
+  min-height: 68px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 10px 12px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.positionStat span,
+.positionPriceLabel {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 760;
+}
+
+.positionStat strong {
+  font-size: 1.15rem;
+}
+
+.positionControls {
+  width: max-content;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  overflow-x: auto;
+}
+
+.positionControls button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.positionControls button.active {
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgba(22, 32, 45, 0.08);
+}
+
+.positionControls b {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #dfe7f1;
+  color: var(--ink);
+  font-size: 0.76rem;
+}
+
+.positionMain {
+  min-width: 0;
+}
+
+.positionTitleLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.positionTitleLine strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 780;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.statusBadge.open {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.statusBadge.positive {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.statusBadge.negative {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.statusBadge.refunded {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.statusBadge.neutral {
+  background: var(--soft);
+  color: var(--muted);
+}
+
+.positionMeta,
+.historyMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.positionMeta span,
+.historyMeta span {
+  white-space: nowrap;
 }
 
 .positionNumbers {
   display: grid;
   justify-items: end;
   gap: 3px;
+}
+
+.positionNumbers strong {
+  font-size: 1rem;
 }
 
 .positive {
@@ -715,6 +867,10 @@ button {
     grid-template-columns: repeat(3, minmax(150px, 1fr));
   }
 
+  .positionSummary {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
   .traderList {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
@@ -744,6 +900,14 @@ button {
   .traderList,
   .profitBreakdown {
     grid-template-columns: 1fr;
+  }
+
+  .positionSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .positionControls {
+    width: 100%;
   }
 
   .feedRow {

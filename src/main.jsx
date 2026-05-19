@@ -3,13 +3,15 @@ import { createRoot } from 'react-dom/client';
 import {
   Activity,
   AlertTriangle,
-  ArrowDownRight,
   ArrowUpRight,
   BarChart3,
+  CheckCircle2,
   CircleDollarSign,
+  Clock3,
   Cpu,
   ExternalLink,
   Gauge,
+  Layers3,
   LineChart,
   ListFilter,
   Lock,
@@ -207,7 +209,15 @@ function Topbar({ mode, tab, setTab, refresh, service }) {
 
 function DemoWorkspace({ data, metrics, tab }) {
   if (tab === 'profit') return <ProfitView metrics={metrics} closedPositions={data.demo.closedPositions} />;
-  if (tab === 'positions') return <PositionsView positions={data.demo.openPositions} />;
+  if (tab === 'positions') {
+    return (
+      <PositionsView
+        openPositions={data.demo.openPositions}
+        closedPositions={data.demo.closedPositions}
+        metrics={metrics}
+      />
+    );
+  }
   if (tab === 'traders') return <TraderGrid traders={data.traders} />;
 
   return (
@@ -352,55 +362,131 @@ function OpenPositionsCard({ positions }) {
   );
 }
 
-function PositionsView({ positions }) {
+function PositionsView({ openPositions, closedPositions, metrics }) {
+  const [filter, setFilter] = React.useState('open');
+  const allPositions = React.useMemo(() => [...openPositions, ...closedPositions], [openPositions, closedPositions]);
+  const positions = filter === 'open' ? openPositions : filter === 'closed' ? closedPositions : allPositions;
+  const filters = [
+    { id: 'open', label: 'Open', count: openPositions.length, icon: Clock3 },
+    { id: 'closed', label: 'Closed', count: closedPositions.length, icon: CheckCircle2 },
+    { id: 'all', label: 'All', count: allPositions.length, icon: Layers3 },
+  ];
+  const emptyCopy = {
+    open: {
+      title: 'No open demo positions',
+      text: 'The next watched BUY trade will open a $10 simulated position and wait for official resolution.',
+    },
+    closed: {
+      title: 'No closed demo positions',
+      text: 'Resolved copied trades will appear here with their final status and realized P/L.',
+    },
+    all: {
+      title: 'No demo positions yet',
+      text: 'Copied watched-wallet BUY trades will appear here once the demo engine opens a position.',
+    },
+  }[filter];
+
   return (
-    <section className="panel fullPanel">
+    <section className="panel fullPanel positionsWorkspace">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">Open exposure</p>
-          <h2>Currently copied trades</h2>
+          <p className="eyebrow">Demo positions</p>
+          <h2>Open exposure and settled trades</h2>
         </div>
       </div>
-      <PositionList positions={positions} expanded />
+      <div className="positionSummary">
+        <div className="positionStat">
+          <span>Open</span>
+          <strong>{openPositions.length}</strong>
+        </div>
+        <div className="positionStat">
+          <span>Closed</span>
+          <strong>{closedPositions.length}</strong>
+        </div>
+        <div className="positionStat">
+          <span>Realized</span>
+          <strong className={pnlTone(metrics.realizedPnlUsd)}>{signedUsd(metrics.realizedPnlUsd)}</strong>
+        </div>
+        <div className="positionStat">
+          <span>Unrealized</span>
+          <strong className={pnlTone(metrics.unrealizedPnlUsd)}>{signedUsd(metrics.unrealizedPnlUsd)}</strong>
+        </div>
+      </div>
+      <div className="positionControls" role="tablist" aria-label="Position status filter">
+        {filters.map(({ id, label, count, icon: Icon }) => (
+          <button key={id} className={filter === id ? 'active' : ''} onClick={() => setFilter(id)}>
+            <Icon size={15} />
+            <span>{label}</span>
+            <b>{count}</b>
+          </button>
+        ))}
+      </div>
+      <PositionList positions={positions} expanded emptyTitle={emptyCopy.title} emptyText={emptyCopy.text} />
     </section>
   );
 }
 
-function PositionList({ positions, expanded = false }) {
+function PositionList({ positions, expanded = false, emptyTitle, emptyText }) {
   if (!positions.length) {
-    return <EmptyState title="No open demo positions" text="The next watched BUY trade will open a $10 simulated position and wait for official resolution." />;
+    return (
+      <EmptyState
+        title={emptyTitle || 'No open demo positions'}
+        text={emptyText || 'The next watched BUY trade will open a $10 simulated position and wait for official resolution.'}
+      />
+    );
   }
 
   return (
     <div className={expanded ? 'positionList expanded' : 'positionList'}>
-      {positions.map((position) => {
-        const pnl = position.unrealizedPnlUsd || 0;
-        return (
-          <article className="positionRow" key={position.id}>
-            <div className="marketThumb">
-              {position.marketIcon ? <img src={position.marketIcon} alt="" /> : <Target size={18} />}
-            </div>
-            <div>
-              <strong>{position.outcome}</strong>
-              <p>{position.marketTitle}</p>
-              <small>
-                {shortWallet(position.traderWallet)} - entry {position.entryPriceCents.toFixed(1)}c - awaiting resolution
-                {' - '}{feeLabel(position)}
-              </small>
-            </div>
-            <div className="positionNumbers">
-              <strong>{position.currentPriceCents.toFixed(1)}c</strong>
-              <span className={pnlTone(pnl)}>{signedUsd(pnl)} - {signedPct(position.unrealizedPnlPct || 0)}</span>
-            </div>
-            {expanded && position.polymarketUrl && (
-              <a className="iconButton" href={position.polymarketUrl} target="_blank" rel="noreferrer" aria-label="Open Polymarket">
-                <ExternalLink size={16} />
-              </a>
-            )}
-          </article>
-        );
-      })}
+      {positions.map((position) => <PositionRow key={`${position.id}-${position.status}`} position={position} expanded={expanded} />)}
     </div>
+  );
+}
+
+function PositionRow({ position, expanded }) {
+  const open = isOpenPosition(position);
+  const pnl = open ? position.unrealizedPnlUsd || 0 : position.realizedPnlUsd || 0;
+  const dateLabel = marketDateLabel(position);
+  const resolution = resolutionLabel(position);
+  const timeline = open
+    ? `opened ${formatTimeAgo(position.openedAt)}`
+    : `resolved ${formatTimeAgo(position.resolvedAt || position.closedAt)}`;
+
+  return (
+    <article className={`positionRow ${open ? 'open' : 'closed'}`}>
+      <div className="marketThumb">
+        {position.marketIcon ? <img src={position.marketIcon} alt="" /> : <Target size={18} />}
+      </div>
+      <div className="positionMain">
+        <div className="positionTitleLine">
+          <strong>{position.outcome}</strong>
+          <span className={`statusBadge ${statusClass(position.status)}`}>{statusLabel(position.status)}</span>
+        </div>
+        <p>{position.marketTitle}</p>
+        <div className="positionMeta">
+          {dateLabel && <span>{dateLabel}</span>}
+          <span>{shortWallet(position.traderWallet)}</span>
+          <span>entry {formatCents(position.entryPriceCents)}</span>
+          {!open && <span>exit {formatCents(position.exitPriceCents)}</span>}
+          <span>{timeline}</span>
+          {resolution && <span>{resolution}</span>}
+          <span>{feeLabel(position)}</span>
+        </div>
+      </div>
+      <div className="positionNumbers">
+        <span className="positionPriceLabel">{open ? 'Current' : 'Payout'}</span>
+        <strong>{open ? formatCents(position.currentPriceCents) : usd(position.exitValueUsd)}</strong>
+        <span className={pnlTone(pnl)}>
+          {signedUsd(pnl)}
+          {open ? ` - ${signedPct(position.unrealizedPnlPct || 0)}` : ''}
+        </span>
+      </div>
+      {expanded && position.polymarketUrl && (
+        <a className="iconButton" href={position.polymarketUrl} target="_blank" rel="noreferrer" aria-label="Open Polymarket">
+          <ExternalLink size={16} />
+        </a>
+      )}
+    </article>
   );
 }
 
@@ -519,11 +605,13 @@ function ClosedHistory({ positions }) {
           <div>
             <strong>{position.outcome}</strong>
             <p>{position.marketTitle}</p>
-            <small>
-              {shortWallet(position.traderWallet)} - resolved {formatTimeAgo(position.resolvedAt || position.closedAt)}
-              {position.winningOutcome ? ` - winner ${position.winningOutcome}` : ''}
-              {' - '}{feeLabel(position)}
-            </small>
+            <div className="historyMeta">
+              {marketDateLabel(position) && <span>{marketDateLabel(position)}</span>}
+              <span>{shortWallet(position.traderWallet)}</span>
+              <span>resolved {formatTimeAgo(position.resolvedAt || position.closedAt)}</span>
+              {resolutionLabel(position) && <span>{resolutionLabel(position)}</span>}
+              <span>{feeLabel(position)}</span>
+            </div>
           </div>
           <div>
             <span className={position.status === 'win' ? 'positive' : position.status === 'loss' ? 'negative' : ''}>
@@ -656,11 +744,51 @@ function statusLabel(status) {
   return 'open';
 }
 
+function statusClass(status) {
+  const value = String(status || 'open').toLowerCase();
+  if (value === 'resolved_win' || value === 'win') return 'positive';
+  if (value === 'resolved_loss' || value === 'loss') return 'negative';
+  if (value === 'invalid') return 'refunded';
+  if (value === 'open') return 'open';
+  return 'neutral';
+}
+
 function statusTone(status) {
   const value = String(status || '').toLowerCase();
   if (value === 'resolved_win' || value === 'win') return 'positive';
   if (value === 'resolved_loss' || value === 'loss') return 'negative';
   return '';
+}
+
+function isOpenPosition(position) {
+  return String(position?.status || 'open').toLowerCase() === 'open';
+}
+
+function marketDateLabel(position) {
+  const date = extractDateText(position?.marketSlug) || extractDateText(position?.marketTitle) || extractDateText(position?.polymarketUrl);
+  return date ? `Market ${formatDateOnly(date)}` : null;
+}
+
+function extractDateText(value) {
+  const match = String(value || '').match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+}
+
+function formatDateOnly(value) {
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function resolutionLabel(position) {
+  if (!position?.winningOutcome) return null;
+  const winner = String(position.winningOutcome).trim();
+  const normalizedWinner = winner.toUpperCase();
+  const normalizedOutcome = String(position.outcome || '').trim().toUpperCase();
+  if (['YES', 'NO'].includes(normalizedWinner) && !['YES', 'NO'].includes(normalizedOutcome)) {
+    return `winning side ${winner}`;
+  }
+  return `winner ${winner}`;
 }
 
 function shortWallet(wallet = '') {
