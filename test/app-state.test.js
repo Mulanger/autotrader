@@ -216,4 +216,48 @@ describe('app state', () => {
     expect(restored.demo.realizedPnlUsd).toBeCloseTo(0, 5);
     expect(restored.demo.decisions[0].action).toBe('reopened');
   });
+
+  it('reopens ambiguous binary winner settlements for team markets', () => {
+    const state = createAppState();
+    const restored = createAppState();
+    const payload = {
+      demo: {
+        cashUsd: 80,
+        realizedPnlUsd: -10,
+        openPositions: [],
+        closedPositions: [
+          {
+            id: 'demo-dallas',
+            sourceTradeId: 'dallas',
+            status: 'loss',
+            settlementSource: 'polywhale-resolution',
+            resolutionStatus: 'resolved_loss',
+            winningOutcome: 'YES',
+            stakeUsd: 10,
+            shares: 17.24137931034483,
+            outcome: 'Dallas Wings',
+            marketSlug: 'wnba-dal-chi-2026-05-20',
+            entryPriceCents: 58,
+            currentPriceCents: 58,
+            exitValueUsd: 0,
+            realizedPnlUsd: -10,
+          },
+        ],
+        decisions: [{ id: 'dallas-settled', tradeId: 'dallas', action: 'settled', copyId: 'demo-dallas' }],
+        copiedSourceTradeIds: ['dallas'],
+      },
+      traders: state.traders,
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: ['dallas'],
+    };
+
+    restoreDurableState(restored, payload);
+
+    expect(restored.demo.openPositions).toHaveLength(1);
+    expect(restored.demo.closedPositions).toHaveLength(0);
+    expect(restored.demo.openPositions[0].resolutionRepairNote).toMatch(/cross-check/i);
+    expect(restored.demo.realizedPnlUsd).toBeCloseTo(0, 5);
+    expect(restored.demo.decisions[0].action).toBe('reopened');
+  });
 });

@@ -100,7 +100,11 @@ export function buildSettlementForPosition(position, trade) {
 }
 
 async function fetchFallbackResolution(position, trade, fetchMarketResolution) {
-  if (!fetchMarketResolution || isResolvableStatus(String(trade?.resolution?.status || '').toLowerCase(), trade?.resolution || {})) {
+  if (!fetchMarketResolution) return null;
+
+  const resolution = trade?.resolution || {};
+  const resolutionStatus = String(resolution.status || '').toLowerCase();
+  if (isResolvableStatus(resolutionStatus, resolution) && !needsResolutionCrossCheck(position, resolution)) {
     return null;
   }
 
@@ -118,11 +122,16 @@ function isResolvableStatus(status, resolution) {
 
 function inferWin(position, resolution) {
   const status = String(resolution.status || '').toLowerCase();
-  if (status === 'resolved_win') return true;
-  if (status === 'resolved_loss') return false;
 
   const match = outcomeMatches(position.outcome, resolution.winningOutcome);
   if (match !== null) return match;
+
+  if (isBinaryOutcome(resolution.winningOutcome) && !isBinaryOutcome(position.outcome)) {
+    return null;
+  }
+
+  if (status === 'resolved_win') return true;
+  if (status === 'resolved_loss') return false;
 
   if (hasNumericValue(resolution.pnlUsd)) {
     return Number(resolution.pnlUsd) >= 0;
@@ -140,10 +149,29 @@ function outcomeMatches(outcome, winningOutcome) {
   return null;
 }
 
+function needsResolutionCrossCheck(position, resolution) {
+  const status = String(resolution.status || '').toLowerCase();
+  if (!['resolved', 'resolved_win', 'resolved_loss'].includes(status)) return false;
+
+  if (isBinaryOutcome(resolution.winningOutcome) && !isBinaryOutcome(position.outcome)) {
+    return true;
+  }
+
+  const match = outcomeMatches(position.outcome, resolution.winningOutcome);
+  if (match === null) return false;
+  if (status === 'resolved_win' && !match) return true;
+  if (status === 'resolved_loss' && match) return true;
+  return false;
+}
+
 function normalizeOutcomeLabel(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim().toUpperCase();
   return text || null;
+}
+
+function isBinaryOutcome(value) {
+  return ['YES', 'NO'].includes(normalizeOutcomeLabel(value));
 }
 
 function hasNumericValue(value) {

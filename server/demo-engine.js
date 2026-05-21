@@ -128,6 +128,7 @@ function copyBuy(demo, trade) {
     traderWallet: trade.trader.proxyWallet,
     traderName: trade.trader.displayName || trade.trader.pseudonym || trade.trader.proxyWallet,
     marketSlug: trade.market.slug,
+    marketConditionId: trade.market.conditionId || null,
     marketTitle: trade.market.title,
     marketIcon: trade.market.icon,
     polymarketUrl: trade.market.polymarketUrl,

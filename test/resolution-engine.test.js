@@ -12,6 +12,7 @@ function trade(overrides = {}) {
     priceCents: overrides.priceCents ?? 50,
     timestamp: overrides.timestamp ?? 1_779_120_000,
     market: {
+      conditionId: overrides.conditionId || null,
       slug: overrides.marketSlug || 'test-market',
       title: 'Test market',
       icon: null,
@@ -142,5 +143,64 @@ describe('resolution engine', () => {
     expect(demo.openPositions).toHaveLength(0);
     expect(demo.closedPositions[0].status).toBe('win');
     expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
+  });
+
+  it('cross-checks ambiguous binary Polywhale losses against Gamma before settling team markets', async () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({
+      id: 'dallas-copy',
+      outcome: 'Dallas Wings',
+      marketSlug: 'wnba-dal-chi-2026-05-20',
+      conditionId: '0x1849',
+      priceCents: 58,
+    }));
+    const state = { demo };
+
+    const result = await reconcileOpenDemoPositions(
+      state,
+      async (id) => trade({
+        id,
+        outcome: 'Dallas Wings',
+        marketSlug: 'wnba-dal-chi-2026-05-20',
+        conditionId: '0x1849',
+        priceCents: 58,
+        resolution: {
+          status: 'resolved_loss',
+          winningOutcome: 'YES',
+          pnlUsd: -14553.7776,
+          resolvedAt: '2026-05-21T04:25:15.000Z',
+        },
+      }),
+      async ({ conditionId }) => ({
+        status: 'resolved',
+        winningOutcome: 'Dallas Wings',
+        resolvedAt: '2026-05-21T04:23:29.000Z',
+        source: 'polymarket-gamma',
+        closed: true,
+        conditionId,
+      })
+    );
+
+    expect(result.settled).toHaveLength(1);
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.closedPositions[0].status).toBe('win');
+    expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
+  });
+
+  it('does not settle ambiguous binary team outcomes as losses without a market cross-check', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({ outcome: 'Dallas Wings', priceCents: 58 }));
+
+    const settlement = buildSettlementForPosition(demo.openPositions[0], trade({
+      outcome: 'Dallas Wings',
+      resolution: {
+        status: 'resolved_loss',
+        winningOutcome: 'YES',
+        pnlUsd: -14553.7776,
+        resolvedAt: '2026-05-21T04:25:15.000Z',
+      },
+    }));
+
+    expect(settlement).toBeNull();
   });
 });

@@ -322,7 +322,8 @@ function repairPrematureResolutionSettlements(demo) {
   let realizedPnlAdjustmentUsd = 0;
 
   for (const position of demo.closedPositions || []) {
-    if (!isPrematureResolutionSettlement(position)) {
+    const repairNote = resolutionSettlementRepairNote(position);
+    if (!repairNote) {
       retainedClosed.push(position);
       continue;
     }
@@ -346,7 +347,7 @@ function repairPrematureResolutionSettlements(demo) {
       settlementReason: null,
       currentPriceCents,
       resolutionStatus: 'open',
-      resolutionRepairNote: 'Reopened after a premature null-PnL settlement',
+      resolutionRepairNote: repairNote,
       unrealizedPnlUsd,
       unrealizedPnlPct: entryPriceCents ? ((currentPriceCents - entryPriceCents) / entryPriceCents) * 100 : 0,
       updatedAt: nowIso(),
@@ -381,6 +382,28 @@ function isPrematureResolutionSettlement(position) {
     position?.settlementSource === 'polywhale-resolution' &&
     String(position.resolutionStatus || '').toLowerCase() === 'open'
   );
+}
+
+function resolutionSettlementRepairNote(position) {
+  if (isPrematureResolutionSettlement(position)) {
+    return 'Reopened after a premature null-PnL settlement';
+  }
+  if (isAmbiguousBinaryMarketSettlement(position)) {
+    return 'Reopened for market-resolution cross-check after an ambiguous binary winner label';
+  }
+  return null;
+}
+
+function isAmbiguousBinaryMarketSettlement(position) {
+  if (position?.settlementSource !== 'polywhale-resolution') return false;
+  const status = String(position.resolutionStatus || '').toLowerCase();
+  if (!['resolved', 'resolved_win', 'resolved_loss'].includes(status)) return false;
+  return isBinaryOutcome(position.winningOutcome) && !isBinaryOutcome(position.outcome);
+}
+
+function isBinaryOutcome(value) {
+  const text = String(value || '').trim().toUpperCase();
+  return text === 'YES' || text === 'NO';
 }
 
 function numberOrFallback(value, fallback) {

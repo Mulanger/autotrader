@@ -29,12 +29,13 @@ function trade(overrides = {}) {
 describe('demo copy engine', () => {
   it('opens a fixed-stake demo position on BUY', () => {
     const demo = createDemoState();
-    const decision = evaluateDemoCopy(demo, trade({ priceCents: 50 }));
+    const decision = evaluateDemoCopy(demo, trade({ priceCents: 50, conditionId: '0xcondition' }));
 
     expect(decision.action).toBe('copied');
     expect(demo.cashUsd).toBe(90);
     expect(demo.openPositions).toHaveLength(1);
     expect(demo.openPositions[0].shares).toBe(20);
+    expect(demo.openPositions[0].marketConditionId).toBe('0xcondition');
     expect(demo.copiedSourceTradeIds.has('trade-1')).toBe(true);
   });
 
