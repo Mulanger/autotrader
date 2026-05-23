@@ -443,6 +443,27 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
         from candidate_trades
         group by wallet
       ),
+      resolved_distinct_30d as (
+        select
+          wallet,
+          count(*)::integer as resolved_distinct_trade_count_30d,
+          count(*) filter (where status = 'resolved_win')::integer as win_count_distinct_30d
+        from (
+          select
+            wallet,
+            status,
+            row_number() over (
+              partition by wallet, coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id)
+              order by resolved_at desc nulls last, trade_timestamp desc, id desc
+            ) as rn
+          from candidate_trades
+          where side = 'BUY'
+            and status in ('resolved_win', 'resolved_loss')
+            and trade_timestamp >= now() - interval '30 days'
+        ) distinct_buy
+        where rn = 1
+        group by wallet
+      ),
       recent_form as (
         select wallet, jsonb_agg(status order by resolved_at desc, trade_timestamp desc) as recent_form_results
         from (
@@ -480,11 +501,14 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
           coalesce(b.profit_usd, 0)::numeric as all_time_profit_usd,
           e.avg_entry_price_cents_30d,
           coalesce(e.avg_entry_trade_count_30d, 0)::integer as avg_entry_trade_count_30d,
+          coalesce(d.resolved_distinct_trade_count_30d, 0)::integer as resolved_distinct_trade_count_30d,
+          coalesce(d.win_count_distinct_30d, 0)::integer as win_count_distinct_30d,
           coalesce(r.recent_form_results, '[]'::jsonb) as recent_form_results
         from candidate_traders t
         left join buy_stats b on b.wallet = t.wallet
         left join activity_stats a on a.wallet = t.wallet
         left join entry_price_stats e on e.wallet = t.wallet
+        left join resolved_distinct_30d d on d.wallet = t.wallet
         left join recent_form r on r.wallet = t.wallet
       )
       select *
@@ -957,6 +981,8 @@ function mapCopyPoolEventRow(row) {
 function mapLeaderboardRow(row) {
   const pnlTradeCount = Number(row.all_time_pnl_trade_count || 0);
   const winCount = Number(row.win_count || 0);
+  const distinct30d = Number(row.resolved_distinct_trade_count_30d || 0);
+  const winCountDistinct30d = Number(row.win_count_distinct_30d || 0);
   return {
     rank: Number(row.rank || 0),
     wallet: row.wallet,
@@ -973,6 +999,9 @@ function mapLeaderboardRow(row) {
     allTimeProfitUsd: numberFromPg(row.all_time_profit_usd),
     avgEntryPriceCents30d: nullableNumberFromPg(row.avg_entry_price_cents_30d),
     avgEntryTradeCount30d: Number(row.avg_entry_trade_count_30d || 0),
+    resolvedDistinctTradeCount30d: distinct30d,
+    winCountDistinct30d,
+    winRatePctDistinct30d: distinct30d ? (winCountDistinct30d / distinct30d) * 100 : null,
     recentFormResults: Array.isArray(row.recent_form_results) ? row.recent_form_results : [],
   };
 }

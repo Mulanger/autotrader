@@ -692,6 +692,7 @@ function CandidatesView({ service, copyPoolState }) {
                 <CandidateRow
                   row={row}
                   copyPoolEntry={copyPool?.wallets?.[String(row.wallet || '').toLowerCase()]}
+                  thresholds={copyPool?.thresholds}
                   expanded={expandedWallet === row.wallet}
                   onToggle={() => toggleCandidate(row.wallet)}
                 />
@@ -768,11 +769,12 @@ function CopyPoolCard({ title, icon: Icon, empty, events, tone }) {
   );
 }
 
-function CandidateRow({ row, copyPoolEntry, expanded, onToggle }) {
+function CandidateRow({ row, copyPoolEntry, thresholds, expanded, onToggle }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const form = row.recentFormResults || [];
   const ExpandIcon = expanded ? ChevronDown : ChevronRight;
   const badge = copyPoolBadge(copyPoolEntry);
+  const eligibility = candidateEligibility(row, copyPoolEntry, thresholds);
   return (
     <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''} ${expanded ? 'expanded' : ''}`}>
       <button
@@ -810,6 +812,11 @@ function CandidateRow({ row, copyPoolEntry, expanded, onToggle }) {
       <div className="candidateMetric" title={`${row.avgEntryTradeCount30d || 0} BUY entries in the last 30 days`}>
         <span>AEP</span>
         <strong>{formatAep(row.avgEntryPriceCents30d)}</strong>
+      </div>
+      <div className="candidateEligibility" title={eligibility.reason}>
+        <span>30D eligible</span>
+        <strong className={eligibility.tone}>{eligibility.label}</strong>
+        <small>{eligibility.meta}</small>
       </div>
       <div className="candidateForm" aria-label="Recent form">
         {form.length ? form.map((result, index) => (
@@ -1091,6 +1098,46 @@ function copyPoolBadge(entry) {
   if (!entry || entry.status !== 'active') return null;
   if (entry.protected) return { label: 'Following', tone: 'protected', title: 'Protected baseline wallet is being copied' };
   return { label: 'Following', tone: 'following', title: 'Auto-added trader is being copied' };
+}
+
+function candidateEligibility(row, entry, thresholds = {}) {
+  const minDistinct = Number(thresholds?.minDistinctResolvedMarkets || 15);
+  const minWinRate = Number(thresholds?.minWinRatePct || 75);
+  const maxAep = Number(thresholds?.maxAvgEntryPriceCents || 75);
+  const distinct = Number(entry?.distinctResolvedTradeCount ?? row.resolvedDistinctTradeCount30d);
+  const winRate = Number(entry?.winRatePct ?? row.winRatePctDistinct30d);
+  const aep = Number(entry?.avgEntryPriceCents30d ?? row.avgEntryPriceCents30d);
+  const hasPoolMetrics = Number.isFinite(distinct) || Number.isFinite(winRate);
+  if (!hasPoolMetrics) {
+    return {
+      label: 'Pending',
+      tone: 'neutral',
+      meta: `AEP ${formatAep(row.avgEntryPriceCents30d)}`,
+      reason: 'Copy-pool evaluator has not persisted 30-day distinct metrics for this trader yet.',
+    };
+  }
+
+  const status = String(entry?.status || '').toLowerCase();
+  const reason = entry?.reason || eligibilityReason({ distinct, winRate, aep }, { minDistinct, minWinRate, maxAep });
+  const eligible = distinct >= minDistinct && Number.isFinite(winRate) && winRate >= minWinRate && Number.isFinite(aep) && aep < maxAep;
+  return {
+    label: status === 'active' ? 'Pass' : eligible ? 'Pass' : 'No',
+    tone: status === 'active' || eligible ? 'positive' : 'negative',
+    meta: `${distinct || 0}/${minDistinct} distinct - ${pct(winRate)} WR`,
+    reason,
+  };
+}
+
+function eligibilityReason(metrics, thresholds) {
+  if (!Number.isFinite(metrics.distinct) || metrics.distinct < thresholds.minDistinct) {
+    return `Needs ${thresholds.minDistinct} resolved distinct BUY markets in the last 30 days.`;
+  }
+  if (!Number.isFinite(metrics.winRate) || metrics.winRate < thresholds.minWinRate) {
+    return `30-day distinct win rate is below ${thresholds.minWinRate.toFixed(1)}%.`;
+  }
+  if (!Number.isFinite(metrics.aep)) return 'No 30-day BUY average entry price yet.';
+  if (metrics.aep >= thresholds.maxAep) return `30-day AEP is at or above ${thresholds.maxAep.toFixed(1)}c.`;
+  return 'Eligible for automated following.';
 }
 
 function candidateTradePnlDisplay(trade) {

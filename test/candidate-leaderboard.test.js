@@ -61,6 +61,8 @@ describe('candidate leaderboard aggregation', () => {
     expect(rows[0].allTimeWinRatePct).toBe(100);
     expect(rows[0].avgEntryPriceCents30d).toBe(45);
     expect(rows[0].avgEntryTradeCount30d).toBe(2);
+    expect(rows[0].resolvedDistinctTradeCount30d).toBe(1);
+    expect(rows[0].winRatePctDistinct30d).toBe(100);
     expect(rows[0].recentFormResults).toEqual(['resolved_win']);
     expect(rows[1].allTimeProfitUsd).toBe(-5);
   });

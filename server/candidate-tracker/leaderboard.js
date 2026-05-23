@@ -49,6 +49,13 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
       .sort(compareResolvedNewest)
       .slice(0, 8)
       .map((trade) => trade.status);
+    const recentResolvedDistinctTrades = latestDistinctMarketTrades(
+      resolvedBuyTrades.filter((trade) => {
+        const tradeTime = Date.parse(trade.tradeTimestamp || trade.timestamp || 0);
+        return Number.isFinite(tradeTime) && tradeTime >= nowMs - entryWindowMs;
+      })
+    );
+    const winCountDistinct30d = recentResolvedDistinctTrades.filter((trade) => trade.status === 'resolved_win').length;
 
     return {
       ...trader,
@@ -59,6 +66,11 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
       allTimeProfitUsd,
       avgEntryPriceCents30d,
       avgEntryTradeCount30d: recentBuyEntryTrades.length,
+      resolvedDistinctTradeCount30d: recentResolvedDistinctTrades.length,
+      winCountDistinct30d,
+      winRatePctDistinct30d: recentResolvedDistinctTrades.length
+        ? (winCountDistinct30d / recentResolvedDistinctTrades.length) * 100
+        : null,
       recentFormResults,
     };
   });
@@ -77,4 +89,20 @@ function compareLeaderboardRows(a, b) {
 
 function compareResolvedNewest(a, b) {
   return Date.parse(b.resolvedAt || b.tradeTimestamp || 0) - Date.parse(a.resolvedAt || a.tradeTimestamp || 0);
+}
+
+function latestDistinctMarketTrades(trades) {
+  const byMarket = new Map();
+  for (const trade of trades.slice().sort(compareResolvedNewest)) {
+    const key = String(
+      trade.conditionId ||
+        trade.marketSlug ||
+        trade.marketTitle ||
+        trade.id ||
+        `${trade.wallet || ''}-${trade.tradeTimestamp || ''}-${trade.outcome || ''}`
+    ).toLowerCase();
+    if (!key || byMarket.has(key)) continue;
+    byMarket.set(key, trade);
+  }
+  return [...byMarket.values()];
 }
