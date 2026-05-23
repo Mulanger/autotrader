@@ -48,6 +48,10 @@ export function createAppState() {
         lastLoadedRows: null,
         lastError: null,
       },
+      candidates: {
+        enabled: false,
+        status: 'disabled',
+      },
     },
     watchedWallets: [...WATCHED_WALLETS],
     traders,

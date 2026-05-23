@@ -6,6 +6,9 @@ export const POLYWHALE_API_BASE_URL =
 export const POLYMARKET_GAMMA_URL =
   process.env.POLYMARKET_GAMMA_URL || 'https://gamma-api.polymarket.com';
 
+export const POLYMARKET_DATA_API_URL =
+  process.env.POLYMARKET_DATA_API_URL || 'https://data-api.polymarket.com';
+
 export const POLYWHALE_WS_URL =
   POLYWHALE_API_BASE_URL.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:') + '/v1/whales/stream';
 
@@ -23,4 +26,33 @@ export const DEMO_STAKE_USD = 10;
 
 export const DEMO_MAX_ENTRY_PRICE_CENTS = Number(process.env.DEMO_MAX_ENTRY_PRICE_CENTS || 75);
 
+export const CANDIDATE_TRACKER_ENABLED = parseBoolean(process.env.CANDIDATE_TRACKER_ENABLED, false);
+
+export const CANDIDATE_MIN_USD = Number(process.env.CANDIDATE_MIN_USD || 1_000);
+
+export const CANDIDATE_MAX_USD = Number(process.env.CANDIDATE_MAX_USD || 10_000);
+
+export const CANDIDATE_BACKFILL_DAYS = Number(process.env.CANDIDATE_BACKFILL_DAYS || 30);
+
+export const CANDIDATE_POLL_INTERVAL_MS = Number(process.env.CANDIDATE_POLL_INTERVAL_MS || 30_000);
+
+export const CANDIDATE_RESOLUTION_POLL_INTERVAL_MS = Number(
+  process.env.CANDIDATE_RESOLUTION_POLL_INTERVAL_MS || 60_000
+);
+
+export const CANDIDATE_POLL_LIMIT = Number(process.env.CANDIDATE_POLL_LIMIT || 500);
+
+export const CANDIDATE_POLL_MAX_PAGES = Number(process.env.CANDIDATE_POLL_MAX_PAGES || 3);
+
+export const CANDIDATE_BACKFILL_PAGE_LIMIT = Number(process.env.CANDIDATE_BACKFILL_PAGE_LIMIT || 100);
+
+export const CANDIDATE_BACKFILL_MAX_PAGES = Number(process.env.CANDIDATE_BACKFILL_MAX_PAGES || 100);
+
+export const CANDIDATE_RESOLUTION_BATCH_SIZE = Number(process.env.CANDIDATE_RESOLUTION_BATCH_SIZE || 50);
+
 export { WATCHED_WALLETS };
+
+function parseBoolean(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}

@@ -1,0 +1,38 @@
+import express from 'express';
+
+export function createCandidateRoutes(candidateTracker) {
+  const router = express.Router();
+
+  router.get('/leaderboard', async (request, response) => {
+    try {
+      const limit = boundedInteger(request.query.limit, 100, 1, 250);
+      const offset = boundedInteger(request.query.offset, 0, 0, 10_000);
+      const payload = await candidateTracker.getLeaderboard({ limit, offset });
+      response.json(payload);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.get('/traders/:wallet', async (request, response) => {
+    try {
+      const limit = boundedInteger(request.query.limit, 100, 1, 250);
+      const payload = await candidateTracker.getTrader(request.params.wallet, { limit });
+      if (!payload) {
+        response.status(404).json({ ok: false, error: 'Candidate trader not found' });
+        return;
+      }
+      response.json(payload);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
+  return router;
+}
+
+function boundedInteger(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isInteger(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
+}

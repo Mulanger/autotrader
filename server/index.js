@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAppState, restoreDurableState, snapshotState } from './app-state.js';
 import { HOST, PORT } from './config.js';
+import { createCandidateRoutes } from './candidate-tracker/routes.js';
+import { createCandidateTracker } from './candidate-tracker/service.js';
 import { startIngestion } from './stream-service.js';
 import { createMemoryStorage, createStorage } from './storage.js';
 
@@ -20,6 +22,9 @@ const wss = new WebSocketServer({ server, path: '/events' });
 const state = createAppState();
 let storage = createMemoryStorage(state.service.storage, 'starting');
 let ingestionStarted = false;
+let candidateTrackerStarted = false;
+
+const candidateTracker = createCandidateTracker(state, broadcast);
 
 app.use(express.json());
 
@@ -30,6 +35,8 @@ app.get('/api/health', (_request, response) => {
 app.get('/api/state', (_request, response) => {
   response.json(snapshotState(state));
 });
+
+app.use('/api/candidates', createCandidateRoutes(candidateTracker));
 
 if (existsSync(indexPath)) {
   app.use(express.static(distPath, {
@@ -71,6 +78,14 @@ async function initializeStorageAndIngestion() {
       ingestionStarted = true;
       startIngestion(state, broadcast, storage);
     }
+    if (!candidateTrackerStarted) {
+      candidateTrackerStarted = true;
+      candidateTracker.start().catch((error) => {
+        state.service.candidates.status = 'error';
+        state.service.candidates.lastError = error.message;
+        broadcast();
+      });
+    }
     broadcast();
   }
 }
@@ -78,12 +93,14 @@ async function initializeStorageAndIngestion() {
 process.on('SIGINT', async () => {
   await storage.flush(state);
   await storage.close();
+  await candidateTracker.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   await storage.flush(state);
   await storage.close();
+  await candidateTracker.close();
   process.exit(0);
 });
 

@@ -465,7 +465,8 @@ button {
   margin-bottom: 14px;
 }
 
-.positionStat {
+.positionStat,
+.candidateStat {
   min-height: 68px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -477,6 +478,7 @@ button {
 }
 
 .positionStat span,
+.candidateStat span,
 .positionPriceLabel {
   color: var(--muted);
   font-size: 0.72rem;
@@ -485,7 +487,8 @@ button {
   font-weight: 760;
 }
 
-.positionStat strong {
+.positionStat strong,
+.candidateStat strong {
   font-size: 1.15rem;
 }
 
@@ -673,6 +676,139 @@ button {
 .traderStats b {
   color: var(--ink);
   font-size: 0.9rem;
+}
+
+.candidatePanel {
+  display: grid;
+  align-content: start;
+}
+
+.candidateSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.candidateStat {
+  grid-template-columns: auto 1fr;
+  align-items: center;
+}
+
+.candidateStat svg {
+  grid-row: 1 / span 2;
+  color: var(--accent);
+}
+
+.candidateToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.86rem;
+}
+
+.candidateList {
+  display: grid;
+  gap: 8px;
+}
+
+.candidateRow {
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: 36px 34px minmax(180px, 1.2fr) repeat(2, minmax(92px, 0.45fr)) minmax(130px, 0.7fr) minmax(110px, auto);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.candidateRow.topCandidate {
+  border-color: #d8c27a;
+  background: #fffdf7;
+}
+
+.candidateRank {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  color: var(--muted);
+  font-weight: 820;
+}
+
+.candidateRow.topCandidate .candidateRank {
+  background: #fff3bd;
+  color: #936400;
+}
+
+.candidateIdentity {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.candidateIdentity strong,
+.candidateIdentity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidateIdentity span,
+.candidateMetric span,
+.candidateProfit span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.candidateMetric {
+  display: grid;
+  gap: 3px;
+}
+
+.candidateMetric strong {
+  font-size: 0.95rem;
+}
+
+.candidateForm {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.formSquare {
+  width: 11px;
+  height: 18px;
+  border-radius: 3px;
+  background: #c7d0db;
+}
+
+.formSquare.win {
+  background: var(--green);
+}
+
+.formSquare.loss {
+  background: #b05b68;
+}
+
+.candidateProfit {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+}
+
+.candidateProfit strong {
+  font-size: 1rem;
 }
 
 .miniTrade {
@@ -871,8 +1007,30 @@ button {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
   }
 
+  .candidateSummary {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
   .traderList {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
+  }
+
+  .candidateRow {
+    grid-template-columns: 34px 34px minmax(180px, 1fr) minmax(110px, auto);
+  }
+
+  .candidateMetric,
+  .candidateForm {
+    grid-column: 3 / span 2;
+  }
+
+  .candidateForm {
+    justify-content: flex-start;
+  }
+
+  .candidateProfit {
+    grid-column: 4;
+    grid-row: 1 / span 2;
   }
 }
 
@@ -906,6 +1064,14 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .candidateSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .candidateToolbar {
+    display: grid;
+  }
+
   .positionControls {
     width: 100%;
   }
@@ -926,6 +1092,27 @@ button {
   .positionRow,
   .positionList.expanded .positionRow {
     grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .candidateRow {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+  }
+
+  .candidateRow .avatar {
+    display: none;
+  }
+
+  .candidateIdentity {
+    grid-column: 2;
+  }
+
+  .candidateMetric,
+  .candidateForm,
+  .candidateProfit {
+    grid-column: 2 / span 2;
+    grid-row: auto;
+    justify-items: start;
+    justify-content: flex-start;
   }
 
   .positionNumbers,

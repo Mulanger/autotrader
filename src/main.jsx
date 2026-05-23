@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   Clock3,
   Cpu,
+  Database,
   ExternalLink,
   Gauge,
   Layers3,
@@ -20,6 +21,8 @@ import {
   RefreshCcw,
   ShieldCheck,
   Target,
+  Trophy,
+  Users,
   Wallet,
 } from 'lucide-react';
 import './styles.css';
@@ -30,6 +33,10 @@ function App() {
   const { state, connected, refresh } = useAutotraderState();
   const [mode, setMode] = React.useState('demo');
   const [tab, setTab] = React.useState('overview');
+
+  React.useEffect(() => {
+    if (mode === 'real' && !['overview', 'traders'].includes(tab)) setTab('overview');
+  }, [mode, tab]);
 
   const data = state || emptyState();
   const metrics = data.demo.metrics;
@@ -164,6 +171,10 @@ function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCoun
           active={service?.storage?.durable && ['ready', 'saving'].includes(service?.storage?.status)}
           label={storageLabel(service?.storage)}
         />
+        <StatusLine
+          active={Boolean(service?.candidates?.enabled) && ['ready', 'polling', 'backfilling', 'resolving'].includes(service?.candidates?.status)}
+          label={`Candidate tracker ${service?.candidates?.status || 'disabled'}`}
+        />
       </div>
 
       <div className="sidebarBlock">
@@ -185,7 +196,7 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service }) {
-  const tabs = ['overview', 'profit', 'positions', 'traders'];
+  const tabs = mode === 'demo' ? ['overview', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'traders'];
   return (
     <header className="topbar">
       <div>
@@ -219,6 +230,7 @@ function DemoWorkspace({ data, metrics, tab }) {
     );
   }
   if (tab === 'traders') return <TraderGrid traders={data.traders} />;
+  if (tab === 'candidates') return <CandidatesView service={data.service.candidates} />;
 
   return (
     <div className="dashboardGrid">
@@ -546,6 +558,142 @@ function TraderCard({ trader, compact }) {
   );
 }
 
+function useCandidateLeaderboard() {
+  const [leaderboard, setLeaderboard] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/candidates/leaderboard?limit=100`);
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Candidate leaderboard failed');
+      setLeaderboard(payload);
+      setError(null);
+    } catch (fetchError) {
+      setError(fetchError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  return { leaderboard, loading, error, refresh };
+}
+
+function CandidatesView({ service }) {
+  const { leaderboard, loading, error, refresh } = useCandidateLeaderboard();
+  const rows = leaderboard?.rows || [];
+  const summary = leaderboard?.summary || {};
+  const enabled = leaderboard?.enabled ?? service?.enabled;
+
+  return (
+    <section className="panel fullPanel candidatePanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Candidate discovery</p>
+          <h2>$1k-$10k trader leaderboard</h2>
+        </div>
+        <button className="iconButton" onClick={refresh} aria-label="Refresh candidates"><RefreshCcw size={16} /></button>
+      </div>
+
+      {!enabled ? (
+        <EmptyState
+          title="Candidate tracker disabled"
+          text="Set CANDIDATE_TRACKER_ENABLED=true on Railway to start polling, backfilling, and resolving candidate trades."
+        />
+      ) : error ? (
+        <EmptyState title="Candidate leaderboard unavailable" text={error} />
+      ) : (
+        <>
+          <div className="candidateSummary">
+            <div className="candidateStat">
+              <Users size={17} />
+              <span>Traders</span>
+              <strong>{summary.traderCount || 0}</strong>
+            </div>
+            <div className="candidateStat">
+              <Database size={17} />
+              <span>Tracked trades</span>
+              <strong>{summary.tradeCount || 0}</strong>
+            </div>
+            <div className="candidateStat">
+              <Target size={17} />
+              <span>Open</span>
+              <strong>{summary.openTradeCount || 0}</strong>
+            </div>
+            <div className="candidateStat">
+              <CheckCircle2 size={17} />
+              <span>Resolved</span>
+              <strong>{summary.resolvedTradeCount || 0}</strong>
+            </div>
+          </div>
+
+          <div className="candidateToolbar">
+            <span className="statusBadge neutral">{candidateStatusLabel(leaderboard?.status || service?.status)}</span>
+            <span className="muted">Recent form uses resolved BUY trades only; SELL rows are tracked but excluded from P/L.</span>
+          </div>
+
+          <div className="candidateList">
+            {rows.map((row) => <CandidateRow key={row.wallet} row={row} />)}
+            {!rows.length && (
+              <EmptyState
+                title={loading ? 'Loading candidate traders' : 'No candidate traders yet'}
+                text={loading ? 'Fetching the latest leaderboard snapshot.' : 'The tracker will populate this list after it sees qualifying $1k-$10k trades.'}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function CandidateRow({ row }) {
+  const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
+  const form = row.recentFormResults || [];
+  return (
+    <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''}`}>
+      <div className="candidateRank">
+        {row.rank === 1 ? <Trophy size={16} /> : <span>{row.rank}</span>}
+      </div>
+      <div className="avatar">
+        {row.profileImage ? <img src={row.profileImage} alt="" /> : <Cpu size={17} />}
+      </div>
+      <div className="candidateIdentity">
+        <strong>{display}</strong>
+        <span>{shortWallet(row.wallet)}</span>
+      </div>
+      <div className="candidateMetric">
+        <span>P/L trades</span>
+        <strong>{row.allTimePnlTradeCount || 0}</strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Win rate</span>
+        <strong>{pct(row.allTimeWinRatePct)}</strong>
+      </div>
+      <div className="candidateForm" aria-label="Recent form">
+        {form.length ? form.map((result, index) => (
+          <span
+            key={`${result}-${index}`}
+            title={statusLabel(result)}
+            className={`formSquare ${result === 'resolved_win' ? 'win' : 'loss'}`}
+          />
+        )) : <small className="muted">No resolved form</small>}
+      </div>
+      <div className="candidateProfit">
+        <strong className={pnlTone(row.allTimeProfitUsd)}>{compactSignedUsd(row.allTimeProfitUsd || 0)}</strong>
+        <span>{row.backfillStatus || 'queued'}</span>
+      </div>
+    </article>
+  );
+}
+
 function ProfitView({ metrics, closedPositions }) {
   const bars = buildProfitBars(closedPositions);
   return (
@@ -702,6 +850,27 @@ function pct(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 'n/a';
   return `${number.toFixed(number >= 99 ? 0 : 1)}%`;
+}
+
+function compactSignedUsd(value) {
+  const number = Number(value || 0);
+  const prefix = number >= 0 ? '+' : '-';
+  const formatted = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(Math.abs(number));
+  return `${prefix}${formatted}`;
+}
+
+function candidateStatusLabel(status) {
+  const value = String(status || 'disabled');
+  if (value === 'ready') return 'tracking';
+  if (value === 'polling') return 'polling Data API';
+  if (value === 'backfilling') return 'backfilling profiles';
+  if (value === 'resolving') return 'resolving markets';
+  return value.replace(/_/g, ' ');
 }
 
 function formatCents(value) {

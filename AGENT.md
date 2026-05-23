@@ -114,10 +114,16 @@ Production/Railway:
 - `PORT`: server port. Railway provides this. Local default is `4101`.
 - `HOST`: bind host. Defaults to `0.0.0.0`.
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
+- `POLYMARKET_DATA_API_URL`: direct Polymarket Data API for the independent `$1k-$10k` candidate tracker. Defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: maximum BUY entry price to copy. Defaults to `75`.
+- `CANDIDATE_TRACKER_ENABLED`: enables the isolated candidate tracker. Defaults to `false`.
+- `CANDIDATE_MIN_USD`: candidate tracker minimum trade notional. Defaults to `1000`.
+- `CANDIDATE_MAX_USD`: candidate tracker exclusive maximum trade notional. Defaults to `10000`.
+- `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.
+- `CANDIDATE_POLL_INTERVAL_MS`: candidate Data API poll interval. Defaults to `30000`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
 
@@ -144,9 +150,13 @@ observed_trades
 copy_decisions
 demo_positions
 trader_profiles
+candidate_traders
+candidate_trades
+candidate_market_resolutions
+candidate_service_state
 ```
 
-The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
+The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `candidate_*` tables are isolated from demo copy trading and power the `$1k-$10k` discovery leaderboard. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
 
 ## Runtime Data Flow
 
@@ -171,6 +181,8 @@ Local/backend endpoints:
 
 - `GET /api/health`: service, stream, poll, and storage health.
 - `GET /api/state`: complete dashboard state snapshot.
+- `GET /api/candidates/leaderboard`: independent `$1k-$10k` candidate trader leaderboard.
+- `GET /api/candidates/traders/:wallet`: independent candidate trader profile and recent tracked trades.
 - `WS /events`: dashboard state updates.
 
 Polywhale upstream endpoints used:
