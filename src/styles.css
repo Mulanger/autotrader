@@ -231,6 +231,11 @@ button {
   padding: 0 12px;
 }
 
+.textButton:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 .dashboardGrid,
 .realGrid,
 .profitGrid {
@@ -719,7 +724,7 @@ button {
 .candidateRow {
   min-height: 76px;
   display: grid;
-  grid-template-columns: 36px 34px minmax(180px, 1.2fr) repeat(3, minmax(76px, 0.35fr)) minmax(118px, 0.6fr) minmax(110px, auto);
+  grid-template-columns: 30px 36px 34px minmax(180px, 1.2fr) repeat(3, minmax(76px, 0.35fr)) minmax(118px, 0.6fr) minmax(110px, auto);
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
@@ -728,9 +733,30 @@ button {
   padding: 12px;
 }
 
+.candidateRow.expanded {
+  border-color: #b8cdfd;
+}
+
 .candidateRow.topCandidate {
   border-color: #d8c27a;
   background: #fffdf7;
+}
+
+.candidateExpandButton {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.candidateExpandButton:hover {
+  color: var(--ink);
+  border-color: #b8cdfd;
 }
 
 .candidateRank {
@@ -809,6 +835,79 @@ button {
 
 .candidateProfit strong {
   font-size: 1rem;
+}
+
+.candidateTradeDrawer {
+  border: 1px solid #cdd9e7;
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.candidateTradeHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.candidateTradeHead strong {
+  color: var(--ink);
+}
+
+.candidateTradeRows {
+  max-height: 420px;
+  overflow: auto;
+  display: grid;
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.candidateTradeRow {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 72px 94px 82px 90px 36px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  border-top: 1px solid var(--line);
+}
+
+.candidateTradeRows .candidateTradeRow:first-child {
+  border-top: 0;
+}
+
+.candidateTradeMarket,
+.candidateTradeCell {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.candidateTradeMarket strong,
+.candidateTradeMarket span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidateTradeMarket span,
+.candidateTradeCell span,
+.candidateTradeMessage {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.candidateTradeCell strong {
+  font-size: 0.86rem;
+}
+
+.candidateLoadMore {
+  justify-self: start;
 }
 
 .miniTrade {
@@ -1016,12 +1115,12 @@ button {
   }
 
   .candidateRow {
-    grid-template-columns: 34px 34px minmax(180px, 1fr) minmax(110px, auto);
+    grid-template-columns: 30px 34px 34px minmax(180px, 1fr) minmax(110px, auto);
   }
 
   .candidateMetric,
   .candidateForm {
-    grid-column: 3 / span 2;
+    grid-column: 4 / span 2;
   }
 
   .candidateForm {
@@ -1029,8 +1128,12 @@ button {
   }
 
   .candidateProfit {
-    grid-column: 4;
+    grid-column: 5;
     grid-row: 1 / span 2;
+  }
+
+  .candidateTradeRow {
+    grid-template-columns: minmax(180px, 1fr) repeat(4, minmax(70px, auto)) 36px;
   }
 }
 
@@ -1095,7 +1198,7 @@ button {
   }
 
   .candidateRow {
-    grid-template-columns: 30px minmax(0, 1fr) auto;
+    grid-template-columns: 30px 34px minmax(0, 1fr) auto;
   }
 
   .candidateRow .avatar {
@@ -1103,16 +1206,44 @@ button {
   }
 
   .candidateIdentity {
-    grid-column: 2;
+    grid-column: 3;
   }
 
   .candidateMetric,
-  .candidateForm,
-  .candidateProfit {
-    grid-column: 2 / span 2;
+  .candidateForm {
+    grid-column: 3 / span 2;
     grid-row: auto;
     justify-items: start;
     justify-content: flex-start;
+  }
+
+  .candidateProfit {
+    grid-column: 4;
+    grid-row: 1 / span 2;
+    justify-items: end;
+  }
+
+  .candidateTradeHead {
+    display: grid;
+  }
+
+  .candidateTradeRows {
+    max-height: 520px;
+  }
+
+  .candidateTradeRow {
+    grid-template-columns: minmax(0, 1fr) 36px;
+  }
+
+  .candidateTradeMarket,
+  .candidateTradeCell {
+    grid-column: 1 / -1;
+  }
+
+  .candidateTradeRow .iconButton {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
   }
 
   .positionNumbers,

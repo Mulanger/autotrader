@@ -43,6 +43,24 @@ describe('candidate routes', () => {
     expect(payload.summary.traderCount).toBe(1);
   });
 
+  it('passes pagination params to trader detail lookups', async () => {
+    let detailParams = null;
+    const base = await startApp({
+      getLeaderboard: async () => ({ ok: true, enabled: true, rows: [], summary: {} }),
+      getTrader: async (_wallet, params) => {
+        detailParams = params;
+        return { wallet: '0xaaa', totalTrackedTradeCount: 0, trades: [] };
+      },
+    });
+
+    const response = await fetch(`${base}/api/candidates/traders/0xaaa?limit=75&offset=150`);
+    const payload = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(payload.wallet).toBe('0xaaa');
+    expect(detailParams).toEqual({ limit: 75, offset: 150 });
+  });
+
   it('returns 404 for missing candidate trader details', async () => {
     const base = await startApp({
       getLeaderboard: async () => ({ ok: true, enabled: false, rows: [], summary: {} }),

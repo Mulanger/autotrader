@@ -17,7 +17,8 @@ export function createCandidateRoutes(candidateTracker) {
   router.get('/traders/:wallet', async (request, response) => {
     try {
       const limit = boundedInteger(request.query.limit, 100, 1, 250);
-      const payload = await candidateTracker.getTrader(request.params.wallet, { limit });
+      const offset = boundedInteger(request.query.offset, 0, 0, 100_000);
+      const payload = await candidateTracker.getTrader(request.params.wallet, { limit, offset });
       if (!payload) {
         response.status(404).json({ ok: false, error: 'Candidate trader not found' });
         return;

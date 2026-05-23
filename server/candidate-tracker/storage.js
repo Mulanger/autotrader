@@ -450,9 +450,9 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
   return result.rows.map(mapLeaderboardRow);
 }
 
-async function getTrader(pool, wallet, { limit = 100 } = {}) {
+async function getTrader(pool, wallet, { limit = 100, offset = 0 } = {}) {
   const normalizedWallet = String(wallet || '').toLowerCase();
-  const [traderResult, tradeResult] = await Promise.all([
+  const [traderResult, tradeResult, countResult] = await Promise.all([
     pool.query('select * from candidate_traders where wallet = $1', [normalizedWallet]),
     pool.query(
       `
@@ -460,15 +460,19 @@ async function getTrader(pool, wallet, { limit = 100 } = {}) {
         from candidate_trades
         where wallet = $1
         order by trade_timestamp desc
-        limit $2
+        limit $2 offset $3
       `,
-      [normalizedWallet, limit]
+      [normalizedWallet, limit, offset]
     ),
+    pool.query('select count(*)::integer as trade_count from candidate_trades where wallet = $1', [normalizedWallet]),
   ]);
 
   if (!traderResult.rowCount) return null;
   return {
     ...mapTraderRow(traderResult.rows[0]),
+    totalTrackedTradeCount: Number(countResult.rows[0]?.trade_count || 0),
+    pageLimit: limit,
+    pageOffset: offset,
     trades: tradeResult.rows.map(mapTradeRow),
   };
 }

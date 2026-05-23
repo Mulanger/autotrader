@@ -6,6 +6,8 @@ import {
   ArrowUpRight,
   BarChart3,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   CircleDollarSign,
   Clock3,
   Cpu,
@@ -28,6 +30,7 @@ import {
 import './styles.css';
 
 const API_BASE = '';
+const CANDIDATE_TRADE_PAGE_SIZE = 80;
 
 function App() {
   const { state, connected, refresh } = useAutotraderState();
@@ -588,9 +591,47 @@ function useCandidateLeaderboard() {
 
 function CandidatesView({ service }) {
   const { leaderboard, loading, error, refresh } = useCandidateLeaderboard();
+  const [expandedWallet, setExpandedWallet] = React.useState(null);
+  const [detailsByWallet, setDetailsByWallet] = React.useState({});
+  const [detailLoading, setDetailLoading] = React.useState({});
+  const [detailErrors, setDetailErrors] = React.useState({});
   const rows = leaderboard?.rows || [];
   const summary = leaderboard?.summary || {};
   const enabled = leaderboard?.enabled ?? service?.enabled;
+
+  const loadTraderDetails = React.useCallback(async (wallet, append = false) => {
+    const current = detailsByWallet[wallet];
+    const offset = append ? current?.trades?.length || 0 : 0;
+    setDetailLoading((items) => ({ ...items, [wallet]: true }));
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/candidates/traders/${encodeURIComponent(wallet)}?limit=${CANDIDATE_TRADE_PAGE_SIZE}&offset=${offset}`
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Candidate trades failed');
+      setDetailsByWallet((items) => ({
+        ...items,
+        [wallet]: {
+          ...payload,
+          trades: append ? [...(items[wallet]?.trades || []), ...(payload.trades || [])] : payload.trades || [],
+        },
+      }));
+      setDetailErrors((items) => ({ ...items, [wallet]: null }));
+    } catch (detailError) {
+      setDetailErrors((items) => ({ ...items, [wallet]: detailError.message }));
+    } finally {
+      setDetailLoading((items) => ({ ...items, [wallet]: false }));
+    }
+  }, [detailsByWallet]);
+
+  const toggleCandidate = React.useCallback((wallet) => {
+    if (expandedWallet === wallet) {
+      setExpandedWallet(null);
+      return;
+    }
+    setExpandedWallet(wallet);
+    if (!detailsByWallet[wallet]) loadTraderDetails(wallet, false);
+  }, [detailsByWallet, expandedWallet, loadTraderDetails]);
 
   return (
     <section className="panel fullPanel candidatePanel">
@@ -640,7 +681,24 @@ function CandidatesView({ service }) {
           </div>
 
           <div className="candidateList">
-            {rows.map((row) => <CandidateRow key={row.wallet} row={row} />)}
+            {rows.map((row) => (
+              <React.Fragment key={row.wallet}>
+                <CandidateRow
+                  row={row}
+                  expanded={expandedWallet === row.wallet}
+                  onToggle={() => toggleCandidate(row.wallet)}
+                />
+                {expandedWallet === row.wallet && (
+                  <CandidateTradeDrawer
+                    row={row}
+                    details={detailsByWallet[row.wallet]}
+                    loading={Boolean(detailLoading[row.wallet])}
+                    error={detailErrors[row.wallet]}
+                    onLoadMore={() => loadTraderDetails(row.wallet, true)}
+                  />
+                )}
+              </React.Fragment>
+            ))}
             {!rows.length && (
               <EmptyState
                 title={loading ? 'Loading candidate traders' : 'No candidate traders yet'}
@@ -654,11 +712,20 @@ function CandidatesView({ service }) {
   );
 }
 
-function CandidateRow({ row }) {
+function CandidateRow({ row, expanded, onToggle }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const form = row.recentFormResults || [];
+  const ExpandIcon = expanded ? ChevronDown : ChevronRight;
   return (
-    <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''}`}>
+    <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''} ${expanded ? 'expanded' : ''}`}>
+      <button
+        className="candidateExpandButton"
+        onClick={onToggle}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${display} trades`}
+        aria-expanded={expanded}
+      >
+        <ExpandIcon size={16} />
+      </button>
       <div className="candidateRank">
         {row.rank === 1 ? <Trophy size={16} /> : <span>{row.rank}</span>}
       </div>
@@ -694,6 +761,72 @@ function CandidateRow({ row }) {
         <strong className={pnlTone(row.allTimeProfitUsd)}>{compactSignedUsd(row.allTimeProfitUsd || 0)}</strong>
         <span>{row.backfillStatus || 'queued'}</span>
       </div>
+    </article>
+  );
+}
+
+function CandidateTradeDrawer({ row, details, loading, error, onLoadMore }) {
+  const trades = details?.trades || [];
+  const total = details?.totalTrackedTradeCount ?? row.allTrackedTradeCount ?? trades.length;
+  const hasMore = trades.length < total;
+
+  return (
+    <div className="candidateTradeDrawer">
+      <div className="candidateTradeHead">
+        <strong>{trades.length ? `${trades.length} of ${total} tracked trades` : 'Tracked trades'}</strong>
+        <span>Candidate range only: $1k-$10k entries and exits</span>
+      </div>
+      {error ? (
+        <div className="candidateTradeMessage negative">{error}</div>
+      ) : loading && !trades.length ? (
+        <div className="candidateTradeMessage">Loading trader history...</div>
+      ) : trades.length ? (
+        <>
+          <div className="candidateTradeRows">
+            {trades.map((trade) => <CandidateTradeRow key={trade.id} trade={trade} />)}
+          </div>
+          {hasMore && (
+            <button className="textButton candidateLoadMore" onClick={onLoadMore} disabled={loading}>
+              {loading ? 'Loading...' : 'Load more trades'}
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="candidateTradeMessage">No tracked trades stored for this trader yet.</div>
+      )}
+    </div>
+  );
+}
+
+function CandidateTradeRow({ trade }) {
+  const pnl = trade.pnlUsd === null || trade.pnlUsd === undefined ? null : Number(trade.pnlUsd);
+  return (
+    <article className="candidateTradeRow">
+      <div className="candidateTradeMarket">
+        <strong>{trade.marketTitle || 'Unknown market'}</strong>
+        <span>{trade.side} {trade.outcome} · {formatTimeAgo(trade.tradeTimestamp)} · {trade.source}</span>
+      </div>
+      <div className="candidateTradeCell">
+        <span>Entry</span>
+        <strong>{formatTradeEntry(trade)}</strong>
+      </div>
+      <div className="candidateTradeCell">
+        <span>Size</span>
+        <strong>{usd(trade.usdSize)}</strong>
+      </div>
+      <div className="candidateTradeCell">
+        <span>Status</span>
+        <strong className={statusTone(trade.status)}>{statusLabel(trade.status)}</strong>
+      </div>
+      <div className="candidateTradeCell">
+        <span>P/L</span>
+        <strong className={pnl === null ? 'neutral' : pnlTone(pnl)}>{pnl === null ? 'n/a' : signedUsd(pnl)}</strong>
+      </div>
+      {trade.polymarketUrl && (
+        <a className="iconButton" href={trade.polymarketUrl} target="_blank" rel="noreferrer" aria-label="Open market">
+          <ExternalLink size={15} />
+        </a>
+      )}
     </article>
   );
 }
@@ -872,6 +1005,12 @@ function formatAep(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 'n/a';
   return `${number.toFixed(1)}c`;
+}
+
+function formatTradeEntry(trade) {
+  const price = Number(trade?.price);
+  if (!Number.isFinite(price)) return 'n/a';
+  return `${(price * 100).toFixed(1)}c`;
 }
 
 function candidateStatusLabel(status) {
