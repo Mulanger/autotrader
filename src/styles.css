@@ -859,6 +859,15 @@ button {
   color: var(--ink);
 }
 
+.candidateTradeHead div {
+  display: grid;
+  gap: 2px;
+}
+
+.candidateCollapseButton {
+  min-height: 30px;
+}
+
 .candidateTradeRows {
   max-height: 420px;
   overflow: auto;

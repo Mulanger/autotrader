@@ -694,6 +694,7 @@ function CandidatesView({ service }) {
                     details={detailsByWallet[row.wallet]}
                     loading={Boolean(detailLoading[row.wallet])}
                     error={detailErrors[row.wallet]}
+                    onCollapse={() => setExpandedWallet(null)}
                     onLoadMore={() => loadTraderDetails(row.wallet, true)}
                   />
                 )}
@@ -720,7 +721,10 @@ function CandidateRow({ row, expanded, onToggle }) {
     <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''} ${expanded ? 'expanded' : ''}`}>
       <button
         className="candidateExpandButton"
-        onClick={onToggle}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle();
+        }}
         aria-label={`${expanded ? 'Collapse' : 'Expand'} ${display} trades`}
         aria-expanded={expanded}
       >
@@ -765,7 +769,7 @@ function CandidateRow({ row, expanded, onToggle }) {
   );
 }
 
-function CandidateTradeDrawer({ row, details, loading, error, onLoadMore }) {
+function CandidateTradeDrawer({ row, details, loading, error, onCollapse, onLoadMore }) {
   const trades = details?.trades || [];
   const total = details?.totalTrackedTradeCount ?? row.allTrackedTradeCount ?? trades.length;
   const hasMore = trades.length < total;
@@ -773,8 +777,13 @@ function CandidateTradeDrawer({ row, details, loading, error, onLoadMore }) {
   return (
     <div className="candidateTradeDrawer">
       <div className="candidateTradeHead">
-        <strong>{trades.length ? `${trades.length} of ${total} tracked trades` : 'Tracked trades'}</strong>
-        <span>Candidate range only: $1k-$10k entries and exits</span>
+        <div>
+          <strong>{trades.length ? `${trades.length} of ${total} tracked trades` : 'Tracked trades'}</strong>
+          <span>Candidate range only: $1k-$10k entries and exits</span>
+        </div>
+        <button className="textButton candidateCollapseButton" onClick={onCollapse}>
+          Collapse
+        </button>
       </div>
       {error ? (
         <div className="candidateTradeMessage negative">{error}</div>
@@ -799,7 +808,7 @@ function CandidateTradeDrawer({ row, details, loading, error, onLoadMore }) {
 }
 
 function CandidateTradeRow({ trade }) {
-  const pnl = trade.pnlUsd === null || trade.pnlUsd === undefined ? null : Number(trade.pnlUsd);
+  const pnlDisplay = candidateTradePnlDisplay(trade);
   return (
     <article className="candidateTradeRow">
       <div className="candidateTradeMarket">
@@ -820,7 +829,7 @@ function CandidateTradeRow({ trade }) {
       </div>
       <div className="candidateTradeCell">
         <span>P/L</span>
-        <strong className={pnl === null ? 'neutral' : pnlTone(pnl)}>{pnl === null ? 'n/a' : signedUsd(pnl)}</strong>
+        <strong className={pnlDisplay.tone}>{pnlDisplay.label}</strong>
       </div>
       {trade.polymarketUrl && (
         <a className="iconButton" href={trade.polymarketUrl} target="_blank" rel="noreferrer" aria-label="Open market">
@@ -1011,6 +1020,14 @@ function formatTradeEntry(trade) {
   const price = Number(trade?.price);
   if (!Number.isFinite(price)) return 'n/a';
   return `${(price * 100).toFixed(1)}c`;
+}
+
+function candidateTradePnlDisplay(trade) {
+  const pnl = trade?.pnlUsd === null || trade?.pnlUsd === undefined ? null : Number(trade.pnlUsd);
+  if (Number.isFinite(pnl)) return { label: signedUsd(pnl), tone: pnlTone(pnl) };
+  if (String(trade?.status || '').toLowerCase() === 'open') return { label: 'pending', tone: 'neutral' };
+  if (String(trade?.side || '').toUpperCase() === 'SELL') return { label: 'not scored', tone: 'neutral' };
+  return { label: 'unscored', tone: 'neutral' };
 }
 
 function candidateStatusLabel(status) {
