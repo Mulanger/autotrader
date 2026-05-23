@@ -850,6 +850,13 @@ button {
   gap: 2px;
 }
 
+.candidateNameLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
 .candidateIdentity strong,
 .candidateIdentity span {
   overflow: hidden;
@@ -865,17 +872,20 @@ button {
 }
 
 .copyPoolBadge {
+  flex: 0 0 auto;
   width: fit-content;
   border-radius: 999px;
-  padding: 2px 7px;
-  font-size: 0.68rem;
+  padding: 3px 8px;
+  font-size: 0.7rem;
   font-weight: 800;
   line-height: 1.25;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .copyPoolBadge.protected {
-  background: #fff3bd;
-  color: #936400;
+  background: #e9f7ef;
+  color: #078158;
 }
 
 .copyPoolBadge.following {

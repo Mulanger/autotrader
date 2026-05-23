@@ -793,9 +793,11 @@ function CandidateRow({ row, copyPoolEntry, expanded, onToggle }) {
         {row.profileImage ? <img src={row.profileImage} alt="" /> : <Cpu size={17} />}
       </div>
       <div className="candidateIdentity">
-        <strong>{display}</strong>
+        <div className="candidateNameLine">
+          <strong>{display}</strong>
+          {badge && <small className={`copyPoolBadge ${badge.tone}`} title={badge.title}>{badge.label}</small>}
+        </div>
         <span>{shortWallet(row.wallet)}</span>
-        {badge && <small className={`copyPoolBadge ${badge.tone}`}>{badge.label}</small>}
       </div>
       <div className="candidateMetric">
         <span>P/L trades</span>
@@ -1087,8 +1089,8 @@ function formatTradeEntry(trade) {
 
 function copyPoolBadge(entry) {
   if (!entry || entry.status !== 'active') return null;
-  if (entry.protected) return { label: 'Protected', tone: 'protected' };
-  return { label: 'Following', tone: 'following' };
+  if (entry.protected) return { label: 'Following', tone: 'protected', title: 'Protected baseline wallet is being copied' };
+  return { label: 'Following', tone: 'following', title: 'Auto-added trader is being copied' };
 }
 
 function candidateTradePnlDisplay(trade) {
