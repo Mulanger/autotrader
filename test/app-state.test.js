@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createAppState, ingestTrade, restoreDurableState, serializeDurableState } from '../server/app-state.js';
+import { applyCopyPoolSnapshot } from '../server/copy-pool.js';
 
 function trade(wallet, overrides = {}) {
   return {
@@ -59,6 +60,68 @@ describe('app state', () => {
     expect(restored.demo.openPositions).toHaveLength(1);
     expect(restored.seenTradeIds.has('restore-trade')).toBe(true);
     expect(restored.demo.copiedTraderMarketKeys.size).toBe(1);
+  });
+
+  it('copies future trades from an active auto-added wallet', () => {
+    const state = createAppState();
+    const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    applyCopyPoolSnapshot(state, {
+      wallets: {
+        [wallet]: {
+          wallet,
+          source: 'auto',
+          status: 'active',
+          protected: false,
+          displayName: 'Auto Trader',
+        },
+      },
+    });
+
+    const event = ingestTrade(state, trade(wallet, { id: 'auto-copy', marketSlug: 'auto-market' }), 'candidate-live');
+
+    expect(state.watchedWallets).toContain(wallet);
+    expect(event.copyDecision.action).toBe('copied');
+    expect(state.demo.openPositions).toHaveLength(1);
+  });
+
+  it('stops copying removed auto wallets without closing existing positions', () => {
+    const state = createAppState();
+    const wallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    applyCopyPoolSnapshot(state, {
+      wallets: {
+        [wallet]: { wallet, source: 'auto', status: 'active', protected: false },
+      },
+    });
+    ingestTrade(state, trade(wallet, { id: 'auto-first', marketSlug: 'first-market' }), 'candidate-live');
+
+    applyCopyPoolSnapshot(state, {
+      wallets: {
+        [wallet]: { wallet, source: 'auto', status: 'removed', protected: false, reason: 'Win rate below threshold' },
+      },
+    });
+    const event = ingestTrade(state, trade(wallet, { id: 'auto-second', marketSlug: 'second-market' }), 'candidate-live');
+
+    expect(state.watchedWallets).not.toContain(wallet);
+    expect(event.copyDecision.action).toBe('ignored');
+    expect(state.demo.openPositions).toHaveLength(1);
+    expect(state.demo.openPositions[0].sourceTradeId).toBe('auto-first');
+  });
+
+  it('keeps protected baseline wallets active even if a snapshot marks them removed', () => {
+    const state = createAppState();
+    const wallet = state.watchedWallets[0];
+
+    applyCopyPoolSnapshot(state, {
+      wallets: {
+        [wallet]: { wallet, source: 'auto', status: 'removed', protected: false, reason: 'Should not remove baseline' },
+      },
+    });
+
+    const event = ingestTrade(state, trade(wallet, { id: 'baseline-protected' }), 'websocket');
+
+    expect(state.copyPool.wallets[wallet].protected).toBe(true);
+    expect(state.copyPool.wallets[wallet].status).toBe('active');
+    expect(event.copyDecision.action).toBe('copied');
   });
 
   it('rebuilds trader-market dedupe keys from older stored positions', () => {

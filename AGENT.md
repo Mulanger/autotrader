@@ -124,6 +124,11 @@ Production/Railway:
 - `CANDIDATE_MAX_USD`: candidate tracker exclusive maximum trade notional. Defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.
 - `CANDIDATE_POLL_INTERVAL_MS`: candidate Data API poll interval. Defaults to `30000`.
+- `AUTO_COPY_POOL_ENABLED`: enables automated promotion/removal from the demo copy pool. Defaults to `true`.
+- `AUTO_COPY_POOL_INTERVAL_MS`: copy-pool evaluator interval. Defaults to `300000`.
+- `AUTO_COPY_MIN_DISTINCT_MARKETS`: minimum trailing 30-day resolved distinct BUY markets. Defaults to `15`.
+- `AUTO_COPY_MIN_WIN_RATE_PCT`: minimum trailing 30-day distinct-market win rate. Defaults to `75`.
+- `AUTO_COPY_MAX_AEP_CENTS`: maximum trailing 30-day BUY AEP for auto promotion. Defaults to `75`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
 
@@ -154,9 +159,11 @@ candidate_traders
 candidate_trades
 candidate_market_resolutions
 candidate_service_state
+copy_pool_traders
+copy_pool_events
 ```
 
-The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `candidate_*` tables are isolated from demo copy trading and power the `$1k-$10k` discovery leaderboard. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
+The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `candidate_*` tables power the `$1k-$10k` discovery leaderboard and feed the isolated automated copy-pool evaluator; `copy_pool_*` tables hold promotion/removal state and audit events. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
 
 ## Runtime Data Flow
 

@@ -50,6 +50,16 @@ export const CANDIDATE_BACKFILL_MAX_PAGES = Number(process.env.CANDIDATE_BACKFIL
 
 export const CANDIDATE_RESOLUTION_BATCH_SIZE = Number(process.env.CANDIDATE_RESOLUTION_BATCH_SIZE || 50);
 
+export const AUTO_COPY_POOL_ENABLED = parseBoolean(process.env.AUTO_COPY_POOL_ENABLED, true);
+
+export const AUTO_COPY_POOL_INTERVAL_MS = Number(process.env.AUTO_COPY_POOL_INTERVAL_MS || 300_000);
+
+export const AUTO_COPY_MIN_DISTINCT_MARKETS = Number(process.env.AUTO_COPY_MIN_DISTINCT_MARKETS || 15);
+
+export const AUTO_COPY_MIN_WIN_RATE_PCT = Number(process.env.AUTO_COPY_MIN_WIN_RATE_PCT || 75);
+
+export const AUTO_COPY_MAX_AEP_CENTS = Number(process.env.AUTO_COPY_MAX_AEP_CENTS || 75);
+
 export { WATCHED_WALLETS };
 
 function parseBoolean(value, fallback) {

@@ -75,6 +75,45 @@ export function makeCandidateTradeId(parts) {
   return `candidate-${createHash('sha256').update(stableParts.map((part) => part ?? '').join('|')).digest('hex').slice(0, 32)}`;
 }
 
+export function candidateTradeToDemoTrade(trade) {
+  if (!trade?.id || !trade.wallet) return null;
+  const priceCents = numberOrNull(trade.priceCents ?? Number(trade.price) * 100);
+  const timestamp = toUnixSeconds(trade.timestamp ?? trade.tradeTimestamp);
+  return {
+    id: trade.id,
+    tier: 'candidate',
+    side: String(trade.side || '').toUpperCase() || 'UNKNOWN',
+    outcome: trade.outcome || 'Unknown outcome',
+    usdSize: numberOrNull(trade.usdSize) ?? 0,
+    shares: numberOrNull(trade.shares) ?? 0,
+    priceCents,
+    priceMillicents: Number.isFinite(priceCents) ? priceCents * 100 : 0,
+    timestamp,
+    market: {
+      conditionId: trade.conditionId || null,
+      slug: trade.marketSlug || trade.conditionId || trade.id,
+      title: trade.marketTitle || 'Unknown market',
+      icon: trade.marketIcon || null,
+      category: null,
+      eventSlug: trade.eventSlug || null,
+      yesPriceCents: sameOutcome(trade.outcome, 'YES') ? priceCents : null,
+      noPriceCents: sameOutcome(trade.outcome, 'NO') ? priceCents : null,
+      polymarketUrl: trade.polymarketUrl || null,
+    },
+    trader: {
+      proxyWallet: String(trade.wallet).toLowerCase(),
+      pseudonym: trade.pseudonym || null,
+      displayName: trade.displayName || null,
+      profileImage: trade.profileImage || null,
+      winRate: null,
+      tradeCount: null,
+    },
+    transactionHash: trade.transactionHash || null,
+    fees: { source: 'unavailable', feesEnabled: null, feeRateBps: null, feeRate: null, feeUsd: null },
+    resolution: { status: 'open', pnlUsd: null, closed: false },
+  };
+}
+
 function buildPolymarketUrl({ eventSlug, slug }) {
   if (eventSlug) return `https://polymarket.com/event/${eventSlug}`;
   if (slug) return `https://polymarket.com/market/${slug}`;
@@ -114,4 +153,8 @@ function stringOrNull(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text || null;
+}
+
+function sameOutcome(a, b) {
+  return String(a || '').trim().toUpperCase() === b;
 }

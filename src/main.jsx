@@ -24,6 +24,8 @@ import {
   ShieldCheck,
   Target,
   Trophy,
+  UserMinus,
+  UserPlus,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -233,7 +235,7 @@ function DemoWorkspace({ data, metrics, tab }) {
     );
   }
   if (tab === 'traders') return <TraderGrid traders={data.traders} />;
-  if (tab === 'candidates') return <CandidatesView service={data.service.candidates} />;
+  if (tab === 'candidates') return <CandidatesView service={data.service.candidates} copyPoolState={data.copyPool} />;
 
   return (
     <div className="dashboardGrid">
@@ -359,6 +361,7 @@ function sourceLabel(source) {
   if (source === 'bootstrap') return 'loaded at startup';
   if (source === 'websocket') return 'live stream';
   if (source === 'poll') return 'poll sync';
+  if (source === 'candidate-live') return 'candidate live';
   return source || 'unknown source';
 }
 
@@ -589,7 +592,7 @@ function useCandidateLeaderboard() {
   return { leaderboard, loading, error, refresh };
 }
 
-function CandidatesView({ service }) {
+function CandidatesView({ service, copyPoolState }) {
   const { leaderboard, loading, error, refresh } = useCandidateLeaderboard();
   const [expandedWallet, setExpandedWallet] = React.useState(null);
   const [detailsByWallet, setDetailsByWallet] = React.useState({});
@@ -597,6 +600,7 @@ function CandidatesView({ service }) {
   const [detailErrors, setDetailErrors] = React.useState({});
   const rows = leaderboard?.rows || [];
   const summary = leaderboard?.summary || {};
+  const copyPool = leaderboard?.copyPool?.wallets ? leaderboard.copyPool : copyPoolState || {};
   const enabled = leaderboard?.enabled ?? service?.enabled;
 
   const loadTraderDetails = React.useCallback(async (wallet, append = false) => {
@@ -680,11 +684,14 @@ function CandidatesView({ service }) {
             <span className="muted">AEP is a rolling 30-day BUY average; recent form uses resolved BUY trades only.</span>
           </div>
 
+          <CopyPoolCards copyPool={copyPool} />
+
           <div className="candidateList">
             {rows.map((row) => (
               <React.Fragment key={row.wallet}>
                 <CandidateRow
                   row={row}
+                  copyPoolEntry={copyPool?.wallets?.[String(row.wallet || '').toLowerCase()]}
                   expanded={expandedWallet === row.wallet}
                   onToggle={() => toggleCandidate(row.wallet)}
                 />
@@ -713,10 +720,59 @@ function CandidatesView({ service }) {
   );
 }
 
-function CandidateRow({ row, expanded, onToggle }) {
+function CopyPoolCards({ copyPool }) {
+  return (
+    <div className="copyPoolCards">
+      <CopyPoolCard
+        title="Recently added"
+        icon={UserPlus}
+        empty="No automated promotions yet."
+        events={copyPool?.recentAdded || []}
+        tone="added"
+      />
+      <CopyPoolCard
+        title="Recently removed"
+        icon={UserMinus}
+        empty="No automated removals yet."
+        events={copyPool?.recentRemoved || []}
+        tone="removed"
+      />
+    </div>
+  );
+}
+
+function CopyPoolCard({ title, icon: Icon, empty, events, tone }) {
+  return (
+    <section className="copyPoolCard">
+      <div className="copyPoolCardHead">
+        <Icon size={16} />
+        <strong>{title}</strong>
+      </div>
+      <div className="copyPoolEventList">
+        {events.slice(0, 4).map((event) => (
+          <div className="copyPoolEvent" key={`${event.id}-${event.createdAt}`}>
+            <div>
+              <strong>{event.displayName || event.pseudonym || shortWallet(event.wallet)}</strong>
+              <span>{shortWallet(event.wallet)} - {formatTimeAgo(event.createdAt)}</span>
+            </div>
+            {tone === 'added' ? (
+              <em>{pct(event.winRatePct)} - {event.distinctResolvedTradeCount || 0} trades - AEP {formatAep(event.avgEntryPriceCents30d)}</em>
+            ) : (
+              <em title={event.reason}>{event.reason || 'Eligibility dropped'}</em>
+            )}
+          </div>
+        ))}
+        {!events.length && <span className="muted">{empty}</span>}
+      </div>
+    </section>
+  );
+}
+
+function CandidateRow({ row, copyPoolEntry, expanded, onToggle }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const form = row.recentFormResults || [];
   const ExpandIcon = expanded ? ChevronDown : ChevronRight;
+  const badge = copyPoolBadge(copyPoolEntry);
   return (
     <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''} ${expanded ? 'expanded' : ''}`}>
       <button
@@ -739,6 +795,7 @@ function CandidateRow({ row, expanded, onToggle }) {
       <div className="candidateIdentity">
         <strong>{display}</strong>
         <span>{shortWallet(row.wallet)}</span>
+        {badge && <small className={`copyPoolBadge ${badge.tone}`}>{badge.label}</small>}
       </div>
       <div className="candidateMetric">
         <span>P/L trades</span>
@@ -813,7 +870,7 @@ function CandidateTradeRow({ trade }) {
     <article className="candidateTradeRow">
       <div className="candidateTradeMarket">
         <strong>{trade.marketTitle || 'Unknown market'}</strong>
-        <span>{trade.side} {trade.outcome} · {formatTimeAgo(trade.tradeTimestamp)} · {trade.source}</span>
+        <span>{trade.side} {trade.outcome} - {formatTimeAgo(trade.tradeTimestamp)} - {trade.source}</span>
       </div>
       <div className="candidateTradeCell">
         <span>Entry</span>
@@ -961,6 +1018,12 @@ function emptyState() {
       closedPositions: [],
     },
     real: {},
+    copyPool: {
+      wallets: {},
+      recentAdded: [],
+      recentRemoved: [],
+      counts: {},
+    },
     allTrades: [],
     copiedFeed: [],
   };
@@ -1020,6 +1083,12 @@ function formatTradeEntry(trade) {
   const price = Number(trade?.price);
   if (!Number.isFinite(price)) return 'n/a';
   return `${(price * 100).toFixed(1)}c`;
+}
+
+function copyPoolBadge(entry) {
+  if (!entry || entry.status !== 'active') return null;
+  if (entry.protected) return { label: 'Protected', tone: 'protected' };
+  return { label: 'Following', tone: 'following' };
 }
 
 function candidateTradePnlDisplay(trade) {

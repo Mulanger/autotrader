@@ -1,4 +1,9 @@
 import {
+  AUTO_COPY_POOL_ENABLED,
+  AUTO_COPY_POOL_INTERVAL_MS,
+  AUTO_COPY_MAX_AEP_CENTS,
+  AUTO_COPY_MIN_DISTINCT_MARKETS,
+  AUTO_COPY_MIN_WIN_RATE_PCT,
   CANDIDATE_BACKFILL_DAYS,
   CANDIDATE_BACKFILL_MAX_PAGES,
   CANDIDATE_BACKFILL_PAGE_LIMIT,
@@ -10,23 +15,37 @@ import {
   CANDIDATE_RESOLUTION_BATCH_SIZE,
   CANDIDATE_RESOLUTION_POLL_INTERVAL_MS,
   CANDIDATE_TRACKER_ENABLED,
+  WATCHED_WALLETS,
 } from '../config.js';
+import { ingestTrade } from '../app-state.js';
+import { applyCopyPoolSnapshot, defaultCopyPoolThresholds, isWalletWatched } from '../copy-pool.js';
 import { fetchGammaResolution } from '../polymarket-client.js';
 import { fetchDataApiTrades } from './data-api-client.js';
-import { normalizeCandidateTrade } from './normalizer.js';
+import { candidateTradeToDemoTrade, normalizeCandidateTrade } from './normalizer.js';
 import { buildCandidateSettlement } from './resolution.js';
 import { createCandidateStorage } from './storage.js';
 
 export function createCandidateTracker(state, broadcast, options = {}) {
   const enabled = options.enabled ?? CANDIDATE_TRACKER_ENABLED;
+  const onStateChanged = options.onStateChanged || (() => {});
+  const copyPoolEnabled = options.copyPoolEnabled ?? AUTO_COPY_POOL_ENABLED;
+  const copyPoolThresholds = defaultCopyPoolThresholds({
+    minDistinctResolvedMarkets: AUTO_COPY_MIN_DISTINCT_MARKETS,
+    minWinRatePct: AUTO_COPY_MIN_WIN_RATE_PCT,
+    maxAvgEntryPriceCents: AUTO_COPY_MAX_AEP_CENTS,
+    windowDays: CANDIDATE_BACKFILL_DAYS,
+  });
   let storage = null;
   let started = false;
   let pollTimer = null;
   let backfillTimer = null;
   let resolutionTimer = null;
+  let copyPoolTimer = null;
   let pollRunning = false;
   let backfillRunning = false;
   let resolutionRunning = false;
+  let copyPoolRunning = false;
+  let pollBootstrapped = false;
 
   state.service.candidates = {
     enabled,
@@ -42,6 +61,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     lastResolutionAt: null,
     lastResolutionChecked: 0,
     lastResolutionSettled: 0,
+    copyPoolEnabled,
+    copyPoolStatus: copyPoolEnabled ? 'starting' : 'disabled',
+    copyPoolLastRunAt: null,
+    copyPoolLastChangedCount: 0,
+    copyPoolLastCopiedCount: 0,
     lastError: null,
   };
 
@@ -54,6 +78,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       storage = await createCandidateStorage();
       state.service.candidates.storageStatus = 'ready';
       state.service.candidates.status = 'ready';
+      await runCopyPoolEvaluation();
       broadcast();
     } catch (error) {
       state.service.candidates.storageStatus = 'error';
@@ -66,16 +91,19 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     await runPoll();
     await runBackfill();
     await runResolution();
+    await runCopyPoolEvaluation();
 
     pollTimer = setInterval(runPoll, CANDIDATE_POLL_INTERVAL_MS);
     backfillTimer = setInterval(runBackfill, Math.max(15_000, CANDIDATE_POLL_INTERVAL_MS));
     resolutionTimer = setInterval(runResolution, CANDIDATE_RESOLUTION_POLL_INTERVAL_MS);
+    copyPoolTimer = setInterval(runCopyPoolEvaluation, AUTO_COPY_POOL_INTERVAL_MS);
   }
 
   async function close() {
     clearInterval(pollTimer);
     clearInterval(backfillTimer);
     clearInterval(resolutionTimer);
+    clearInterval(copyPoolTimer);
     await storage?.close();
   }
 
@@ -83,6 +111,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!storage || pollRunning) return;
     pollRunning = true;
     let inserted = 0;
+    let copied = 0;
+    const canCopyNewLiveTrades = pollBootstrapped;
+    let completed = false;
     try {
       state.service.candidates.status = 'polling';
       broadcast();
@@ -96,20 +127,31 @@ export function createCandidateTracker(state, broadcast, options = {}) {
           const trade = normalizeCandidateTrade(raw, { source: 'live' });
           if (!trade) continue;
           const result = await storage.upsertTrade(trade);
-          if (result.insertedTrade) inserted += 1;
+          if (result.insertedTrade) {
+            inserted += 1;
+            if (canCopyNewLiveTrades && isWalletWatched(state, trade.wallet)) {
+              const demoTrade = candidateTradeToDemoTrade(trade);
+              const event = demoTrade ? ingestTrade(state, demoTrade, 'candidate-live') : null;
+              if (event) copied += 1;
+            }
+          }
         }
       }
 
       state.service.candidates.status = 'ready';
       state.service.candidates.lastPollAt = new Date().toISOString();
       state.service.candidates.lastPollInserted = inserted;
+      state.service.candidates.copyPoolLastCopiedCount = copied;
       state.service.candidates.lastError = null;
+      if (copied) onStateChanged();
+      completed = true;
       broadcast();
     } catch (error) {
       state.service.candidates.status = 'error';
       state.service.candidates.lastError = error.message;
       broadcast();
     } finally {
+      if (completed) pollBootstrapped = true;
       pollRunning = false;
     }
   }
@@ -147,6 +189,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       }
 
       await storage.markBackfillComplete(wallet, cutoff.toISOString());
+      await runCopyPoolEvaluation();
       state.service.candidates.status = 'ready';
       state.service.candidates.lastBackfillAt = new Date().toISOString();
       state.service.candidates.lastError = null;
@@ -197,6 +240,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.candidates.lastResolutionChecked = checked;
       state.service.candidates.lastResolutionSettled = settled;
       state.service.candidates.lastError = null;
+      if (settled) await runCopyPoolEvaluation();
       broadcast();
     } catch (error) {
       state.service.candidates.status = 'error';
@@ -207,12 +251,44 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
+  async function runCopyPoolEvaluation() {
+    if (!storage || copyPoolRunning) return;
+    if (!copyPoolEnabled) {
+      state.service.candidates.copyPoolStatus = 'disabled';
+      return;
+    }
+
+    copyPoolRunning = true;
+    try {
+      state.service.candidates.copyPoolStatus = 'evaluating';
+      broadcast();
+      const result = await storage.evaluateCopyPool({
+        baselineWallets: WATCHED_WALLETS,
+        thresholds: copyPoolThresholds,
+      });
+      applyCopyPoolSnapshot(state, result.snapshot);
+      state.service.candidates.copyPoolStatus = 'ready';
+      state.service.candidates.copyPoolLastRunAt = new Date().toISOString();
+      state.service.candidates.copyPoolLastChangedCount = result.changed.length;
+      state.service.candidates.lastError = null;
+      onStateChanged();
+      broadcast();
+    } catch (error) {
+      state.service.candidates.copyPoolStatus = 'error';
+      state.service.candidates.lastError = error.message;
+      broadcast();
+    } finally {
+      copyPoolRunning = false;
+    }
+  }
+
   async function getLeaderboard(params = {}) {
     if (!enabled) return inactivePayload('disabled');
     if (!storage) return inactivePayload(state.service.candidates.status || 'starting');
-    const [rows, summary] = await Promise.all([
+    const [rows, summary, copyPool] = await Promise.all([
       storage.getLeaderboard(params),
       storage.getSummary(),
+      storage.getCopyPoolSnapshot({ thresholds: copyPoolThresholds }),
     ]);
     return {
       ok: true,
@@ -221,6 +297,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       updatedAt: new Date().toISOString(),
       summary,
       rows,
+      copyPool,
     };
   }
 
@@ -237,6 +314,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runPoll,
     runBackfill,
     runResolution,
+    runCopyPoolEvaluation,
   };
 }
 

@@ -24,7 +24,9 @@ let storage = createMemoryStorage(state.service.storage, 'starting');
 let ingestionStarted = false;
 let candidateTrackerStarted = false;
 
-const candidateTracker = createCandidateTracker(state, broadcast);
+const candidateTracker = createCandidateTracker(state, broadcast, {
+  onStateChanged: () => storage.queueSave(state),
+});
 
 app.use(express.json());
 

@@ -1,6 +1,13 @@
 import { Pool } from 'pg';
+import {
+  copyPoolEligibilityReason,
+  defaultCopyPoolThresholds,
+  isCopyPoolEligible,
+  makeCopyPoolWallet,
+  normalizeWallet,
+} from '../copy-pool.js';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export async function createCandidateStorage() {
   if (!process.env.DATABASE_URL) {
@@ -33,6 +40,8 @@ export async function createCandidateStorage() {
     getLeaderboard: (params) => getLeaderboard(pool, params),
     getTrader: (wallet, params) => getTrader(pool, wallet, params),
     getSummary: () => getSummary(pool),
+    evaluateCopyPool: (params) => evaluateCopyPool(pool, params),
+    getCopyPoolSnapshot: (params) => getCopyPoolSnapshot(pool, params),
     close: () => pool.end(),
   };
 }
@@ -115,6 +124,44 @@ async function migrate(pool) {
       payload jsonb not null,
       updated_at timestamptz not null default now()
     );
+
+    create table if not exists copy_pool_traders (
+      wallet text primary key,
+      source text not null,
+      status text not null,
+      protected boolean not null default false,
+      display_name text,
+      pseudonym text,
+      profile_image text,
+      distinct_resolved_trade_count integer not null default 0,
+      win_count integer not null default 0,
+      win_rate_pct numeric,
+      avg_entry_price_cents_30d numeric,
+      avg_entry_trade_count_30d integer not null default 0,
+      eligible boolean not null default false,
+      reason text,
+      first_added_at timestamptz,
+      added_at timestamptz,
+      removed_at timestamptz,
+      last_evaluated_at timestamptz,
+      payload jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create table if not exists copy_pool_events (
+      id bigserial primary key,
+      wallet text not null,
+      action text not null,
+      source text not null,
+      reason text,
+      metrics jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
+
+    create index if not exists copy_pool_traders_status_idx on copy_pool_traders (source, status);
+    create index if not exists copy_pool_events_created_idx on copy_pool_events (created_at desc);
+    create index if not exists copy_pool_events_wallet_idx on copy_pool_events (wallet, created_at desc);
 
     insert into candidate_schema_migrations (version)
     values (${SCHEMA_VERSION})
@@ -490,6 +537,423 @@ async function getSummary(pool) {
   return camelizeSummary(result.rows[0] || {});
 }
 
+async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresholdOverrides = {} } = {}) {
+  const thresholds = defaultCopyPoolThresholds(thresholdOverrides);
+  const client = await pool.connect();
+  const changed = [];
+  try {
+    await client.query('begin');
+    await upsertBaselineCopyPoolRows(client, baselineWallets, thresholds);
+
+    const metricRowsResult = await queryCopyPoolMetricRows(client, thresholds);
+    const currentRowsResult = await client.query('select * from copy_pool_traders');
+    const current = new Map(currentRowsResult.rows.map((row) => [normalizeWallet(row.wallet), row]));
+    const metricWallets = new Set();
+
+    for (const row of metricRowsResult.rows) {
+      const wallet = normalizeWallet(row.wallet);
+      if (!wallet) continue;
+      metricWallets.add(wallet);
+      const existing = current.get(wallet);
+      const source = existing?.source || 'auto';
+      const protectedWallet = Boolean(existing?.protected);
+      const metrics = metricsFromRow(row, thresholds);
+
+      if (protectedWallet || source === 'baseline') {
+        const evaluatedAt = new Date().toISOString();
+        await upsertCopyPoolRow(client, {
+          ...metrics,
+          wallet,
+          source: 'baseline',
+          status: 'active',
+          protected: true,
+          displayName: row.display_name,
+          pseudonym: row.pseudonym,
+          profileImage: row.profile_image,
+          reason: 'Protected baseline wallet',
+          firstAddedAt: isoOrNull(existing?.first_added_at) || evaluatedAt,
+          addedAt: isoOrNull(existing?.added_at) || evaluatedAt,
+          removedAt: null,
+        });
+        continue;
+      }
+
+      if (metrics.eligible) {
+        const wasActive = existing?.status === 'active';
+        const evaluatedAt = new Date().toISOString();
+        await upsertCopyPoolRow(client, {
+          ...metrics,
+          wallet,
+          source: 'auto',
+          status: 'active',
+          protected: false,
+          displayName: row.display_name,
+          pseudonym: row.pseudonym,
+          profileImage: row.profile_image,
+          reason: 'Eligible',
+          firstAddedAt: isoOrNull(existing?.first_added_at) || evaluatedAt,
+          addedAt: wasActive ? isoOrNull(existing?.added_at) || evaluatedAt : evaluatedAt,
+          removedAt: null,
+        });
+        if (!wasActive) {
+          await insertCopyPoolEvent(client, wallet, 'added', 'auto', 'Eligible', metrics);
+          changed.push({ wallet, action: 'added' });
+        }
+        continue;
+      }
+
+      if (existing?.status === 'active' && existing?.source === 'auto') {
+        const evaluatedAt = new Date().toISOString();
+        await upsertCopyPoolRow(client, {
+          ...metrics,
+          wallet,
+          source: 'auto',
+          status: 'removed',
+          protected: false,
+          displayName: row.display_name,
+          pseudonym: row.pseudonym,
+          profileImage: row.profile_image,
+          reason: metrics.reason,
+          firstAddedAt: isoOrNull(existing?.first_added_at),
+          addedAt: isoOrNull(existing?.added_at),
+          removedAt: evaluatedAt,
+        });
+        await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.reason, metrics);
+        changed.push({ wallet, action: 'removed', reason: metrics.reason });
+      } else if (existing) {
+        await upsertCopyPoolRow(client, {
+          ...metrics,
+          wallet,
+          source: existing.source || 'auto',
+          status: existing.status || 'removed',
+          protected: Boolean(existing.protected),
+          displayName: row.display_name,
+          pseudonym: row.pseudonym,
+          profileImage: row.profile_image,
+          reason: metrics.reason,
+          firstAddedAt: isoOrNull(existing.first_added_at),
+          addedAt: isoOrNull(existing.added_at),
+          removedAt: isoOrNull(existing.removed_at),
+        });
+      }
+    }
+
+    for (const [wallet, existing] of current.entries()) {
+      if (metricWallets.has(wallet) || existing.source !== 'auto' || existing.status !== 'active') continue;
+      const metrics = metricsFromRow({ wallet }, thresholds);
+      const evaluatedAt = new Date().toISOString();
+      await upsertCopyPoolRow(client, {
+        ...metrics,
+        wallet,
+        source: 'auto',
+        status: 'removed',
+        protected: false,
+        displayName: existing.display_name,
+        pseudonym: existing.pseudonym,
+        profileImage: existing.profile_image,
+        reason: metrics.reason,
+        firstAddedAt: isoOrNull(existing.first_added_at),
+        addedAt: isoOrNull(existing.added_at),
+        removedAt: evaluatedAt,
+      });
+      await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.reason, metrics);
+      changed.push({ wallet, action: 'removed', reason: metrics.reason });
+    }
+
+    await client.query('commit');
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  return {
+    changed,
+    snapshot: await getCopyPoolSnapshot(pool, { thresholds }),
+  };
+}
+
+async function getCopyPoolSnapshot(pool, { thresholds: thresholdOverrides = {} } = {}) {
+  const thresholds = defaultCopyPoolThresholds(thresholdOverrides);
+  const [walletResult, addedResult, removedResult] = await Promise.all([
+    pool.query('select * from copy_pool_traders order by protected desc, source asc, added_at asc nulls last, wallet asc'),
+    queryCopyPoolEvents(pool, 'added'),
+    queryCopyPoolEvents(pool, 'removed'),
+  ]);
+  const wallets = {};
+  for (const row of walletResult.rows) {
+    const wallet = normalizeWallet(row.wallet);
+    if (!wallet) continue;
+    wallets[wallet] = makeCopyPoolWallet(row);
+  }
+
+  const rows = Object.values(wallets);
+  const lastEvaluatedAt = rows
+    .map((row) => row.lastEvaluatedAt)
+    .filter(Boolean)
+    .sort()
+    .at(-1) || null;
+
+  return {
+    enabled: true,
+    thresholds,
+    counts: {
+      active: rows.filter((row) => row.status === 'active').length,
+      protectedActive: rows.filter((row) => row.status === 'active' && row.protected).length,
+      autoActive: rows.filter((row) => row.status === 'active' && row.source === 'auto').length,
+      autoRemoved: rows.filter((row) => row.status === 'removed' && row.source === 'auto').length,
+    },
+    lastEvaluatedAt,
+    wallets,
+    recentAdded: addedResult.rows.map(mapCopyPoolEventRow),
+    recentRemoved: removedResult.rows.map(mapCopyPoolEventRow),
+  };
+}
+
+async function upsertBaselineCopyPoolRows(client, baselineWallets, thresholds) {
+  for (const rawWallet of baselineWallets || []) {
+    const wallet = normalizeWallet(rawWallet);
+    if (!wallet) continue;
+    const traderResult = await client.query('select * from candidate_traders where wallet = $1', [wallet]);
+    const existingResult = await client.query('select * from copy_pool_traders where wallet = $1', [wallet]);
+    const trader = traderResult.rows[0] || {};
+    const existing = existingResult.rows[0] || {};
+    const metricsResult = await queryCopyPoolMetricRows(client, thresholds, wallet);
+    const metrics = metricsFromRow(metricsResult.rows[0] || { wallet }, thresholds);
+    const evaluatedAt = new Date().toISOString();
+    await upsertCopyPoolRow(client, {
+      ...metrics,
+      wallet,
+      source: 'baseline',
+      status: 'active',
+      protected: true,
+      displayName: trader.display_name,
+      pseudonym: trader.pseudonym,
+      profileImage: trader.profile_image,
+      reason: 'Protected baseline wallet',
+      firstAddedAt: isoOrNull(existing.first_added_at) || evaluatedAt,
+      addedAt: isoOrNull(existing.added_at) || evaluatedAt,
+      removedAt: null,
+    });
+  }
+}
+
+async function queryCopyPoolMetricRows(clientOrPool, thresholds, wallet = null) {
+  const params = [thresholds.windowDays];
+  const walletClause = wallet ? 'where t.wallet = $2' : '';
+  if (wallet) params.push(wallet);
+  return clientOrPool.query(
+    `
+      with trader_base as (
+        select t.wallet, t.display_name, t.pseudonym, t.profile_image, t.last_seen_at
+        from candidate_traders t
+        ${walletClause}
+      ),
+      resolved_buy as (
+        select
+          wallet,
+          id,
+          coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as market_key,
+          status,
+          resolved_at,
+          trade_timestamp
+        from candidate_trades
+        where side = 'BUY'
+          and status in ('resolved_win', 'resolved_loss')
+          and trade_timestamp >= now() - ($1::integer * interval '1 day')
+      ),
+      deduped_buy as (
+        select
+          wallet,
+          market_key,
+          status,
+          row_number() over (
+            partition by wallet, market_key
+            order by resolved_at desc nulls last, trade_timestamp desc, id desc
+          ) as rn
+        from resolved_buy
+      ),
+      resolved_stats as (
+        select
+          wallet,
+          count(*)::integer as distinct_resolved_trade_count,
+          count(*) filter (where status = 'resolved_win')::integer as win_count
+        from deduped_buy
+        where rn = 1
+        group by wallet
+      ),
+      entry_stats as (
+        select
+          wallet,
+          (sum(usd_size) / nullif(sum(shares), 0) * 100)::numeric as avg_entry_price_cents_30d,
+          count(*)::integer as avg_entry_trade_count_30d
+        from candidate_trades
+        where side = 'BUY'
+          and shares is not null
+          and shares > 0
+          and usd_size is not null
+          and trade_timestamp >= now() - ($1::integer * interval '1 day')
+        group by wallet
+      )
+      select
+        t.wallet,
+        t.display_name,
+        t.pseudonym,
+        t.profile_image,
+        coalesce(r.distinct_resolved_trade_count, 0)::integer as distinct_resolved_trade_count,
+        coalesce(r.win_count, 0)::integer as win_count,
+        e.avg_entry_price_cents_30d,
+        coalesce(e.avg_entry_trade_count_30d, 0)::integer as avg_entry_trade_count_30d
+      from trader_base t
+      left join resolved_stats r on r.wallet = t.wallet
+      left join entry_stats e on e.wallet = t.wallet
+    `,
+    params
+  );
+}
+
+async function upsertCopyPoolRow(client, row) {
+  await client.query(
+    `
+      insert into copy_pool_traders (
+        wallet, source, status, protected, display_name, pseudonym, profile_image,
+        distinct_resolved_trade_count, win_count, win_rate_pct, avg_entry_price_cents_30d,
+        avg_entry_trade_count_30d, eligible, reason, first_added_at, added_at, removed_at,
+        last_evaluated_at, payload, updated_at
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13, $14, $15, $16, $17,
+        now(), $18::jsonb, now()
+      )
+      on conflict (wallet)
+      do update set
+        source = excluded.source,
+        status = excluded.status,
+        protected = excluded.protected,
+        display_name = coalesce(excluded.display_name, copy_pool_traders.display_name),
+        pseudonym = coalesce(excluded.pseudonym, copy_pool_traders.pseudonym),
+        profile_image = coalesce(excluded.profile_image, copy_pool_traders.profile_image),
+        distinct_resolved_trade_count = excluded.distinct_resolved_trade_count,
+        win_count = excluded.win_count,
+        win_rate_pct = excluded.win_rate_pct,
+        avg_entry_price_cents_30d = excluded.avg_entry_price_cents_30d,
+        avg_entry_trade_count_30d = excluded.avg_entry_trade_count_30d,
+        eligible = excluded.eligible,
+        reason = excluded.reason,
+        first_added_at = coalesce(copy_pool_traders.first_added_at, excluded.first_added_at),
+        added_at = excluded.added_at,
+        removed_at = excluded.removed_at,
+        last_evaluated_at = now(),
+        payload = excluded.payload,
+        updated_at = now()
+    `,
+    [
+      row.wallet,
+      row.source,
+      row.status,
+      Boolean(row.protected),
+      row.displayName || null,
+      row.pseudonym || null,
+      row.profileImage || null,
+      Number(row.distinctResolvedTradeCount || 0),
+      Number(row.winCount || 0),
+      nullableNumber(row.winRatePct),
+      nullableNumber(row.avgEntryPriceCents30d),
+      Number(row.avgEntryTradeCount30d || 0),
+      Boolean(row.eligible),
+      row.reason || null,
+      row.firstAddedAt || null,
+      row.addedAt || null,
+      row.removedAt || null,
+      JSON.stringify({
+        distinctResolvedTradeCount: Number(row.distinctResolvedTradeCount || 0),
+        winCount: Number(row.winCount || 0),
+        winRatePct: nullableNumber(row.winRatePct),
+        avgEntryPriceCents30d: nullableNumber(row.avgEntryPriceCents30d),
+        avgEntryTradeCount30d: Number(row.avgEntryTradeCount30d || 0),
+        eligible: Boolean(row.eligible),
+        reason: row.reason || null,
+      }),
+    ]
+  );
+}
+
+async function insertCopyPoolEvent(client, wallet, action, source, reason, metrics) {
+  await client.query(
+    `
+      insert into copy_pool_events (wallet, action, source, reason, metrics, created_at)
+      values ($1, $2, $3, $4, $5::jsonb, now())
+    `,
+    [wallet, action, source, reason || null, JSON.stringify(metrics || {})]
+  );
+}
+
+function queryCopyPoolEvents(pool, action) {
+  return pool.query(
+    `
+      select
+        e.id,
+        e.wallet,
+        e.action,
+        e.source,
+        e.reason,
+        e.metrics,
+        e.created_at,
+        coalesce(c.display_name, t.display_name) as display_name,
+        coalesce(c.pseudonym, t.pseudonym) as pseudonym,
+        coalesce(c.profile_image, t.profile_image) as profile_image
+      from copy_pool_events e
+      left join copy_pool_traders c on c.wallet = e.wallet
+      left join candidate_traders t on t.wallet = e.wallet
+      where e.action = $1
+      order by e.created_at desc
+      limit 8
+    `,
+    [action]
+  );
+}
+
+function metricsFromRow(row, thresholds) {
+  const distinctResolvedTradeCount = Number(row.distinct_resolved_trade_count || 0);
+  const winCount = Number(row.win_count || 0);
+  const winRatePct = distinctResolvedTradeCount ? (winCount / distinctResolvedTradeCount) * 100 : null;
+  const avgEntryPriceCents30d = nullableNumber(row.avg_entry_price_cents_30d);
+  const avgEntryTradeCount30d = Number(row.avg_entry_trade_count_30d || 0);
+  const base = {
+    distinctResolvedTradeCount,
+    winCount,
+    winRatePct,
+    avgEntryPriceCents30d,
+    avgEntryTradeCount30d,
+  };
+  return {
+    ...base,
+    eligible: isCopyPoolEligible(base, thresholds),
+    reason: copyPoolEligibilityReason(base, thresholds),
+  };
+}
+
+function mapCopyPoolEventRow(row) {
+  const metrics = row.metrics || {};
+  return {
+    id: Number(row.id),
+    wallet: row.wallet,
+    action: row.action,
+    source: row.source,
+    reason: row.reason,
+    createdAt: isoOrNull(row.created_at),
+    displayName: row.display_name,
+    pseudonym: row.pseudonym,
+    profileImage: row.profile_image,
+    distinctResolvedTradeCount: Number(metrics.distinctResolvedTradeCount || 0),
+    winRatePct: nullableNumber(metrics.winRatePct),
+    avgEntryPriceCents30d: nullableNumber(metrics.avgEntryPriceCents30d),
+  };
+}
+
 function mapLeaderboardRow(row) {
   const pnlTradeCount = Number(row.all_time_pnl_trade_count || 0);
   const winCount = Number(row.win_count || 0);
@@ -589,6 +1053,12 @@ function numberFromPg(value) {
 
 function nullableNumberFromPg(value) {
   if (value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }

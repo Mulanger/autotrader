@@ -716,6 +716,75 @@ button {
   font-size: 0.86rem;
 }
 
+.copyPoolCards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.copyPoolCard {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.copyPoolCardHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.copyPoolCardHead strong {
+  color: var(--ink);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.copyPoolEventList {
+  display: grid;
+  gap: 8px;
+}
+
+.copyPoolEvent {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+}
+
+.copyPoolEvent div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.copyPoolEvent strong,
+.copyPoolEvent span,
+.copyPoolEvent em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.copyPoolEvent span {
+  color: var(--muted);
+}
+
+.copyPoolEvent em {
+  color: var(--muted);
+  font-style: normal;
+  text-align: right;
+}
+
 .candidateList {
   display: grid;
   gap: 8px;
@@ -793,6 +862,25 @@ button {
 .candidateProfit span {
   color: var(--muted);
   font-size: 0.78rem;
+}
+
+.copyPoolBadge {
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.copyPoolBadge.protected {
+  background: #fff3bd;
+  color: #936400;
+}
+
+.copyPoolBadge.following {
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .candidateMetric {
@@ -1119,6 +1207,10 @@ button {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
   }
 
+  .copyPoolCards {
+    grid-template-columns: 1fr;
+  }
+
   .traderList {
     grid-template-columns: repeat(2, minmax(220px, 1fr));
   }
@@ -1182,6 +1274,14 @@ button {
 
   .candidateToolbar {
     display: grid;
+  }
+
+  .copyPoolEvent {
+    grid-template-columns: 1fr;
+  }
+
+  .copyPoolEvent em {
+    text-align: left;
   }
 
   .positionControls {

@@ -1,8 +1,12 @@
 import { WATCHED_WALLETS } from './config.js';
+import {
+  applyCopyPoolSnapshot,
+  createCopyPoolState,
+  ensureTraderProfile,
+  isWalletWatched,
+} from './copy-pool.js';
 import { createDemoState, evaluateDemoCopy, makeTraderMarketKey, markToMarket, updateOpenPositionPrices } from './demo-engine.js';
 import { nowIso, shortWallet } from './format.js';
-
-const watchedSet = new Set(WATCHED_WALLETS.map((wallet) => wallet.toLowerCase()));
 
 export function createAppState() {
   const traders = {};
@@ -53,7 +57,8 @@ export function createAppState() {
         status: 'disabled',
       },
     },
-    watchedWallets: [...WATCHED_WALLETS],
+    copyPool: createCopyPoolState(WATCHED_WALLETS),
+    watchedWallets: [...WATCHED_WALLETS.map((wallet) => wallet.toLowerCase())],
     traders,
     allTrades: [],
     copiedFeed: [],
@@ -77,6 +82,7 @@ export function serializeDurableState(state) {
     version: 1,
     savedAt: nowIso(),
     watchedWallets: state.watchedWallets,
+    copyPool: state.copyPool,
     traders: state.traders,
     allTrades: state.allTrades,
     copiedFeed: state.copiedFeed,
@@ -95,8 +101,12 @@ export function restoreDurableState(state, stored) {
 
   if (stored.traders && typeof stored.traders === 'object') {
     for (const [wallet, trader] of Object.entries(stored.traders)) {
-      if (state.traders[wallet]) state.traders[wallet] = { ...state.traders[wallet], ...trader };
+      ensureTraderProfile(state, wallet, trader);
     }
+  }
+
+  if (stored.copyPool && typeof stored.copyPool === 'object') {
+    applyCopyPoolSnapshot(state, stored.copyPool);
   }
 
   state.allTrades = Array.isArray(stored.allTrades) ? stored.allTrades.slice(0, 300) : state.allTrades;
@@ -136,7 +146,9 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
   state.seenTradeIds.add(trade.id);
   updateOpenPositionPrices(state.demo, trade);
 
-  const watched = watchedSet.has(trade.trader.proxyWallet);
+  const wallet = String(trade.trader.proxyWallet || '').toLowerCase();
+  trade.trader.proxyWallet = wallet;
+  const watched = isWalletWatched(state, wallet);
   const event = {
     id: trade.id,
     source,
@@ -151,7 +163,7 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
   };
 
   if (watched) {
-    const trader = state.traders[trade.trader.proxyWallet];
+    const trader = ensureTraderProfile(state, wallet, trade.trader);
     trader.displayName = trade.trader.displayName || trader.displayName;
     trader.pseudonym = trade.trader.pseudonym || trader.pseudonym;
     trader.profileImage = trade.trader.profileImage || trader.profileImage;
@@ -205,6 +217,7 @@ export function snapshotState(state) {
   return {
     service: state.service,
     watchedWallets: state.watchedWallets,
+    copyPool: state.copyPool,
     traders: Object.values(state.traders),
     demo: {
       metrics: demoMetrics,

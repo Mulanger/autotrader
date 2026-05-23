@@ -494,6 +494,7 @@ async function loadNormalizedState(pool) {
       copiedTraderMarketKeys,
     },
     real: snapshot.real,
+    copyPool: snapshot.copyPool,
     seenTradeIds: seenResult.rows.map((row) => row.id),
   };
 }
