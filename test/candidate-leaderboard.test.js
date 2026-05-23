@@ -9,9 +9,49 @@ describe('candidate leaderboard aggregation', () => {
         { wallet: '0xbbb', displayName: 'Beta', lastSeenAt: '2026-05-23T00:00:00.000Z' },
       ],
       [
-        { wallet: '0xaaa', side: 'BUY', status: 'resolved_win', pnlUsd: 20, resolvedAt: '2026-05-22T01:00:00.000Z' },
-        { wallet: '0xaaa', side: 'SELL', status: 'resolved_win', pnlUsd: null, resolvedAt: '2026-05-22T02:00:00.000Z' },
-        { wallet: '0xbbb', side: 'BUY', status: 'resolved_loss', pnlUsd: -5, resolvedAt: '2026-05-22T03:00:00.000Z' },
+        {
+          wallet: '0xaaa',
+          side: 'BUY',
+          status: 'resolved_win',
+          pnlUsd: 20,
+          price: 0.42,
+          usdSize: 42,
+          shares: 100,
+          resolvedAt: new Date().toISOString(),
+          tradeTimestamp: new Date().toISOString(),
+        },
+        {
+          wallet: '0xaaa',
+          side: 'SELL',
+          status: 'resolved_win',
+          pnlUsd: null,
+          price: 0.9,
+          usdSize: 90,
+          shares: 100,
+          resolvedAt: new Date().toISOString(),
+          tradeTimestamp: new Date().toISOString(),
+        },
+        {
+          wallet: '0xaaa',
+          side: 'BUY',
+          status: 'open',
+          pnlUsd: null,
+          price: 0.48,
+          usdSize: 48,
+          shares: 100,
+          tradeTimestamp: new Date().toISOString(),
+        },
+        {
+          wallet: '0xbbb',
+          side: 'BUY',
+          status: 'resolved_loss',
+          pnlUsd: -5,
+          price: 0.6,
+          usdSize: 60,
+          shares: 100,
+          resolvedAt: new Date().toISOString(),
+          tradeTimestamp: new Date().toISOString(),
+        },
       ]
     );
 
@@ -19,6 +59,8 @@ describe('candidate leaderboard aggregation', () => {
     expect(rows[0].allTimeProfitUsd).toBe(20);
     expect(rows[0].allTimePnlTradeCount).toBe(1);
     expect(rows[0].allTimeWinRatePct).toBe(100);
+    expect(rows[0].avgEntryPriceCents30d).toBe(45);
+    expect(rows[0].avgEntryTradeCount30d).toBe(2);
     expect(rows[0].recentFormResults).toEqual(['resolved_win']);
     expect(rows[1].allTimeProfitUsd).toBe(-5);
   });

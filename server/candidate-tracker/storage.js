@@ -373,6 +373,29 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
         from candidate_trades
         group by wallet
       ),
+      entry_price_stats as (
+        select
+          wallet,
+          (sum(usd_size) filter (
+            where side = 'BUY'
+              and shares is not null
+              and shares > 0
+              and trade_timestamp >= now() - interval '30 days'
+          ) / nullif(sum(shares) filter (
+            where side = 'BUY'
+              and shares is not null
+              and shares > 0
+              and trade_timestamp >= now() - interval '30 days'
+          ), 0) * 100)::numeric as avg_entry_price_cents_30d,
+          count(*) filter (
+            where side = 'BUY'
+              and shares is not null
+              and shares > 0
+              and trade_timestamp >= now() - interval '30 days'
+          )::integer as avg_entry_trade_count_30d
+        from candidate_trades
+        group by wallet
+      ),
       recent_form as (
         select wallet, jsonb_agg(status order by resolved_at desc, trade_timestamp desc) as recent_form_results
         from (
@@ -408,10 +431,13 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
           coalesce(b.pnl_trade_count, 0)::integer as all_time_pnl_trade_count,
           coalesce(b.win_count, 0)::integer as win_count,
           coalesce(b.profit_usd, 0)::numeric as all_time_profit_usd,
+          e.avg_entry_price_cents_30d,
+          coalesce(e.avg_entry_trade_count_30d, 0)::integer as avg_entry_trade_count_30d,
           coalesce(r.recent_form_results, '[]'::jsonb) as recent_form_results
         from candidate_traders t
         left join buy_stats b on b.wallet = t.wallet
         left join activity_stats a on a.wallet = t.wallet
+        left join entry_price_stats e on e.wallet = t.wallet
         left join recent_form r on r.wallet = t.wallet
       )
       select *
@@ -477,6 +503,8 @@ function mapLeaderboardRow(row) {
     allTimePnlTradeCount: pnlTradeCount,
     allTimeWinRatePct: pnlTradeCount ? (winCount / pnlTradeCount) * 100 : null,
     allTimeProfitUsd: numberFromPg(row.all_time_profit_usd),
+    avgEntryPriceCents30d: nullableNumberFromPg(row.avg_entry_price_cents_30d),
+    avgEntryTradeCount30d: Number(row.avg_entry_trade_count_30d || 0),
     recentFormResults: Array.isArray(row.recent_form_results) ? row.recent_form_results : [],
   };
 }

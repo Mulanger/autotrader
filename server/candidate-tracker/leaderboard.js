@@ -1,4 +1,6 @@
 export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, offset = 0 } = {}) {
+  const entryWindowMs = 30 * 24 * 60 * 60 * 1000;
+  const nowMs = Date.now();
   const traderMap = new Map();
   for (const trader of traders) {
     if (!trader?.wallet) continue;
@@ -26,6 +28,22 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
     });
     const wins = resolvedBuyTrades.filter((trade) => trade.status === 'resolved_win').length;
     const allTimeProfitUsd = resolvedBuyTrades.reduce((sum, trade) => sum + Number(trade.pnlUsd || 0), 0);
+    const recentBuyEntryTrades = walletTrades.filter((trade) => {
+      const tradeTime = Date.parse(trade.tradeTimestamp || trade.timestamp || 0);
+      return (
+        trade.side === 'BUY' &&
+        Number.isFinite(Number(trade.usdSize)) &&
+        Number.isFinite(Number(trade.shares)) &&
+        Number(trade.shares) > 0 &&
+        Number.isFinite(tradeTime) &&
+        tradeTime >= nowMs - entryWindowMs
+      );
+    });
+    const avgEntryPriceCents30d = recentBuyEntryTrades.length
+      ? recentBuyEntryTrades.reduce((sum, trade) => sum + Number(trade.usdSize), 0) /
+        recentBuyEntryTrades.reduce((sum, trade) => sum + Number(trade.shares), 0) *
+        100
+      : null;
     const recentFormResults = resolvedBuyTrades
       .slice()
       .sort(compareResolvedNewest)
@@ -39,6 +57,8 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
       allTimePnlTradeCount: resolvedBuyTrades.length,
       allTimeWinRatePct: resolvedBuyTrades.length ? (wins / resolvedBuyTrades.length) * 100 : null,
       allTimeProfitUsd,
+      avgEntryPriceCents30d,
+      avgEntryTradeCount30d: recentBuyEntryTrades.length,
       recentFormResults,
     };
   });

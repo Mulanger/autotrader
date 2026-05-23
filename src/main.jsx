@@ -636,7 +636,7 @@ function CandidatesView({ service }) {
 
           <div className="candidateToolbar">
             <span className="statusBadge neutral">{candidateStatusLabel(leaderboard?.status || service?.status)}</span>
-            <span className="muted">Recent form uses resolved BUY trades only; SELL rows are tracked but excluded from P/L.</span>
+            <span className="muted">AEP is a rolling 30-day BUY average; recent form uses resolved BUY trades only.</span>
           </div>
 
           <div className="candidateList">
@@ -676,6 +676,10 @@ function CandidateRow({ row }) {
       <div className="candidateMetric">
         <span>Win rate</span>
         <strong>{pct(row.allTimeWinRatePct)}</strong>
+      </div>
+      <div className="candidateMetric" title={`${row.avgEntryTradeCount30d || 0} BUY entries in the last 30 days`}>
+        <span>AEP</span>
+        <strong>{formatAep(row.avgEntryPriceCents30d)}</strong>
       </div>
       <div className="candidateForm" aria-label="Recent form">
         {form.length ? form.map((result, index) => (
@@ -862,6 +866,12 @@ function compactSignedUsd(value) {
     maximumFractionDigits: 1,
   }).format(Math.abs(number));
   return `${prefix}${formatted}`;
+}
+
+function formatAep(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'n/a';
+  return `${number.toFixed(1)}c`;
 }
 
 function candidateStatusLabel(status) {
