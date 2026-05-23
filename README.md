@@ -4,7 +4,7 @@ Local copy-trading workbench for selected Polywhale leaderboard wallets.
 
 Current state:
 
-- Demo trading only: starts with `$100` cash and uses `$10` per copied buy.
+- Demo trading only: starts with `$1,000` cash and uses `$10` per copied buy.
 - Risk rule: only copies watched BUY trades priced at `75c` or lower.
 - Repeat-entry rule: only the first copied trade from a given wallet on a given market is copied.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
@@ -51,6 +51,7 @@ Optional:
 - `POLYMARKET_GAMMA_URL`: defaults to `https://gamma-api.polymarket.com`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: defaults to `60000`.
+- `DEMO_STARTING_CAPITAL_USD`: defaults to `1000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: defaults to `75`.
 - `CANDIDATE_TRACKER_ENABLED`: enables the isolated candidate tracker, defaults to `false`.
 - `CANDIDATE_MIN_USD`: defaults to `1000`.

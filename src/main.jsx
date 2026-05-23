@@ -1002,8 +1002,8 @@ function emptyState() {
     traders: [],
     demo: {
       metrics: {
-        equityUsd: 100,
-        cashUsd: 100,
+        equityUsd: 1000,
+        cashUsd: 1000,
         totalPnlUsd: 0,
         realizedPnlUsd: 0,
         unrealizedPnlUsd: 0,

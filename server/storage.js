@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import { serializeDurableState } from './app-state.js';
+import { DEMO_STARTING_CAPITAL_USD } from './config.js';
 import { nowIso } from './format.js';
 
 const STATE_KEY = 'default';
@@ -261,8 +262,8 @@ async function saveNormalizedState(pool, payload) {
       `,
       [
         STATE_KEY,
-        demo.startingCapitalUsd ?? 100,
-        demo.cashUsd ?? 100,
+        demo.startingCapitalUsd ?? DEMO_STARTING_CAPITAL_USD,
+        demo.cashUsd ?? DEMO_STARTING_CAPITAL_USD,
         demo.fixedStakeUsd ?? 10,
         demo.realizedPnlUsd ?? 0,
         demo.copiedCount ?? 0,

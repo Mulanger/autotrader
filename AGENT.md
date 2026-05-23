@@ -26,7 +26,7 @@ https://github.com/Mulanger/autotrader.git
 
 The dashboard is a demo/paper-trading system right now:
 
-- Starting demo capital: `$100`.
+- Starting demo capital: `$1,000`.
 - Fixed copy size: `$10`.
 - Max copied entry price: `75c`. Watched BUY trades above this price are skipped.
 - Only watched wallets can appear in the main copy-list tape.
@@ -118,6 +118,7 @@ Production/Railway:
 - `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
+- `DEMO_STARTING_CAPITAL_USD`: demo portfolio starting cash. Defaults to `1000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: maximum BUY entry price to copy. Defaults to `75`.
 - `CANDIDATE_TRACKER_ENABLED`: enables the isolated candidate tracker. Defaults to `false`.
 - `CANDIDATE_MIN_USD`: candidate tracker minimum trade notional. Defaults to `1000`.

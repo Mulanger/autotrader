@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from '../server/config.js';
 import { createAppState, ingestTrade, restoreDurableState, serializeDurableState } from '../server/app-state.js';
 import { applyCopyPoolSnapshot } from '../server/copy-pool.js';
 
@@ -44,7 +45,7 @@ describe('app state', () => {
     expect(state.copiedFeed).toHaveLength(1);
     expect(state.copiedFeed[0].copyDecision.action).toBe('observed');
     expect(state.demo.openPositions).toHaveLength(0);
-    expect(state.demo.cashUsd).toBe(100);
+    expect(state.demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD);
   });
 
   it('restores serialized state including seen trade IDs', () => {
@@ -56,10 +57,33 @@ describe('app state', () => {
     const restored = createAppState();
     restoreDurableState(restored, payload);
 
-    expect(restored.demo.cashUsd).toBe(90);
+    expect(restored.demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD - DEMO_STAKE_USD);
     expect(restored.demo.openPositions).toHaveLength(1);
     expect(restored.seenTradeIds.has('restore-trade')).toBe(true);
     expect(restored.demo.copiedTraderMarketKeys.size).toBe(1);
+  });
+
+  it('tops up an older persisted demo account to the configured starting capital', () => {
+    const restored = createAppState();
+
+    restoreDurableState(restored, {
+      demo: {
+        startingCapitalUsd: 100,
+        cashUsd: 70,
+        openPositions: [],
+        closedPositions: [],
+        decisions: [],
+        copiedSourceTradeIds: [],
+      },
+      traders: {},
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: [],
+    });
+
+    expect(restored.demo.startingCapitalUsd).toBe(DEMO_STARTING_CAPITAL_USD);
+    expect(restored.demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD - 30);
+    expect(restored.demo.decisions[0].action).toBe('capital_adjusted');
   });
 
   it('copies future trades from an active auto-added wallet', () => {

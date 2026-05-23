@@ -1,4 +1,4 @@
-import { WATCHED_WALLETS } from './config.js';
+import { DEMO_STARTING_CAPITAL_USD, WATCHED_WALLETS } from './config.js';
 import {
   applyCopyPoolSnapshot,
   createCopyPoolState,
@@ -113,6 +113,7 @@ export function restoreDurableState(state, stored) {
   state.copiedFeed = Array.isArray(stored.copiedFeed) ? stored.copiedFeed.slice(0, 200) : state.copiedFeed;
 
   if (stored.demo && typeof stored.demo === 'object') {
+    const storedStartingCapitalUsd = numberOrNull(stored.demo.startingCapitalUsd);
     const restoredDemo = { ...createDemoState(), ...stored.demo };
     restoredDemo.openPositions = Array.isArray(stored.demo.openPositions) ? stored.demo.openPositions : [];
     restoredDemo.closedPositions = Array.isArray(stored.demo.closedPositions) ? stored.demo.closedPositions : [];
@@ -124,6 +125,7 @@ export function restoreDurableState(state, stored) {
     state.demo = restoredDemo;
     repairPrematureResolutionSettlements(state.demo);
     pruneDuplicateTraderMarkets(state.demo);
+    reconcileConfiguredDemoCapital(state.demo, storedStartingCapitalUsd);
   }
 
   if (stored.real && typeof stored.real === 'object') {
@@ -234,6 +236,31 @@ export function snapshotState(state) {
 function numberOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function reconcileConfiguredDemoCapital(demo, storedStartingCapitalUsd) {
+  if (storedStartingCapitalUsd === null) {
+    demo.startingCapitalUsd = DEMO_STARTING_CAPITAL_USD;
+    return;
+  }
+
+  const deltaUsd = DEMO_STARTING_CAPITAL_USD - storedStartingCapitalUsd;
+  if (Math.abs(deltaUsd) < 0.005) {
+    demo.startingCapitalUsd = DEMO_STARTING_CAPITAL_USD;
+    return;
+  }
+
+  demo.startingCapitalUsd = DEMO_STARTING_CAPITAL_USD;
+  demo.cashUsd = numberOrFallback(demo.cashUsd, 0) + deltaUsd;
+  demo.decisions = Array.isArray(demo.decisions) ? demo.decisions : [];
+  demo.decisions.unshift({
+    id: `capital-${Date.now()}`,
+    tradeId: 'demo-capital',
+    action: 'capital_adjusted',
+    reason: `Demo starting capital changed from $${storedStartingCapitalUsd.toFixed(2)} to $${DEMO_STARTING_CAPITAL_USD.toFixed(2)}`,
+    copyId: null,
+    at: nowIso(),
+  });
 }
 
 function restoreTraderMarketKeys(demo) {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from '../server/config.js';
 import { createDemoState, evaluateDemoCopy, settleDemoPosition } from '../server/demo-engine.js';
+
+const CASH_AFTER_ONE_COPY = DEMO_STARTING_CAPITAL_USD - DEMO_STAKE_USD;
 
 function trade(overrides = {}) {
   return {
@@ -32,7 +35,7 @@ describe('demo copy engine', () => {
     const decision = evaluateDemoCopy(demo, trade({ priceCents: 50, conditionId: '0xcondition' }));
 
     expect(decision.action).toBe('copied');
-    expect(demo.cashUsd).toBe(90);
+    expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
     expect(demo.openPositions).toHaveLength(1);
     expect(demo.openPositions[0].shares).toBe(20);
     expect(demo.openPositions[0].marketConditionId).toBe('0xcondition');
@@ -55,7 +58,7 @@ describe('demo copy engine', () => {
     expect(decision.action).toBe('skipped');
     expect(decision.reason).toMatch(/above 75\.0c max/i);
     expect(demo.openPositions).toHaveLength(0);
-    expect(demo.cashUsd).toBe(100);
+    expect(demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD);
   });
 
   it('tracks fee status and adjusts buy shares when fee data is available', () => {
@@ -77,7 +80,7 @@ describe('demo copy engine', () => {
 
     expect(second).toBeNull();
     expect(demo.openPositions).toHaveLength(1);
-    expect(demo.cashUsd).toBe(90);
+    expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
   });
 
   it('copies only the first eligible BUY from the same trader on the same market', () => {
@@ -89,7 +92,7 @@ describe('demo copy engine', () => {
     expect(second.action).toBe('skipped');
     expect(second.reason).toMatch(/already copied/i);
     expect(demo.openPositions).toHaveLength(1);
-    expect(demo.cashUsd).toBe(90);
+    expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
   });
 
   it('allows the same market from a different trader wallet', () => {
@@ -125,7 +128,7 @@ describe('demo copy engine', () => {
     expect(sell.reason).toMatch(/official market resolution/i);
     expect(demo.openPositions).toHaveLength(1);
     expect(demo.closedPositions).toHaveLength(0);
-    expect(demo.cashUsd).toBe(90);
+    expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
   });
 
   it('skips SELL without placing a demo close order', () => {
@@ -156,7 +159,7 @@ describe('demo copy engine', () => {
     expect(closed.status).toBe('win');
     expect(demo.openPositions).toHaveLength(0);
     expect(demo.closedPositions).toHaveLength(1);
-    expect(demo.cashUsd).toBe(110);
+    expect(demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD + 10);
     expect(demo.realizedPnlUsd).toBe(10);
     expect(demo.decisions[0].action).toBe('settled');
   });
