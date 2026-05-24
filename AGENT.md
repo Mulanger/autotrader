@@ -125,11 +125,17 @@ Production/Railway:
 - `CANDIDATE_MAX_USD`: candidate tracker exclusive maximum trade notional. Defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.
 - `CANDIDATE_POLL_INTERVAL_MS`: candidate Data API poll interval. Defaults to `30000`.
+- `CANDIDATE_BACKFILL_MAX_OFFSET`: deepest candidate backfill Data API offset before marking a partial backfill. Defaults to `3000`.
+- `CANDIDATE_RESOLUTION_BATCH_SIZE`: minimum candidate resolution worker batch size. Defaults to `250`.
 - `AUTO_COPY_POOL_ENABLED`: enables automated promotion/removal from the demo copy pool. Defaults to `true`.
 - `AUTO_COPY_POOL_INTERVAL_MS`: copy-pool evaluator interval. Defaults to `300000`.
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: minimum trailing 30-day resolved distinct BUY markets. Defaults to `15`.
 - `AUTO_COPY_MIN_WIN_RATE_PCT`: minimum trailing 30-day distinct-market win rate. Defaults to `75`.
 - `AUTO_COPY_MAX_AEP_CENTS`: maximum trailing 30-day BUY AEP for auto promotion. Defaults to `75`.
+- `FETCH_TIMEOUT_MS`: timeout for upstream Polywhale, Gamma, and Data API requests. Defaults to `15000`.
+- `FETCH_RETRY_COUNT`: retry count for transient upstream 429/5xx/network failures. Defaults to `2`.
+- `DASHBOARD_AUTH_TOKEN`: optional bearer/query token for `/api/state`, `/api/candidates/*`, and `/events`. Empty disables dashboard auth.
+- `DEBUG_STATE_INCLUDE_ALL_TRADES`: includes unrelated all-trade debug payloads in `/api/state` when true. Defaults to `false`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
 

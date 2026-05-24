@@ -31,12 +31,15 @@ export async function createCandidateStorage() {
   return {
     upsertTrade: (trade) => upsertTrade(pool, trade),
     getQueuedBackfillTraders: (limit) => getQueuedBackfillTraders(pool, limit),
+    recoverStaleBackfills: (staleMs) => recoverStaleBackfills(pool, staleMs),
     markBackfillRunning: (wallet) => markBackfillRunning(pool, wallet),
-    markBackfillComplete: (wallet, since) => markBackfillComplete(pool, wallet, since),
+    markBackfillComplete: (wallet, since, options) => markBackfillComplete(pool, wallet, since, options),
     markBackfillFailed: (wallet, error) => markBackfillFailed(pool, wallet, error),
     getOpenTrades: (limit) => getOpenTrades(pool, limit),
+    getResolutionQueueMetrics: () => getResolutionQueueMetrics(pool),
     markResolutionChecked: (tradeId, nextCheckAt) => markResolutionChecked(pool, tradeId, nextCheckAt),
     saveResolvedTrade: (tradeId, settlement, resolution) => saveResolvedTrade(pool, tradeId, settlement, resolution),
+    saveServiceState: (key, payload) => saveServiceState(pool, key, payload),
     getLeaderboard: (params) => getLeaderboard(pool, params),
     getTrader: (wallet, params) => getTrader(pool, wallet, params),
     getSummary: () => getSummary(pool),
@@ -104,6 +107,7 @@ async function migrate(pool) {
     create index if not exists candidate_trades_wallet_ts_idx on candidate_trades (wallet, trade_timestamp desc);
     create index if not exists candidate_trades_condition_status_idx on candidate_trades (condition_id, status);
     create index if not exists candidate_trades_resolution_queue_idx on candidate_trades (status, next_resolution_check_at);
+    create index if not exists candidate_trades_resolution_due_idx on candidate_trades (status, next_resolution_check_at, trade_timestamp);
     create index if not exists candidate_trades_usd_ts_idx on candidate_trades (usd_size, trade_timestamp desc);
     create index if not exists candidate_traders_backfill_idx on candidate_traders (backfill_status, first_seen_at);
 
@@ -268,18 +272,37 @@ async function markBackfillRunning(pool, wallet) {
   );
 }
 
-async function markBackfillComplete(pool, wallet, since) {
+async function recoverStaleBackfills(pool, staleMs = 30 * 60_000) {
+  const cutoff = new Date(Date.now() - staleMs);
+  const result = await pool.query(
+    `
+      update candidate_traders
+      set backfill_status = 'queued',
+        backfill_error = 'Recovered stale running backfill',
+        updated_at = now()
+      where backfill_status = 'running'
+        and backfill_started_at < $1
+      returning wallet
+    `,
+    [cutoff]
+  );
+  return result.rows.map((row) => row.wallet);
+}
+
+async function markBackfillComplete(pool, wallet, since, options = {}) {
+  const status = options.partial ? 'partial' : 'done';
+  const reason = options.reason ? String(options.reason).slice(0, 500) : null;
   await pool.query(
     `
       update candidate_traders
-      set backfill_status = 'done',
+      set backfill_status = $3,
         backfilled_since = $2,
         backfilled_at = now(),
-        backfill_error = null,
+        backfill_error = $4,
         updated_at = now()
       where wallet = $1
     `,
-    [wallet, since]
+    [wallet, since, status, reason]
   );
 }
 
@@ -303,12 +326,36 @@ async function getOpenTrades(pool, limit = 50) {
       from candidate_trades
       where status = 'open'
         and (next_resolution_check_at is null or next_resolution_check_at <= now())
-      order by trade_timestamp asc
+      order by next_resolution_check_at asc nulls first, trade_timestamp asc
       limit $1
     `,
     [limit]
   );
   return result.rows.map(mapTradeRow);
+}
+
+async function getResolutionQueueMetrics(pool) {
+  const result = await pool.query(`
+    select
+      count(*) filter (where status = 'open')::integer as open_trade_count,
+      count(*) filter (
+        where status = 'open'
+          and (next_resolution_check_at is null or next_resolution_check_at <= now())
+      )::integer as eligible_open_trade_count,
+      min(next_resolution_check_at) filter (where status = 'open') as oldest_next_resolution_check_at,
+      min(trade_timestamp) filter (
+        where status = 'open'
+          and (next_resolution_check_at is null or next_resolution_check_at <= now())
+      ) as oldest_eligible_trade_timestamp
+    from candidate_trades
+  `);
+  const row = result.rows[0] || {};
+  return {
+    openTradeCount: Number(row.open_trade_count || 0),
+    eligibleOpenTradeCount: Number(row.eligible_open_trade_count || 0),
+    oldestNextResolutionCheckAt: isoOrNull(row.oldest_next_resolution_check_at),
+    oldestEligibleTradeTimestamp: isoOrNull(row.oldest_eligible_trade_timestamp),
+  };
 }
 
 async function markResolutionChecked(pool, tradeId, nextCheckAt) {
@@ -392,6 +439,18 @@ async function saveResolvedTrade(pool, tradeId, settlement, resolution) {
   } finally {
     client.release();
   }
+}
+
+async function saveServiceState(pool, key, payload) {
+  await pool.query(
+    `
+      insert into candidate_service_state (key, payload, updated_at)
+      values ($1, $2::jsonb, now())
+      on conflict (key)
+      do update set payload = excluded.payload, updated_at = now()
+    `,
+    [key, JSON.stringify(payload || {})]
+  );
 }
 
 async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {

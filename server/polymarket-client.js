@@ -1,4 +1,5 @@
 import { POLYMARKET_GAMMA_URL } from './config.js';
+import { fetchJson } from './fetch-json.js';
 
 export async function fetchGammaResolution({ conditionId, slug }) {
   const markets = await fetchGammaMarkets({ conditionId, slug });
@@ -22,9 +23,7 @@ async function fetchGammaMarkets({ conditionId, slug }) {
   for (const query of queries) {
     const url = new URL('/markets', POLYMARKET_GAMMA_URL);
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, String(value));
-    const response = await fetch(url, { headers: { accept: 'application/json' } });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText} for ${url}`);
-    const json = await response.json();
+    const json = await fetchJson(url);
     if (Array.isArray(json)) results.push(...json);
   }
   return results;

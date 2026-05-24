@@ -37,9 +37,6 @@ export async function createStorage(state) {
     return createMemoryStorage(info, 'postgres_error');
   }
 
-  let queuedPayload = null;
-  let saveRunning = false;
-
   async function load() {
     try {
       const normalized = await loadNormalizedState(pool);
@@ -56,46 +53,17 @@ export async function createStorage(state) {
     }
   }
 
-  async function queueSave(appState) {
-    queuedPayload = serializeDurableState(appState);
-    if (saveRunning) return;
-
-    saveRunning = true;
-    while (queuedPayload) {
-      const payload = queuedPayload;
-      queuedPayload = null;
-      const startedAt = Date.now();
-      try {
-        info.status = 'saving';
-        await saveNormalizedState(pool, payload);
-        info.status = 'ready';
-        info.lastSavedAt = nowIso();
-        info.lastFlushDurationMs = Date.now() - startedAt;
-        info.lastError = null;
-      } catch (error) {
-        info.status = 'error';
-        info.lastError = error.message;
-      }
-    }
-    saveRunning = false;
-  }
-
-  async function flush(appState) {
-    if (appState) queuedPayload = serializeDurableState(appState);
-    if (!saveRunning && queuedPayload) {
-      await queueSave(appState);
-      return;
-    }
-    while (saveRunning || queuedPayload) {
-      await sleep(25);
-    }
-  }
+  const saveQueue = createRetryingSaveQueue({
+    info,
+    serialize: serializeDurableState,
+    save: (payload) => saveNormalizedState(pool, payload),
+  });
 
   return {
     info,
     load,
-    queueSave,
-    flush,
+    queueSave: saveQueue.queueSave,
+    flush: saveQueue.flush,
     close: () => pool.end(),
   };
 }
@@ -110,6 +78,92 @@ export function createMemoryStorage(info, status = 'memory_only') {
     queueSave: () => {},
     flush: async () => {},
     close: async () => {},
+  };
+}
+
+export function createRetryingSaveQueue({
+  info,
+  serialize,
+  save,
+  retryBaseMs = 1_000,
+  retryMaxMs = 30_000,
+  schedule = setTimeout,
+  cancel = clearTimeout,
+} = {}) {
+  let queuedPayload = null;
+  let saveRunning = false;
+  let retryTimer = null;
+  let consecutiveFailures = 0;
+
+  function queueSave(appState) {
+    queuedPayload = serialize(appState);
+    if (retryTimer) {
+      cancel(retryTimer);
+      retryTimer = null;
+    }
+    drain();
+  }
+
+  async function flush(appState) {
+    if (appState) queuedPayload = serialize(appState);
+    if (retryTimer) {
+      cancel(retryTimer);
+      retryTimer = null;
+    }
+    await drain();
+    while (saveRunning) await sleep(25);
+  }
+
+  async function drain() {
+    if (saveRunning) return;
+    saveRunning = true;
+    try {
+      while (queuedPayload) {
+        const payload = queuedPayload;
+        queuedPayload = null;
+        const startedAt = Date.now();
+        try {
+          info.status = 'saving';
+          await save(payload);
+          consecutiveFailures = 0;
+          info.status = 'ready';
+          info.lastSavedAt = nowIso();
+          info.lastSuccessfulSaveAt = info.lastSavedAt;
+          info.lastFlushDurationMs = Date.now() - startedAt;
+          info.lastError = null;
+          info.consecutiveSaveFailures = 0;
+        } catch (error) {
+          if (!queuedPayload) queuedPayload = payload;
+          consecutiveFailures += 1;
+          info.status = 'error';
+          info.lastError = error.message;
+          info.saveFailureCount = Number(info.saveFailureCount || 0) + 1;
+          info.consecutiveSaveFailures = consecutiveFailures;
+          scheduleRetry();
+          break;
+        }
+      }
+    } finally {
+      saveRunning = false;
+    }
+  }
+
+  function scheduleRetry() {
+    if (retryTimer) return;
+    const delay = Math.min(retryMaxMs, retryBaseMs * 2 ** Math.max(0, consecutiveFailures - 1));
+    info.nextSaveRetryAt = new Date(Date.now() + delay).toISOString();
+    retryTimer = schedule(() => {
+      retryTimer = null;
+      drain();
+    }, delay);
+  }
+
+  return {
+    queueSave,
+    flush,
+    get queued() {
+      return Boolean(queuedPayload);
+    },
   };
 }
 

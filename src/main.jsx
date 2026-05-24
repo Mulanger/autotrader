@@ -33,6 +33,22 @@ import './styles.css';
 
 const API_BASE = '';
 const CANDIDATE_TRADE_PAGE_SIZE = 80;
+const DASHBOARD_TOKEN_KEY = 'AUTOTRADER_DASHBOARD_TOKEN';
+
+function dashboardAuthToken() {
+  const params = new URLSearchParams(window.location.search);
+  const queryToken = params.get('token');
+  if (queryToken) {
+    window.localStorage.setItem(DASHBOARD_TOKEN_KEY, queryToken);
+    return queryToken;
+  }
+  return window.localStorage.getItem(DASHBOARD_TOKEN_KEY) || '';
+}
+
+function authHeaders() {
+  const token = dashboardAuthToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 function App() {
   const { state, connected, refresh } = useAutotraderState();
@@ -80,8 +96,10 @@ function useAutotraderState() {
   const [connected, setConnected] = React.useState(false);
 
   const refresh = React.useCallback(async () => {
-    const response = await fetch(`${API_BASE}/api/state`);
-    setState(await response.json());
+    const response = await fetch(`${API_BASE}/api/state`, { headers: authHeaders() });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || 'State request failed');
+    setState(payload);
   }, []);
 
   React.useEffect(() => {
@@ -91,7 +109,8 @@ function useAutotraderState() {
 
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsHost = window.location.port === '5173' ? '127.0.0.1:4101' : window.location.host;
-    const wsUrl = `${wsProtocol}//${wsHost}/events`;
+    const token = dashboardAuthToken();
+    const wsUrl = `${wsProtocol}//${wsHost}/events${token ? `?token=${encodeURIComponent(token)}` : ''}`;
 
     const connect = () => {
       if (stopped) return;
@@ -573,7 +592,7 @@ function useCandidateLeaderboard() {
 
   const refresh = React.useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE}/api/candidates/leaderboard?limit=100`);
+      const response = await fetch(`${API_BASE}/api/candidates/leaderboard?limit=100`, { headers: authHeaders() });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Candidate leaderboard failed');
       setLeaderboard(payload);
@@ -611,7 +630,8 @@ function CandidatesView({ service, copyPoolState }) {
     setDetailLoading((items) => ({ ...items, [wallet]: true }));
     try {
       const response = await fetch(
-        `${API_BASE}/api/candidates/traders/${encodeURIComponent(wallet)}?limit=${CANDIDATE_TRADE_PAGE_SIZE}&offset=${offset}`
+        `${API_BASE}/api/candidates/traders/${encodeURIComponent(wallet)}?limit=${CANDIDATE_TRADE_PAGE_SIZE}&offset=${offset}`,
+        { headers: authHeaders() }
       );
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Candidate trades failed');

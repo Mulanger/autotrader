@@ -1,4 +1,4 @@
-import { DEMO_STARTING_CAPITAL_USD, WATCHED_WALLETS } from './config.js';
+import { DEBUG_STATE_INCLUDE_ALL_TRADES, DEMO_STARTING_CAPITAL_USD, WATCHED_WALLETS } from './config.js';
 import {
   applyCopyPoolSnapshot,
   createCopyPoolState,
@@ -84,7 +84,7 @@ export function serializeDurableState(state) {
     watchedWallets: state.watchedWallets,
     copyPool: state.copyPool,
     traders: state.traders,
-    allTrades: state.allTrades,
+    allTrades: state.allTrades.filter((event) => event?.watched),
     copiedFeed: state.copiedFeed,
     seenTradeIds: [...state.seenTradeIds],
     demo: {
@@ -214,7 +214,8 @@ export function applyLeaderboardRows(state, rows = []) {
   }
 }
 
-export function snapshotState(state) {
+export function snapshotState(state, options = {}) {
+  const includeAllTrades = options.includeAllTrades ?? DEBUG_STATE_INCLUDE_ALL_TRADES;
   const demoMetrics = markToMarket(state.demo);
   return {
     service: state.service,
@@ -228,7 +229,7 @@ export function snapshotState(state) {
       decisions: state.demo.decisions.slice(0, 250),
     },
     real: state.real,
-    allTrades: state.allTrades,
+    ...(includeAllTrades ? { allTrades: state.allTrades } : {}),
     copiedFeed: state.copiedFeed,
   };
 }

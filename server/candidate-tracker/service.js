@@ -6,6 +6,7 @@ import {
   AUTO_COPY_MIN_WIN_RATE_PCT,
   CANDIDATE_BACKFILL_DAYS,
   CANDIDATE_BACKFILL_MAX_PAGES,
+  CANDIDATE_BACKFILL_MAX_OFFSET,
   CANDIDATE_BACKFILL_PAGE_LIMIT,
   CANDIDATE_MAX_USD,
   CANDIDATE_MIN_USD,
@@ -14,13 +15,14 @@ import {
   CANDIDATE_POLL_MAX_PAGES,
   CANDIDATE_RESOLUTION_BATCH_SIZE,
   CANDIDATE_RESOLUTION_POLL_INTERVAL_MS,
+  CANDIDATE_STALE_BACKFILL_MS,
   CANDIDATE_TRACKER_ENABLED,
   WATCHED_WALLETS,
 } from '../config.js';
 import { ingestTrade } from '../app-state.js';
 import { applyCopyPoolSnapshot, defaultCopyPoolThresholds, isWalletWatched } from '../copy-pool.js';
 import { fetchGammaResolution } from '../polymarket-client.js';
-import { fetchDataApiTrades } from './data-api-client.js';
+import { fetchDataApiTrades, isDataApiOffsetLimitError } from './data-api-client.js';
 import { candidateTradeToDemoTrade, normalizeCandidateTrade } from './normalizer.js';
 import { buildCandidateSettlement } from './resolution.js';
 import { createCandidateStorage } from './storage.js';
@@ -29,6 +31,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   const enabled = options.enabled ?? CANDIDATE_TRACKER_ENABLED;
   const onStateChanged = options.onStateChanged || (() => {});
   const copyPoolEnabled = options.copyPoolEnabled ?? AUTO_COPY_POOL_ENABLED;
+  const storageFactory = options.storageFactory || createCandidateStorage;
+  const fetchTrades = options.fetchDataApiTrades || fetchDataApiTrades;
   const copyPoolThresholds = defaultCopyPoolThresholds({
     minDistinctResolvedMarkets: AUTO_COPY_MIN_DISTINCT_MARKETS,
     minWinRatePct: AUTO_COPY_MIN_WIN_RATE_PCT,
@@ -61,6 +65,13 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     lastResolutionAt: null,
     lastResolutionChecked: 0,
     lastResolutionSettled: 0,
+    lastResolutionBatchSize: 0,
+    resolutionQueue: {
+      openTradeCount: 0,
+      eligibleOpenTradeCount: 0,
+      oldestNextResolutionCheckAt: null,
+      oldestEligibleTradeTimestamp: null,
+    },
     copyPoolEnabled,
     copyPoolStatus: copyPoolEnabled ? 'starting' : 'disabled',
     copyPoolLastRunAt: null,
@@ -75,9 +86,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!enabled) return;
 
     try {
-      storage = await createCandidateStorage();
+      storage = await storageFactory();
+      const recoveredBackfills = await storage.recoverStaleBackfills?.(CANDIDATE_STALE_BACKFILL_MS);
       state.service.candidates.storageStatus = 'ready';
       state.service.candidates.status = 'ready';
+      state.service.candidates.recoveredStaleBackfillCount = recoveredBackfills?.length || 0;
       await runCopyPoolEvaluation();
       broadcast();
     } catch (error) {
@@ -120,7 +133,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
       for (let page = 0; page < CANDIDATE_POLL_MAX_PAGES; page += 1) {
         const offset = page * CANDIDATE_POLL_LIMIT;
-        const rawTrades = await fetchDataApiTrades({ limit: CANDIDATE_POLL_LIMIT, offset });
+        const rawTrades = await fetchTrades({ limit: CANDIDATE_POLL_LIMIT, offset });
         if (!rawTrades.length) break;
 
         for (const raw of rawTrades.slice().reverse()) {
@@ -170,11 +183,36 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
       const cutoff = new Date(Date.now() - CANDIDATE_BACKFILL_DAYS * 24 * 60 * 60 * 1000);
       let reachedCutoff = false;
+      let partialReason = null;
+      let inserted = 0;
 
       for (let page = 0; page < CANDIDATE_BACKFILL_MAX_PAGES && !reachedCutoff; page += 1) {
         const offset = page * CANDIDATE_BACKFILL_PAGE_LIMIT;
-        const rawTrades = await fetchDataApiTrades({ user: wallet, limit: CANDIDATE_BACKFILL_PAGE_LIMIT, offset });
+        if (offset > CANDIDATE_BACKFILL_MAX_OFFSET) {
+          partialReason = `Stopped at Data API offset ${offset}; configured max is ${CANDIDATE_BACKFILL_MAX_OFFSET}`;
+          break;
+        }
+
+        let rawTrades;
+        try {
+          rawTrades = await fetchTrades({ user: wallet, limit: CANDIDATE_BACKFILL_PAGE_LIMIT, offset });
+        } catch (error) {
+          if (page > 0 && isDataApiOffsetLimitError(error)) {
+            partialReason = `Stopped after Data API rejected offset ${offset}`;
+            break;
+          }
+          throw error;
+        }
         if (!rawTrades.length) break;
+
+        await storage.saveServiceState?.(`backfill:${wallet}`, {
+          wallet,
+          offset,
+          page,
+          status: 'running',
+          inserted,
+          updatedAt: new Date().toISOString(),
+        });
 
         for (const raw of rawTrades.slice().reverse()) {
           const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
@@ -184,14 +222,27 @@ export function createCandidateTracker(state, broadcast, options = {}) {
           }
           const trade = normalizeCandidateTrade(raw, { source: 'backfill' });
           if (!trade) continue;
-          await storage.upsertTrade(trade);
+          const result = await storage.upsertTrade(trade);
+          if (result.insertedTrade) inserted += 1;
         }
       }
 
-      await storage.markBackfillComplete(wallet, cutoff.toISOString());
+      await storage.markBackfillComplete(wallet, cutoff.toISOString(), {
+        partial: Boolean(partialReason),
+        reason: partialReason,
+      });
+      await storage.saveServiceState?.(`backfill:${wallet}`, {
+        wallet,
+        status: partialReason ? 'partial' : 'done',
+        inserted,
+        partialReason,
+        updatedAt: new Date().toISOString(),
+      });
       await runCopyPoolEvaluation();
       state.service.candidates.status = 'ready';
       state.service.candidates.lastBackfillAt = new Date().toISOString();
+      state.service.candidates.lastBackfillInserted = inserted;
+      state.service.candidates.lastBackfillPartialReason = partialReason;
       state.service.candidates.lastError = null;
       broadcast();
     } catch (error) {
@@ -214,7 +265,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     try {
       state.service.candidates.status = 'resolving';
       broadcast();
-      const trades = await storage.getOpenTrades(CANDIDATE_RESOLUTION_BATCH_SIZE);
+      const queueMetrics = await storage.getResolutionQueueMetrics?.();
+      if (queueMetrics) state.service.candidates.resolutionQueue = queueMetrics;
+      const batchSize = resolutionBatchSize(queueMetrics);
+      state.service.candidates.lastResolutionBatchSize = batchSize;
+      const trades = await storage.getOpenTrades(batchSize);
 
       for (const trade of trades) {
         checked += 1;
@@ -239,6 +294,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.candidates.lastResolutionAt = new Date().toISOString();
       state.service.candidates.lastResolutionChecked = checked;
       state.service.candidates.lastResolutionSettled = settled;
+      state.service.candidates.resolutionQueue = (await storage.getResolutionQueueMetrics?.()) || state.service.candidates.resolutionQueue;
       state.service.candidates.lastError = null;
       if (settled) await runCopyPoolEvaluation();
       broadcast();
@@ -338,6 +394,12 @@ function inactivePayload(status) {
 
 function nextResolutionCheckAt() {
   return new Date(Date.now() + 5 * 60 * 1000).toISOString();
+}
+
+export function resolutionBatchSize(queueMetrics = {}) {
+  const eligible = Number(queueMetrics?.eligibleOpenTradeCount || 0);
+  const dynamic = eligible ? Math.ceil(eligible / 10) : CANDIDATE_RESOLUTION_BATCH_SIZE;
+  return Math.min(1_000, Math.max(CANDIDATE_RESOLUTION_BATCH_SIZE, dynamic));
 }
 
 function toUnixSeconds(value) {

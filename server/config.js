@@ -48,7 +48,11 @@ export const CANDIDATE_BACKFILL_PAGE_LIMIT = Number(process.env.CANDIDATE_BACKFI
 
 export const CANDIDATE_BACKFILL_MAX_PAGES = Number(process.env.CANDIDATE_BACKFILL_MAX_PAGES || 100);
 
-export const CANDIDATE_RESOLUTION_BATCH_SIZE = Number(process.env.CANDIDATE_RESOLUTION_BATCH_SIZE || 50);
+export const CANDIDATE_BACKFILL_MAX_OFFSET = Number(process.env.CANDIDATE_BACKFILL_MAX_OFFSET || 3_000);
+
+export const CANDIDATE_STALE_BACKFILL_MS = Number(process.env.CANDIDATE_STALE_BACKFILL_MS || 30 * 60_000);
+
+export const CANDIDATE_RESOLUTION_BATCH_SIZE = Number(process.env.CANDIDATE_RESOLUTION_BATCH_SIZE || 250);
 
 export const AUTO_COPY_POOL_ENABLED = parseBoolean(process.env.AUTO_COPY_POOL_ENABLED, true);
 
@@ -59,6 +63,14 @@ export const AUTO_COPY_MIN_DISTINCT_MARKETS = Number(process.env.AUTO_COPY_MIN_D
 export const AUTO_COPY_MIN_WIN_RATE_PCT = Number(process.env.AUTO_COPY_MIN_WIN_RATE_PCT || 75);
 
 export const AUTO_COPY_MAX_AEP_CENTS = Number(process.env.AUTO_COPY_MAX_AEP_CENTS || 75);
+
+export const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 15_000);
+
+export const FETCH_RETRY_COUNT = Number(process.env.FETCH_RETRY_COUNT || 2);
+
+export const DASHBOARD_AUTH_TOKEN = process.env.DASHBOARD_AUTH_TOKEN || '';
+
+export const DEBUG_STATE_INCLUDE_ALL_TRADES = parseBoolean(process.env.DEBUG_STATE_INCLUDE_ALL_TRADES, false);
 
 export { WATCHED_WALLETS };
 

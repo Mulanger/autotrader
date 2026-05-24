@@ -10,6 +10,7 @@ import { nowIso } from './format.js';
 export function startIngestion(state, broadcast, storage) {
   let socket = null;
   let reconnectTimer = null;
+  let pollRunning = false;
   let resolutionRunning = false;
 
   async function bootstrap() {
@@ -59,7 +60,7 @@ export function startIngestion(state, broadcast, storage) {
           return;
         }
         const event = ingestTrade(state, normalized, 'websocket');
-        if (event) {
+        if (event?.watched) {
           storage.queueSave(state);
           broadcast();
         }
@@ -83,13 +84,15 @@ export function startIngestion(state, broadcast, storage) {
   }
 
   async function poll() {
+    if (pollRunning) return;
+    pollRunning = true;
     try {
       state.service.pollStatus = 'polling';
       const trades = await fetchRecentWhales(100);
       let changed = false;
       for (const trade of trades.reverse()) {
         const event = ingestTrade(state, trade, 'poll');
-        if (event) changed = true;
+        if (event?.watched) changed = true;
       }
       state.service.pollStatus = 'ready';
       state.service.pollLastRunAt = nowIso();
@@ -101,6 +104,8 @@ export function startIngestion(state, broadcast, storage) {
       state.service.pollStatus = 'error';
       state.service.lastError = error.message;
       broadcast();
+    } finally {
+      pollRunning = false;
     }
   }
 

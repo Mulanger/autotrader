@@ -1,4 +1,5 @@
 import { POLYWHALE_API_BASE_URL, WATCHED_WALLETS } from './config.js';
+import { fetchJson } from './fetch-json.js';
 import { normalizeTrade } from './trade-normalizer.js';
 
 export async function fetchRecentWhales(limit = 80) {
@@ -49,14 +50,4 @@ export async function fetchBootstrapTrades() {
     Promise.all(WATCHED_WALLETS.map((wallet) => fetchWatchedWalletHistory(wallet, 12).catch(() => []))),
   ]);
   return [...recent, ...watched.flat()].sort((a, b) => a.timestamp - b.timestamp);
-}
-
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: { accept: 'application/json' },
-  });
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText} for ${url}`);
-  }
-  return response.json();
 }

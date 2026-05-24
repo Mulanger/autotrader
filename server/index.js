@@ -5,6 +5,12 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAppState, restoreDurableState, snapshotState } from './app-state.js';
+import {
+  isAuthorizedRequest,
+  isDashboardAuthEnabled,
+  redactServiceForPublicHealth,
+  requireDashboardAuth,
+} from './auth.js';
 import { HOST, PORT } from './config.js';
 import { createCandidateRoutes } from './candidate-tracker/routes.js';
 import { createCandidateTracker } from './candidate-tracker/service.js';
@@ -30,15 +36,17 @@ const candidateTracker = createCandidateTracker(state, broadcast, {
 
 app.use(express.json());
 
-app.get('/api/health', (_request, response) => {
-  response.json({ ok: true, service: state.service });
+app.get('/api/health', (request, response) => {
+  refreshHealthRuntimeMetrics();
+  const service = isAuthorizedRequest(request) ? state.service : redactServiceForPublicHealth(state.service);
+  response.json({ ok: true, authEnabled: isDashboardAuthEnabled(), service });
 });
 
-app.get('/api/state', (_request, response) => {
+app.get('/api/state', requireDashboardAuth, (_request, response) => {
   response.json(snapshotState(state));
 });
 
-app.use('/api/candidates', createCandidateRoutes(candidateTracker));
+app.use('/api/candidates', requireDashboardAuth, createCandidateRoutes(candidateTracker));
 
 if (existsSync(indexPath)) {
   app.use(express.static(distPath, {
@@ -52,7 +60,11 @@ if (existsSync(indexPath)) {
   });
 }
 
-wss.on('connection', (socket) => {
+wss.on('connection', (socket, request) => {
+  if (!isAuthorizedRequest(request)) {
+    socket.close(1008, 'Unauthorized');
+    return;
+  }
   socket.send(JSON.stringify({ type: 'state', payload: snapshotState(state) }));
 });
 
@@ -61,6 +73,16 @@ function broadcast() {
   for (const client of wss.clients) {
     if (client.readyState === client.OPEN) client.send(message);
   }
+}
+
+function refreshHealthRuntimeMetrics() {
+  const storage = state.service.storage;
+  if (!storage?.lastSavedAt) {
+    if (storage) storage.lastSuccessfulSaveAgeMs = null;
+    return;
+  }
+  const lastSavedAt = Date.parse(storage.lastSavedAt);
+  storage.lastSuccessfulSaveAgeMs = Number.isFinite(lastSavedAt) ? Date.now() - lastSavedAt : null;
 }
 
 async function initializeStorageAndIngestion() {

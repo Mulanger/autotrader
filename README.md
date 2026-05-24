@@ -9,7 +9,7 @@ Current state:
 - Repeat-entry rule: only the first copied trade from a given wallet on a given market is copied.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
 - Real trading page is intentionally disabled until an execution adapter is added and explicitly armed.
-- Every observed trade is logged with a copied/skipped decision.
+- Watched trades are logged with copied/skipped decisions; unrelated whale rows are kept out of the normal dashboard payload.
 
 ## Run
 
@@ -58,6 +58,12 @@ Optional:
 - `CANDIDATE_MAX_USD`: exclusive maximum, defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: defaults to `30`.
 - `CANDIDATE_POLL_INTERVAL_MS`: defaults to `30000`.
+- `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `3000`.
+- `CANDIDATE_RESOLUTION_BATCH_SIZE`: defaults to `250`.
+- `FETCH_TIMEOUT_MS`: defaults to `15000`.
+- `FETCH_RETRY_COUNT`: defaults to `2`.
+- `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.
+- `DEBUG_STATE_INCLUDE_ALL_TRADES`: defaults to `false`.
 - `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
 Real-money trading is not implemented in this scaffold. Do not put wallet private keys into this app until a real execution adapter, signing flow, and risk gates are reviewed.
