@@ -525,6 +525,11 @@ async function loadNormalizedState(pool) {
     ...openPositions.map((position) => position.traderMarketKey).filter(Boolean),
     ...closedPositions.map((position) => position.traderMarketKey).filter(Boolean),
   ];
+  const copiedMarketKeys = [
+    ...(snapshot.demo?.copiedMarketKeys || []),
+    ...openPositions.map((position) => position.marketKey).filter(Boolean),
+    ...closedPositions.map((position) => position.marketKey).filter(Boolean),
+  ];
 
   return {
     version: SCHEMA_VERSION,
@@ -546,6 +551,7 @@ async function loadNormalizedState(pool) {
       closedPositions,
       decisions,
       copiedSourceTradeIds,
+      copiedMarketKeys,
       copiedTraderMarketKeys,
     },
     real: snapshot.real,

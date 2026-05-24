@@ -5,7 +5,14 @@ import {
   ensureTraderProfile,
   isWalletWatched,
 } from './copy-pool.js';
-import { createDemoState, evaluateDemoCopy, makeTraderMarketKey, markToMarket, updateOpenPositionPrices } from './demo-engine.js';
+import {
+  createDemoState,
+  evaluateDemoCopy,
+  makeMarketKey,
+  makeTraderMarketKey,
+  markToMarket,
+  updateOpenPositionPrices,
+} from './demo-engine.js';
 import { nowIso, shortWallet } from './format.js';
 
 export function createAppState() {
@@ -90,6 +97,7 @@ export function serializeDurableState(state) {
     demo: {
       ...state.demo,
       copiedSourceTradeIds: [...state.demo.copiedSourceTradeIds],
+      copiedMarketKeys: [...state.demo.copiedMarketKeys],
       copiedTraderMarketKeys: [...state.demo.copiedTraderMarketKeys],
     },
     real: state.real,
@@ -121,6 +129,7 @@ export function restoreDurableState(state, stored) {
     restoredDemo.copiedSourceTradeIds = new Set(
       Array.isArray(stored.demo.copiedSourceTradeIds) ? stored.demo.copiedSourceTradeIds : []
     );
+    restoredDemo.copiedMarketKeys = restoreMarketKeys(stored.demo);
     restoredDemo.copiedTraderMarketKeys = restoreTraderMarketKeys(stored.demo);
     state.demo = restoredDemo;
     repairPrematureResolutionSettlements(state.demo);
@@ -268,6 +277,15 @@ function restoreTraderMarketKeys(demo) {
   const keys = new Set(Array.isArray(demo.copiedTraderMarketKeys) ? demo.copiedTraderMarketKeys : []);
   for (const position of [...(demo.openPositions || []), ...(demo.closedPositions || [])]) {
     const key = position.traderMarketKey || makeTraderMarketKey(position);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function restoreMarketKeys(demo) {
+  const keys = new Set(Array.isArray(demo.copiedMarketKeys) ? demo.copiedMarketKeys : []);
+  for (const position of [...(demo.openPositions || []), ...(demo.closedPositions || [])]) {
+    const key = position.marketKey || makeMarketKey(position);
     if (key) keys.add(key);
   }
   return keys;

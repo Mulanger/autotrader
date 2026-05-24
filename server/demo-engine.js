@@ -17,6 +17,7 @@ export function createDemoState() {
     closedPositions: [],
     decisions: [],
     copiedSourceTradeIds: new Set(),
+    copiedMarketKeys: new Set(),
     copiedTraderMarketKeys: new Set(),
   };
 }
@@ -97,6 +98,14 @@ function copyBuy(demo, trade) {
   }
 
   const traderMarketKey = makeTraderMarketKey(trade);
+  const marketKey = makeMarketKey(trade);
+  if (marketKey && demo.copiedMarketKeys?.has(marketKey)) {
+    return recordDecision(demo, trade, {
+      action: 'skipped',
+      reason: 'Market already copied; ignoring additional trader entry',
+    });
+  }
+
   if (traderMarketKey && demo.copiedTraderMarketKeys?.has(traderMarketKey)) {
     return recordDecision(demo, trade, {
       action: 'skipped',
@@ -124,6 +133,7 @@ function copyBuy(demo, trade) {
   const position = {
     id: `demo-${trade.id}`,
     sourceTradeId: trade.id,
+    marketKey,
     traderMarketKey,
     traderWallet: trade.trader.proxyWallet,
     traderName: trade.trader.displayName || trade.trader.pseudonym || trade.trader.proxyWallet,
@@ -159,6 +169,7 @@ function copyBuy(demo, trade) {
   demo.totalNotionalCopiedUsd += demo.fixedStakeUsd;
   demo.openPositions.unshift(position);
   demo.copiedSourceTradeIds.add(trade.id);
+  if (marketKey) demo.copiedMarketKeys.add(marketKey);
   if (traderMarketKey) demo.copiedTraderMarketKeys.add(traderMarketKey);
 
   return recordDecision(demo, trade, {
@@ -235,14 +246,20 @@ function numberOrNull(value) {
 
 export function makeTraderMarketKey(tradeOrPosition) {
   const wallet = String(tradeOrPosition?.trader?.proxyWallet || tradeOrPosition?.traderWallet || '').trim().toLowerCase();
+  const marketId = makeMarketKey(tradeOrPosition);
+  return wallet && marketId ? `${wallet}:${marketId}` : null;
+}
+
+export function makeMarketKey(tradeOrPosition) {
   const marketId = String(
     tradeOrPosition?.market?.conditionId ||
+      tradeOrPosition?.marketConditionId ||
       tradeOrPosition?.market?.slug ||
       tradeOrPosition?.marketSlug ||
       tradeOrPosition?.marketTitle ||
       ''
   ).trim().toLowerCase();
-  return wallet && marketId ? `${wallet}:${marketId}` : null;
+  return marketId || null;
 }
 
 function formatSignedUsd(value) {

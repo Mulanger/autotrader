@@ -38,8 +38,10 @@ describe('demo copy engine', () => {
     expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
     expect(demo.openPositions).toHaveLength(1);
     expect(demo.openPositions[0].shares).toBe(20);
+    expect(demo.openPositions[0].marketKey).toBe('0xcondition');
     expect(demo.openPositions[0].marketConditionId).toBe('0xcondition');
     expect(demo.copiedSourceTradeIds.has('trade-1')).toBe(true);
+    expect(demo.copiedMarketKeys.has('0xcondition')).toBe(true);
   });
 
   it('copies BUY trades priced at the 75c max entry boundary', () => {
@@ -95,7 +97,7 @@ describe('demo copy engine', () => {
     expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
   });
 
-  it('allows the same market from a different trader wallet', () => {
+  it('copies only the first eligible BUY on the same market across traders', () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, trade({ id: 'first', marketSlug: 'shared-market', priceCents: 69 }));
     const second = evaluateDemoCopy(demo, trade({
@@ -105,8 +107,33 @@ describe('demo copy engine', () => {
       wallet: '0x1887879a1bda615e88f280b582514c7d54e2678a',
     }));
 
-    expect(second.action).toBe('copied');
-    expect(demo.openPositions).toHaveLength(2);
+    expect(second.action).toBe('skipped');
+    expect(second.reason).toMatch(/market already copied/i);
+    expect(demo.openPositions).toHaveLength(1);
+    expect(demo.cashUsd).toBe(CASH_AFTER_ONE_COPY);
+  });
+
+  it('treats shared condition IDs as the same copied market', () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({
+      id: 'first',
+      marketSlug: 'team-a-market',
+      conditionId: '0xshared',
+      outcome: 'Team A',
+      priceCents: 55,
+    }));
+    const second = evaluateDemoCopy(demo, trade({
+      id: 'second',
+      marketSlug: 'team-b-market',
+      conditionId: '0xshared',
+      outcome: 'Team B',
+      priceCents: 45,
+      wallet: '0x1887879a1bda615e88f280b582514c7d54e2678a',
+    }));
+
+    expect(second.action).toBe('skipped');
+    expect(second.reason).toMatch(/market already copied/i);
+    expect(demo.openPositions).toHaveLength(1);
   });
 
   it('can copy a later lower-priced entry if the first trade was skipped by max price', () => {

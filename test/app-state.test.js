@@ -60,6 +60,8 @@ describe('app state', () => {
     expect(restored.demo.cashUsd).toBe(DEMO_STARTING_CAPITAL_USD - DEMO_STAKE_USD);
     expect(restored.demo.openPositions).toHaveLength(1);
     expect(restored.seenTradeIds.has('restore-trade')).toBe(true);
+    expect(restored.demo.copiedMarketKeys.size).toBe(1);
+    expect(restored.demo.copiedMarketKeys.has('test-market')).toBe(true);
     expect(restored.demo.copiedTraderMarketKeys.size).toBe(1);
   });
 
@@ -181,6 +183,49 @@ describe('app state', () => {
 
     expect(event.copyDecision.action).toBe('skipped');
     expect(event.copyDecision.reason).toMatch(/already copied/i);
+    expect(restored.demo.openPositions).toHaveLength(1);
+  });
+
+  it('rebuilds copied market keys from older stored positions', () => {
+    const state = createAppState();
+    const wallet = state.watchedWallets[0];
+    const otherWallet = '0xcccccccccccccccccccccccccccccccccccccccc';
+    const restored = createAppState();
+
+    restoreDurableState(restored, {
+      demo: {
+        cashUsd: 90,
+        openPositions: [{
+          id: 'demo-old',
+          sourceTradeId: 'old',
+          traderWallet: wallet,
+          marketSlug: 'old-market',
+          status: 'open',
+          shares: 20,
+          stakeUsd: 10,
+          entryPriceCents: 50,
+          currentPriceCents: 50,
+        }],
+        closedPositions: [],
+        decisions: [],
+        copiedSourceTradeIds: ['old'],
+      },
+      traders: state.traders,
+      allTrades: [],
+      copiedFeed: [],
+      seenTradeIds: ['old'],
+    });
+    applyCopyPoolSnapshot(restored, {
+      wallets: {
+        [otherWallet]: { wallet: otherWallet, source: 'auto', status: 'active', protected: false },
+      },
+    });
+
+    const event = ingestTrade(restored, trade(otherWallet, { id: 'other-wallet-repeat', marketSlug: 'old-market' }), 'candidate-live');
+
+    expect(restored.demo.copiedMarketKeys.has('old-market')).toBe(true);
+    expect(event.copyDecision.action).toBe('skipped');
+    expect(event.copyDecision.reason).toMatch(/market already copied/i);
     expect(restored.demo.openPositions).toHaveLength(1);
   });
 
