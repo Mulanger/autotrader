@@ -187,6 +187,123 @@ describe('resolution engine', () => {
     expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
   });
 
+  it('settles candidate-sourced positions from Gamma when the whale fetch 404s', async () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({
+      id: 'candidate-6117',
+      outcome: 'Team Falcons',
+      marketSlug: 'team-falcons-vs-legacy',
+      conditionId: '0xabc123',
+      priceCents: 56,
+    }));
+    const state = { demo };
+
+    const result = await reconcileOpenDemoPositions(
+      state,
+      async () => {
+        throw new Error('404 Not Found for candidate-6117');
+      },
+      async ({ conditionId, slug }) => {
+        expect(conditionId).toBe('0xabc123');
+        expect(slug).toBe('team-falcons-vs-legacy');
+        return {
+          status: 'resolved',
+          winningOutcome: 'Legacy',
+          resolvedAt: '2026-05-24T13:22:41.000Z',
+          source: 'polymarket-gamma',
+          closed: true,
+          conditionId,
+        };
+      }
+    );
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.settled).toHaveLength(1);
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.closedPositions[0].status).toBe('loss');
+    expect(demo.closedPositions[0].resolutionFetchStatus).toBe('failed');
+    expect(demo.closedPositions[0].resolutionDiagnostic).toBe('settled_from_gamma');
+    expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
+  });
+
+  it('settles ambiguous binary Polywhale losses as losses when Gamma confirms another team won', async () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({
+      id: 'thunder-copy',
+      outcome: 'Thunder',
+      marketSlug: 'nba-sas-okc-2026-05-18',
+      conditionId: '0x8246',
+      priceCents: 68,
+    }));
+    const state = { demo };
+
+    const result = await reconcileOpenDemoPositions(
+      state,
+      async (id) => trade({
+        id,
+        outcome: 'Thunder',
+        marketSlug: 'nba-sas-okc-2026-05-18',
+        conditionId: '0x8246',
+        priceCents: 68,
+        resolution: {
+          status: 'resolved_loss',
+          winningOutcome: 'YES',
+          pnlUsd: -10000,
+          resolvedAt: '2026-05-19T08:14:30.000Z',
+        },
+      }),
+      async ({ conditionId }) => ({
+        status: 'resolved',
+        winningOutcome: 'Spurs',
+        resolvedAt: '2026-05-19T08:14:30.000Z',
+        source: 'polymarket-gamma',
+        closed: true,
+        conditionId,
+      })
+    );
+
+    expect(result.settled).toHaveLength(1);
+    expect(demo.openPositions).toHaveLength(0);
+    expect(demo.closedPositions[0].status).toBe('loss');
+    expect(demo.closedPositions[0].winningOutcome).toBe('Spurs');
+    expect(demo.closedPositions[0].settlementSource).toBe('polymarket-gamma');
+  });
+
+  it('keeps candidate positions open when Gamma is proposed but not officially closed', async () => {
+    const demo = createDemoState();
+    evaluateDemoCopy(demo, trade({
+      id: 'candidate-proposed',
+      outcome: 'T1',
+      marketSlug: 't1-handicap',
+      conditionId: '0xproposed',
+      priceCents: 63,
+    }));
+    const state = { demo };
+
+    const result = await reconcileOpenDemoPositions(
+      state,
+      async () => {
+        throw new Error('404 Not Found for candidate-proposed');
+      },
+      async () => ({
+        status: 'open',
+        rawStatus: 'gamma_proposed',
+        winningOutcome: null,
+        resolvedAt: null,
+        source: 'polymarket-gamma',
+        closed: false,
+        proposed: true,
+      })
+    );
+
+    expect(result.settled).toHaveLength(0);
+    expect(result.errors).toHaveLength(0);
+    expect(demo.openPositions).toHaveLength(1);
+    expect(demo.openPositions[0].resolutionStatus).toBe('open');
+    expect(demo.openPositions[0].resolutionFetchStatus).toBe('failed');
+    expect(demo.openPositions[0].resolutionDiagnostic).toBe('gamma_proposed');
+  });
+
   it('does not settle ambiguous binary team outcomes as losses without a market cross-check', () => {
     const demo = createDemoState();
     evaluateDemoCopy(demo, trade({ outcome: 'Dallas Wings', priceCents: 58 }));

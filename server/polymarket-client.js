@@ -33,20 +33,28 @@ async function fetchGammaMarkets({ conditionId, slug }) {
 export function classifyGammaMarket(market, now = new Date()) {
   const outcomes = parseArray(market.outcomes).map(String);
   const prices = parseArray(market.outcomePrices).map(Number);
+  const umaResolutionStatuses = parseArray(market.umaResolutionStatuses).map((status) => String(status).toLowerCase());
   const closed = market.closed === true || market.active === false || market.acceptingOrders === false;
   const finalIndex = prices.findIndex((price) => isFinalPrice(price, 1));
   const hasSingleWinner = finalIndex >= 0 && prices.every((price, index) => {
     return index === finalIndex ? isFinalPrice(price, 1) : isFinalPrice(price, 0);
   });
+  const nearFinalIndex = prices.findIndex((price) => isNearFinalPrice(price, 1));
+  const hasNearSingleWinner = nearFinalIndex >= 0 && prices.every((price, index) => {
+    return index === nearFinalIndex ? isNearFinalPrice(price, 1) : isNearFinalPrice(price, 0);
+  });
+  const proposed = umaResolutionStatuses.some((status) => status.includes('proposed'));
 
   if (!closed) {
     return {
       status: 'open',
-      rawStatus: 'gamma_open',
+      rawStatus: proposed ? 'gamma_proposed' : hasNearSingleWinner ? 'gamma_near_final_open' : 'gamma_open',
       winningOutcome: null,
       resolvedAt: null,
       closed: false,
       source: 'polymarket-gamma',
+      proposed,
+      nearFinal: hasNearSingleWinner,
     };
   }
 
@@ -86,4 +94,9 @@ function parseArray(value) {
 
 function isFinalPrice(value, expected) {
   return Number.isFinite(value) && Math.abs(value - expected) < 1e-9;
+}
+
+function isNearFinalPrice(value, expected) {
+  if (!Number.isFinite(value)) return false;
+  return expected === 1 ? value >= 0.99 : value <= 0.01;
 }

@@ -116,6 +116,7 @@ export function startIngestion(state, broadcast, storage) {
       state.service.resolutionLastCheckedCount = result.checked;
       if (result.settled.length) state.service.resolutionLastSettledAt = nowIso();
       if (result.errors.length) state.service.lastError = `Resolution checks failed: ${result.errors.slice(0, 2).join('; ')}`;
+      else if (String(state.service.lastError || '').startsWith('Resolution checks failed:')) state.service.lastError = null;
       if (result.changed) storage.queueSave(state);
       broadcast();
     } catch (error) {

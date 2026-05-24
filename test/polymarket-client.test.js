@@ -42,4 +42,21 @@ describe('polymarket gamma classifier', () => {
     expect(resolution.status).toBe('closed');
     expect(resolution.winningOutcome).toBeNull();
   });
+
+  it('labels proposed near-final markets as open until Gamma closes them', () => {
+    const resolution = classifyGammaMarket({
+      active: true,
+      closed: false,
+      acceptingOrders: true,
+      umaResolutionStatuses: '["proposed"]',
+      outcomes: '["T1","Gen.G"]',
+      outcomePrices: '["0.9995","0.0005"]',
+    });
+
+    expect(resolution.status).toBe('open');
+    expect(resolution.rawStatus).toBe('gamma_proposed');
+    expect(resolution.proposed).toBe(true);
+    expect(resolution.nearFinal).toBe(true);
+    expect(resolution.closed).toBe(false);
+  });
 });

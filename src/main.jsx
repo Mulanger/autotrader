@@ -466,6 +466,7 @@ function PositionRow({ position, expanded }) {
   const pnl = open ? position.unrealizedPnlUsd || 0 : position.realizedPnlUsd || 0;
   const dateLabel = marketDateLabel(position);
   const resolution = resolutionLabel(position);
+  const waitReason = open ? resolutionWaitLabel(position) : null;
   const timeline = open
     ? `opened ${formatTimeAgo(position.openedAt)}`
     : `resolved ${formatTimeAgo(position.resolvedAt || position.closedAt)}`;
@@ -488,6 +489,7 @@ function PositionRow({ position, expanded }) {
           {!open && <span>exit {formatCents(position.exitPriceCents)}</span>}
           <span>{timeline}</span>
           {resolution && <span>{resolution}</span>}
+          {waitReason && <span>{waitReason}</span>}
           <span>{feeLabel(position)}</span>
         </div>
       </div>
@@ -1242,6 +1244,17 @@ function resolutionLabel(position) {
     return `winning side ${winner}`;
   }
   return `winner ${winner}`;
+}
+
+function resolutionWaitLabel(position) {
+  const code = String(position?.resolutionDiagnostic || '').trim();
+  if (code === 'whale_fetch_failed') return 'whale fetch failed; using Gamma';
+  if (code === 'gamma_open') return 'Gamma open';
+  if (code === 'gamma_proposed') return 'Gamma proposed';
+  if (code === 'gamma_near_final_open') return 'near-final; waiting close';
+  if (code === 'gamma_closed_no_winner') return 'Gamma closed; awaiting winner';
+  if (code === 'gamma_resolution_failed') return 'Gamma check failed';
+  return null;
 }
 
 function shortWallet(wallet = '') {
