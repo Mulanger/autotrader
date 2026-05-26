@@ -62,6 +62,8 @@ export const AUTO_COPY_MIN_DISTINCT_MARKETS = Number(process.env.AUTO_COPY_MIN_D
 
 export const AUTO_COPY_MIN_WIN_RATE_PCT = Number(process.env.AUTO_COPY_MIN_WIN_RATE_PCT || 75);
 
+export const AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT = Number(process.env.AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT || 70);
+
 export const AUTO_COPY_MAX_AEP_CENTS = Number(process.env.AUTO_COPY_MAX_AEP_CENTS || 75);
 
 export const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 15_000);

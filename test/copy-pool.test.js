@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCopyPoolMetrics } from '../server/copy-pool.js';
+import { buildCopyPoolMetrics, isCopyPoolRetained } from '../server/copy-pool.js';
 
 const NOW = '2026-05-23T00:00:00.000Z';
 
@@ -28,6 +28,7 @@ function metrics(trades, thresholdOverrides = {}) {
       minDistinctResolvedMarkets: 15,
       minWinRatePct: 75,
       maxAvgEntryPriceCents: 75,
+      removeMinWinRatePct: 70,
       ...thresholdOverrides,
     },
   });
@@ -76,5 +77,33 @@ describe('copy pool eligibility', () => {
     expect(metrics(below).eligible).toBe(true);
     expect(metrics(atLimit).avgEntryPriceCents30d).toBe(75);
     expect(metrics(atLimit).eligible).toBe(false);
+  });
+
+  it('retains active traders above the lower removal threshold', () => {
+    const softer = Array.from({ length: 20 }, (_, index) => {
+      return trade(index, { status: index < 14 ? 'resolved_win' : 'resolved_loss', price: 0.5 });
+    });
+    const result = metrics(softer);
+
+    expect(result.winRatePct).toBe(70);
+    expect(result.eligible).toBe(false);
+    expect(result.retained).toBe(true);
+    expect(result.retentionReason).toMatch(/Retained/i);
+  });
+
+  it('removes active traders below the removal threshold', () => {
+    const weak = Array.from({ length: 20 }, (_, index) => {
+      return trade(index, { status: index < 13 ? 'resolved_win' : 'resolved_loss', price: 0.5 });
+    });
+    const result = metrics(weak);
+
+    expect(result.winRatePct).toBe(65);
+    expect(result.eligible).toBe(false);
+    expect(isCopyPoolRetained(result, {
+      minDistinctResolvedMarkets: 15,
+      removeMinWinRatePct: 70,
+      maxAvgEntryPriceCents: 75,
+    })).toBe(false);
+    expect(result.retentionReason).toMatch(/below 70.0%/);
   });
 });

@@ -2,6 +2,7 @@ import {
   AUTO_COPY_MAX_AEP_CENTS,
   AUTO_COPY_MIN_DISTINCT_MARKETS,
   AUTO_COPY_MIN_WIN_RATE_PCT,
+  AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT,
   CANDIDATE_BACKFILL_DAYS,
   WATCHED_WALLETS,
 } from './config.js';
@@ -15,6 +16,7 @@ export function defaultCopyPoolThresholds(overrides = {}) {
       AUTO_COPY_MIN_DISTINCT_MARKETS
     ),
     minWinRatePct: numberOrFallback(overrides.minWinRatePct, AUTO_COPY_MIN_WIN_RATE_PCT),
+    removeMinWinRatePct: numberOrFallback(overrides.removeMinWinRatePct, AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT),
     maxAvgEntryPriceCents: numberOrFallback(overrides.maxAvgEntryPriceCents, AUTO_COPY_MAX_AEP_CENTS),
   };
 }
@@ -186,7 +188,9 @@ export function buildCopyPoolMetrics(trades = [], options = {}) {
   return {
     ...metrics,
     eligible: isCopyPoolEligible(metrics, thresholds),
+    retained: isCopyPoolRetained(metrics, thresholds),
     reason: copyPoolEligibilityReason(metrics, thresholds),
+    retentionReason: copyPoolRetentionReason(metrics, thresholds),
   };
 }
 
@@ -194,6 +198,15 @@ export function isCopyPoolEligible(metrics, thresholds = defaultCopyPoolThreshol
   return (
     Number(metrics.distinctResolvedTradeCount || 0) >= thresholds.minDistinctResolvedMarkets &&
     Number(metrics.winRatePct || 0) >= thresholds.minWinRatePct &&
+    Number.isFinite(Number(metrics.avgEntryPriceCents30d)) &&
+    Number(metrics.avgEntryPriceCents30d) < thresholds.maxAvgEntryPriceCents
+  );
+}
+
+export function isCopyPoolRetained(metrics, thresholds = defaultCopyPoolThresholds()) {
+  return (
+    Number(metrics.distinctResolvedTradeCount || 0) >= thresholds.minDistinctResolvedMarkets &&
+    Number(metrics.winRatePct || 0) >= thresholds.removeMinWinRatePct &&
     Number.isFinite(Number(metrics.avgEntryPriceCents30d)) &&
     Number(metrics.avgEntryPriceCents30d) < thresholds.maxAvgEntryPriceCents
   );
@@ -219,6 +232,26 @@ export function copyPoolEligibilityReason(metrics, thresholds = defaultCopyPoolT
   return 'Eligible';
 }
 
+export function copyPoolRetentionReason(metrics, thresholds = defaultCopyPoolThresholds()) {
+  const distinctCount = Number(metrics.distinctResolvedTradeCount || 0);
+  if (distinctCount < thresholds.minDistinctResolvedMarkets) {
+    return `Removal threshold missed: needs ${thresholds.minDistinctResolvedMarkets} resolved distinct BUY markets; has ${distinctCount}`;
+  }
+
+  const winRate = Number(metrics.winRatePct || 0);
+  if (winRate < thresholds.removeMinWinRatePct) {
+    return `Removal threshold missed: win rate ${winRate.toFixed(1)}% below ${thresholds.removeMinWinRatePct.toFixed(1)}%`;
+  }
+
+  const aep = Number(metrics.avgEntryPriceCents30d);
+  if (!Number.isFinite(aep)) return 'Removal threshold missed: no trailing 30-day BUY entry price';
+  if (aep >= thresholds.maxAvgEntryPriceCents) {
+    return `Removal threshold missed: AEP ${aep.toFixed(1)}c at or above ${thresholds.maxAvgEntryPriceCents.toFixed(1)}c`;
+  }
+
+  return 'Retained by removal threshold';
+}
+
 export function makeCopyPoolWallet(row = {}) {
   const wallet = normalizeWallet(row.wallet);
   return {
@@ -234,8 +267,10 @@ export function makeCopyPoolWallet(row = {}) {
     winRatePct: nullableNumber(row.winRatePct ?? row.win_rate_pct),
     avgEntryPriceCents30d: nullableNumber(row.avgEntryPriceCents30d ?? row.avg_entry_price_cents_30d),
     avgEntryTradeCount30d: numberOrFallback(row.avgEntryTradeCount30d ?? row.avg_entry_trade_count_30d, 0),
-    eligible: Boolean(row.eligible),
+    eligible: Boolean(row.eligible ?? row.payload?.eligible),
+    retained: Boolean(row.retained ?? row.payload?.retained),
     reason: row.reason || null,
+    retentionReason: row.retentionReason || row.retention_reason || row.payload?.retentionReason || null,
     firstAddedAt: row.firstAddedAt || row.first_added_at || null,
     addedAt: row.addedAt || row.added_at || null,
     removedAt: row.removedAt || row.removed_at || null,

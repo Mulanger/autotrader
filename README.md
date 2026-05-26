@@ -60,6 +60,11 @@ Optional:
 - `CANDIDATE_POLL_INTERVAL_MS`: defaults to `30000`.
 - `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `3000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: defaults to `250`.
+- `AUTO_COPY_POOL_ENABLED`: enables automated candidate promotion/removal, defaults to `true`.
+- `AUTO_COPY_MIN_DISTINCT_MARKETS`: promotion and retention minimum resolved distinct BUY markets, defaults to `15`.
+- `AUTO_COPY_MIN_WIN_RATE_PCT`: promotion win-rate threshold, defaults to `75`.
+- `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT`: lower retention/removal win-rate threshold, defaults to `70`.
+- `AUTO_COPY_MAX_AEP_CENTS`: promotion and retention AEP cap, defaults to `75`.
 - `FETCH_TIMEOUT_MS`: defaults to `15000`.
 - `FETCH_RETRY_COUNT`: defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.

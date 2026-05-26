@@ -1,8 +1,10 @@
 import { Pool } from 'pg';
 import {
   copyPoolEligibilityReason,
+  copyPoolRetentionReason,
   defaultCopyPoolThresholds,
   isCopyPoolEligible,
+  isCopyPoolRetained,
   makeCopyPoolWallet,
   normalizeWallet,
 } from '../copy-pool.js';
@@ -685,6 +687,24 @@ async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresh
         continue;
       }
 
+      if (existing?.status === 'active' && existing?.source === 'auto' && metrics.retained) {
+        await upsertCopyPoolRow(client, {
+          ...metrics,
+          wallet,
+          source: 'auto',
+          status: 'active',
+          protected: false,
+          displayName: row.display_name,
+          pseudonym: row.pseudonym,
+          profileImage: row.profile_image,
+          reason: metrics.retentionReason,
+          firstAddedAt: isoOrNull(existing.first_added_at),
+          addedAt: isoOrNull(existing.added_at),
+          removedAt: null,
+        });
+        continue;
+      }
+
       if (existing?.status === 'active' && existing?.source === 'auto') {
         const evaluatedAt = new Date().toISOString();
         await upsertCopyPoolRow(client, {
@@ -696,13 +716,13 @@ async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresh
           displayName: row.display_name,
           pseudonym: row.pseudonym,
           profileImage: row.profile_image,
-          reason: metrics.reason,
+          reason: metrics.retentionReason,
           firstAddedAt: isoOrNull(existing?.first_added_at),
           addedAt: isoOrNull(existing?.added_at),
           removedAt: evaluatedAt,
         });
-        await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.reason, metrics);
-        changed.push({ wallet, action: 'removed', reason: metrics.reason });
+        await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.retentionReason, metrics);
+        changed.push({ wallet, action: 'removed', reason: metrics.retentionReason });
       } else if (existing) {
         await upsertCopyPoolRow(client, {
           ...metrics,
@@ -734,13 +754,13 @@ async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresh
         displayName: existing.display_name,
         pseudonym: existing.pseudonym,
         profileImage: existing.profile_image,
-        reason: metrics.reason,
+        reason: metrics.retentionReason,
         firstAddedAt: isoOrNull(existing.first_added_at),
         addedAt: isoOrNull(existing.added_at),
         removedAt: evaluatedAt,
       });
-      await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.reason, metrics);
-      changed.push({ wallet, action: 'removed', reason: metrics.reason });
+      await insertCopyPoolEvent(client, wallet, 'removed', 'auto', metrics.retentionReason, metrics);
+      changed.push({ wallet, action: 'removed', reason: metrics.retentionReason });
     }
 
     await client.query('commit');
@@ -958,7 +978,9 @@ async function upsertCopyPoolRow(client, row) {
         avgEntryPriceCents30d: nullableNumber(row.avgEntryPriceCents30d),
         avgEntryTradeCount30d: Number(row.avgEntryTradeCount30d || 0),
         eligible: Boolean(row.eligible),
+        retained: Boolean(row.retained),
         reason: row.reason || null,
+        retentionReason: row.retentionReason || null,
       }),
     ]
   );
@@ -1016,6 +1038,8 @@ function metricsFromRow(row, thresholds) {
     ...base,
     eligible: isCopyPoolEligible(base, thresholds),
     reason: copyPoolEligibilityReason(base, thresholds),
+    retained: isCopyPoolRetained(base, thresholds),
+    retentionReason: copyPoolRetentionReason(base, thresholds),
   };
 }
 
