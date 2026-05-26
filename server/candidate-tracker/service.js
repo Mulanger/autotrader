@@ -22,6 +22,7 @@ import {
 import { ingestTrade } from '../app-state.js';
 import { applyCopyPoolSnapshot, defaultCopyPoolThresholds, isWalletWatched } from '../copy-pool.js';
 import { fetchGammaResolution } from '../polymarket-client.js';
+import { applyShadowTraderSnapshot, isShadowTraderWalletSelected, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 import { fetchDataApiTrades, isDataApiOffsetLimitError } from './data-api-client.js';
 import { candidateTradeToDemoTrade, normalizeCandidateTrade } from './normalizer.js';
 import { buildCandidateSettlement } from './resolution.js';
@@ -77,6 +78,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     copyPoolLastRunAt: null,
     copyPoolLastChangedCount: 0,
     copyPoolLastCopiedCount: 0,
+    shadowTraderStatus: enabled ? 'starting' : 'disabled',
+    shadowTraderStrategy: SHADOW_TRADER_STRATEGY,
+    shadowTraderLastRunAt: null,
+    shadowTraderSelectedWalletCount: 0,
+    shadowTraderLastCopiedCount: 0,
     lastError: null,
   };
 
@@ -125,6 +131,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     pollRunning = true;
     let inserted = 0;
     let copied = 0;
+    let shadowCopied = 0;
     const canCopyNewLiveTrades = pollBootstrapped;
     let completed = false;
     try {
@@ -142,10 +149,14 @@ export function createCandidateTracker(state, broadcast, options = {}) {
           const result = await storage.upsertTrade(trade);
           if (result.insertedTrade) {
             inserted += 1;
-            if (canCopyNewLiveTrades && isWalletWatched(state, trade.wallet)) {
+            const shadowSelected = isShadowTraderWalletSelected(state, trade.wallet);
+            if (canCopyNewLiveTrades && (isWalletWatched(state, trade.wallet) || shadowSelected)) {
               const demoTrade = candidateTradeToDemoTrade(trade);
               const event = demoTrade ? ingestTrade(state, demoTrade, 'candidate-live') : null;
-              if (event) copied += 1;
+              if (event?.copyDecision?.action === 'copied') copied += 1;
+              if (event?.shadowDecision?.action === 'copied') {
+                shadowCopied += 1;
+              }
             }
           }
         }
@@ -155,8 +166,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.candidates.lastPollAt = new Date().toISOString();
       state.service.candidates.lastPollInserted = inserted;
       state.service.candidates.copyPoolLastCopiedCount = copied;
+      state.service.candidates.shadowTraderLastCopiedCount = shadowCopied;
       state.service.candidates.lastError = null;
-      if (copied) onStateChanged();
+      if (copied || shadowCopied) onStateChanged();
       completed = true;
       broadcast();
     } catch (error) {
@@ -323,6 +335,15 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         thresholds: copyPoolThresholds,
       });
       applyCopyPoolSnapshot(state, result.snapshot);
+      const shadowSnapshot = await storage.evaluateShadowTrader?.({
+        windowDays: CANDIDATE_BACKFILL_DAYS,
+      });
+      if (shadowSnapshot) {
+        applyShadowTraderSnapshot(state, shadowSnapshot);
+        state.service.candidates.shadowTraderStatus = 'ready';
+        state.service.candidates.shadowTraderLastRunAt = shadowSnapshot.lastEvaluatedAt;
+        state.service.candidates.shadowTraderSelectedWalletCount = shadowSnapshot.selectedWalletCount;
+      }
       state.service.candidates.copyPoolStatus = 'ready';
       state.service.candidates.copyPoolLastRunAt = new Date().toISOString();
       state.service.candidates.copyPoolLastChangedCount = result.changed.length;

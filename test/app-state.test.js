@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from '../server/config.js';
 import { createAppState, ingestTrade, restoreDurableState, serializeDurableState } from '../server/app-state.js';
 import { applyCopyPoolSnapshot } from '../server/copy-pool.js';
+import { applyShadowTraderSnapshot } from '../server/shadow-trader.js';
 
 function trade(wallet, overrides = {}) {
   return {
@@ -108,6 +109,34 @@ describe('app state', () => {
     expect(state.watchedWallets).toContain(wallet);
     expect(event.copyDecision.action).toBe('copied');
     expect(state.demo.openPositions).toHaveLength(1);
+  });
+
+  it('copies selected hybrid v1 shadow trades without adding them to the active demo copy list', () => {
+    const state = createAppState();
+    const wallet = '0xdddddddddddddddddddddddddddddddddddddddd';
+    applyShadowTraderSnapshot(state, {
+      selectedWallets: {
+        [wallet]: {
+          wallet,
+          status: 'active',
+          distinctResolvedTradeCount: 18,
+          winRatePct: 72,
+          avgEntryPriceCents30d: 50,
+          meanEdge: 0.02,
+          usdWeightedEdge: 0.01,
+        },
+      },
+    });
+
+    const event = ingestTrade(state, trade(wallet, { id: 'shadow-copy', marketSlug: 'shadow-market' }), 'candidate-live');
+
+    expect(state.watchedWallets).not.toContain(wallet);
+    expect(event.copyDecision.action).toBe('ignored');
+    expect(event.shadowDecision.action).toBe('copied');
+    expect(state.demo.openPositions).toHaveLength(0);
+    expect(state.shadowTrader.portfolio.openPositions).toHaveLength(1);
+    expect(state.shadowTrader.portfolio.openPositions[0].id).toBe('shadow-v1-shadow-copy');
+    expect(state.shadowTrader.feed).toHaveLength(1);
   });
 
   it('stops copying removed auto wallets without closing existing positions', () => {

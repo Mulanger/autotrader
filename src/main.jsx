@@ -12,6 +12,7 @@ import {
   Clock3,
   Cpu,
   Database,
+  Eye,
   ExternalLink,
   Gauge,
   Layers3,
@@ -220,7 +221,7 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service }) {
-  const tabs = mode === 'demo' ? ['overview', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'traders'];
+  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'traders'];
   return (
     <header className="topbar">
       <div>
@@ -243,6 +244,7 @@ function Topbar({ mode, tab, setTab, refresh, service }) {
 }
 
 function DemoWorkspace({ data, metrics, tab }) {
+  if (tab === 'shadow') return <ShadowTraderView shadowTrader={data.shadowTrader} />;
   if (tab === 'profit') return <ProfitView metrics={metrics} closedPositions={data.demo.closedPositions} />;
   if (tab === 'positions') {
     return (
@@ -263,6 +265,7 @@ function DemoWorkspace({ data, metrics, tab }) {
         <LiveFeed events={data.copiedFeed} />
       </section>
       <section className="sideColumn">
+        <ShadowTraderCard shadowTrader={data.shadowTrader} />
         <OpenPositionsCard positions={data.demo.openPositions} />
         <TraderGrid traders={data.traders} compact />
       </section>
@@ -319,30 +322,162 @@ function MetricStrip({ metrics }) {
   );
 }
 
-function LiveFeed({ events, realMode = false }) {
-  const visible = events.slice(0, 40);
+function ShadowTraderCard({ shadowTrader }) {
+  const metrics = shadowTrader?.metrics || {};
   return (
-    <section className="panel feedPanel">
+    <section className="panel shadowCard">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">Copy-list tape</p>
-          <h2>Watched trades and copy decisions</h2>
+          <p className="eyebrow">Shadow trader</p>
+          <h2>Hybrid v1 paper copy</h2>
         </div>
-        <ListFilter size={18} />
+        <Eye size={18} />
       </div>
-      <div className="feedList">
-        {visible.map((event) => (
-          <TradeEventRow key={`${event.id}-${event.observedAt}`} event={event} realMode={realMode} />
-        ))}
-        {!visible.length && <EmptyState title="Waiting for watched-wallet trades" text="Only trades from the copy list appear here." />}
+      <div className="shadowCardStats">
+        <div>
+          <span>Selected</span>
+          <strong>{shadowTrader?.selectedWalletCount || 0}</strong>
+        </div>
+        <div>
+          <span>P/L</span>
+          <strong className={pnlTone(metrics.totalPnlUsd)}>{signedUsd(metrics.totalPnlUsd)}</strong>
+        </div>
+        <div>
+          <span>Copied</span>
+          <strong>{metrics.copiedCount || 0}</strong>
+        </div>
+      </div>
+      <div className="shadowStatus">
+        <span className="statusBadge neutral">{shadowTrader?.strategy || 'hybrid_gate_v1'}</span>
+        <small>Last evaluated {formatTimeAgo(shadowTrader?.lastEvaluatedAt)}</small>
       </div>
     </section>
   );
 }
 
-function TradeEventRow({ event, realMode }) {
+function ShadowTraderView({ shadowTrader }) {
+  const shadow = shadowTrader || emptyState().shadowTrader;
+  const metrics = shadow.metrics || {};
+  const selectedWallets = Object.values(shadow.selectedWallets || {})
+    .sort((a, b) => Number(b.distinctResolvedTradeCount || 0) - Number(a.distinctResolvedTradeCount || 0))
+    .slice(0, 10);
+
+  return (
+    <div className="shadowWorkspace">
+      <section className="panel fullPanel shadowPanel">
+        <div className="sectionHead">
+          <div>
+            <p className="eyebrow">Hybrid v1 shadow</p>
+            <h2>Second demo trader</h2>
+          </div>
+          <span className="statusBadge neutral">{shadow.status || 'starting'}</span>
+        </div>
+        <MetricStrip metrics={metrics} />
+        <div className="shadowSummary">
+          <div className="positionStat">
+            <span>Selected wallets</span>
+            <strong>{shadow.selectedWalletCount || 0}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Scored wallets</span>
+            <strong>{shadow.candidatesScoredCount || 0}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Open</span>
+            <strong>{metrics.openPositionCount || 0}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Closed</span>
+            <strong>{metrics.closedPositionCount || 0}</strong>
+          </div>
+        </div>
+        <div className="shadowCriteria">
+          <span>n &gt;= {shadow.criteria?.minResolved ?? 15}</span>
+          <span>win &gt;= {pct(shadow.criteria?.minWinRatePct ?? 70)}</span>
+          <span>AEP &lt; {formatCents(shadow.criteria?.maxAvgEntryPriceCents ?? 75)}</span>
+          <span>mean edge &gt; 0</span>
+          <span>weighted edge &gt; 0</span>
+        </div>
+        <div className="shadowColumns">
+          <section>
+            <div className="sectionHead compactHead">
+              <div>
+                <p className="eyebrow">Positions</p>
+                <h2>Hybrid v1 copied trades</h2>
+              </div>
+            </div>
+            <PositionList
+              positions={[...(shadow.openPositions || []), ...(shadow.closedPositions || [])].slice(0, 40)}
+              expanded
+              emptyTitle="No shadow positions yet"
+              emptyText="Hybrid v1 will paper-copy future selected-wallet BUY trades here."
+            />
+          </section>
+          <section>
+            <div className="sectionHead compactHead">
+              <div>
+                <p className="eyebrow">Selected wallets</p>
+                <h2>Current gate passers</h2>
+              </div>
+            </div>
+            <div className="shadowWalletList">
+              {selectedWallets.map((wallet) => (
+                <div className="shadowWalletRow" key={wallet.wallet}>
+                  <strong>{wallet.displayName || wallet.pseudonym || shortWallet(wallet.wallet)}</strong>
+                  <span>{shortWallet(wallet.wallet)}</span>
+                  <b>{Number(wallet.winRatePct || 0).toFixed(1)}%</b>
+                  <small>{Number(wallet.distinctResolvedTradeCount || 0)} resolved</small>
+                </div>
+              ))}
+              {!selectedWallets.length && <EmptyState title="No selected wallets" text="Hybrid v1 has not selected any wallets yet." />}
+            </div>
+          </section>
+        </div>
+      </section>
+      <LiveFeed
+        events={shadow.feed || []}
+        shadowMode
+        eyebrow="Shadow tape"
+        title="Hybrid v1 trades and copy decisions"
+        emptyTitle="Waiting for hybrid v1 trades"
+        emptyText="Trades from selected hybrid v1 wallets will appear here."
+      />
+    </div>
+  );
+}
+
+function LiveFeed({
+  events,
+  realMode = false,
+  shadowMode = false,
+  eyebrow = 'Copy-list tape',
+  title = 'Watched trades and copy decisions',
+  emptyTitle = 'Waiting for watched-wallet trades',
+  emptyText = 'Only trades from the copy list appear here.',
+}) {
+  const visible = events.slice(0, 40);
+  return (
+    <section className="panel feedPanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">{eyebrow}</p>
+          <h2>{title}</h2>
+        </div>
+        <ListFilter size={18} />
+      </div>
+      <div className="feedList">
+        {visible.map((event) => (
+          <TradeEventRow key={`${event.id}-${event.observedAt}`} event={event} realMode={realMode} shadowMode={shadowMode} />
+        ))}
+        {!visible.length && <EmptyState title={emptyTitle} text={emptyText} />}
+      </div>
+    </section>
+  );
+}
+
+function TradeEventRow({ event, realMode, shadowMode }) {
   const trade = event.trade;
-  const decision = realMode ? event.realDecision : event.copyDecision;
+  const decision = shadowMode ? event.shadowDecision : realMode ? event.realDecision : event.copyDecision;
   const copied = decision?.action === 'copied';
   const skipped = decision?.action === 'skipped' || decision?.action === 'blocked';
   const ignored = decision?.action === 'ignored';
@@ -1047,6 +1182,41 @@ function emptyState() {
       },
       openPositions: [],
       closedPositions: [],
+    },
+    shadowTrader: {
+      enabled: true,
+      strategy: 'hybrid_gate_v1',
+      label: 'Hybrid v1 shadow',
+      status: 'starting',
+      criteria: {
+        minResolved: 15,
+        minWinRatePct: 70,
+        maxAvgEntryPriceCents: 75,
+        minMeanEdge: 0,
+        minUsdWeightedEdge: 0,
+      },
+      selectedWallets: {},
+      selectedWalletCount: 0,
+      candidatesScoredCount: 0,
+      lastEvaluatedAt: null,
+      metrics: {
+        equityUsd: 1000,
+        cashUsd: 1000,
+        totalPnlUsd: 0,
+        realizedPnlUsd: 0,
+        unrealizedPnlUsd: 0,
+        copiedCount: 0,
+        openPositionCount: 0,
+        closedPositionCount: 0,
+        totalNotionalCopiedUsd: 0,
+        knownEntryFeesUsd: 0,
+        feeUnknownCount: 0,
+        maxEntryPriceCents: 75,
+      },
+      openPositions: [],
+      closedPositions: [],
+      decisions: [],
+      feed: [],
     },
     real: {},
     copyPool: {

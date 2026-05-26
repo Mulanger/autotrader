@@ -14,6 +14,12 @@ import {
   updateOpenPositionPrices,
 } from './demo-engine.js';
 import { nowIso, shortWallet } from './format.js';
+import {
+  createShadowTraderState,
+  ensureShadowTraderState,
+  isShadowTraderWalletSelected,
+  normalizeShadowPortfolio,
+} from './shadow-trader.js';
 
 export function createAppState() {
   const traders = {};
@@ -71,6 +77,7 @@ export function createAppState() {
     copiedFeed: [],
     seenTradeIds: new Set(),
     demo: createDemoState(),
+    shadowTrader: createShadowTraderState(),
     real: {
       armed: false,
       adapter: 'not_configured',
@@ -100,6 +107,7 @@ export function serializeDurableState(state) {
       copiedMarketKeys: [...state.demo.copiedMarketKeys],
       copiedTraderMarketKeys: [...state.demo.copiedTraderMarketKeys],
     },
+    shadowTrader: serializeShadowTrader(state.shadowTrader),
     real: state.real,
   };
 }
@@ -121,21 +129,22 @@ export function restoreDurableState(state, stored) {
   state.copiedFeed = Array.isArray(stored.copiedFeed) ? stored.copiedFeed.slice(0, 200) : state.copiedFeed;
 
   if (stored.demo && typeof stored.demo === 'object') {
-    const storedStartingCapitalUsd = numberOrNull(stored.demo.startingCapitalUsd);
-    const restoredDemo = { ...createDemoState(), ...stored.demo };
-    restoredDemo.openPositions = Array.isArray(stored.demo.openPositions) ? stored.demo.openPositions : [];
-    restoredDemo.closedPositions = Array.isArray(stored.demo.closedPositions) ? stored.demo.closedPositions : [];
-    restoredDemo.decisions = Array.isArray(stored.demo.decisions) ? stored.demo.decisions : [];
-    restoredDemo.copiedSourceTradeIds = new Set(
-      Array.isArray(stored.demo.copiedSourceTradeIds) ? stored.demo.copiedSourceTradeIds : []
-    );
-    restoredDemo.copiedMarketKeys = restoreMarketKeys(stored.demo);
-    restoredDemo.copiedTraderMarketKeys = restoreTraderMarketKeys(stored.demo);
-    state.demo = restoredDemo;
-    repairPrematureResolutionSettlements(state.demo);
-    pruneDuplicateTraderMarkets(state.demo);
-    reconcileConfiguredDemoCapital(state.demo, storedStartingCapitalUsd);
+    state.demo = restoreDemoPortfolio(stored.demo, createDemoState());
+    reconcileConfiguredDemoCapital(state.demo, numberOrNull(stored.demo.startingCapitalUsd));
   }
+
+  if (stored.shadowTrader && typeof stored.shadowTrader === 'object') {
+    const restoredShadow = {
+      ...createShadowTraderState(),
+      ...stored.shadowTrader,
+      portfolio: normalizeShadowPortfolio(stored.shadowTrader.portfolio),
+      feed: Array.isArray(stored.shadowTrader.feed) ? stored.shadowTrader.feed : [],
+    };
+    restoredShadow.portfolio = restoreDemoPortfolio(restoredShadow.portfolio, createDemoState({ positionIdPrefix: 'shadow-v1' }));
+    restoredShadow.portfolio.positionIdPrefix = 'shadow-v1';
+    state.shadowTrader = restoredShadow;
+  }
+  ensureShadowTraderState(state);
 
   if (stored.real && typeof stored.real === 'object') {
     state.real = { ...state.real, ...stored.real };
@@ -145,6 +154,7 @@ export function restoreDurableState(state, stored) {
     ...(Array.isArray(stored.seenTradeIds) ? stored.seenTradeIds : []),
     ...state.allTrades.map((event) => event.id).filter(Boolean),
     ...state.demo.copiedSourceTradeIds,
+    ...state.shadowTrader.portfolio.copiedSourceTradeIds,
   ]);
 
   return true;
@@ -156,22 +166,46 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
 
   state.seenTradeIds.add(trade.id);
   updateOpenPositionPrices(state.demo, trade);
+  const shadow = ensureShadowTraderState(state);
+  updateOpenPositionPrices(shadow.portfolio, trade);
 
   const wallet = String(trade.trader.proxyWallet || '').toLowerCase();
   trade.trader.proxyWallet = wallet;
   const watched = isWalletWatched(state, wallet);
+  const shadowWatched = isShadowTraderWalletSelected(state, wallet);
   const event = {
     id: trade.id,
     source,
     watched,
+    shadowWatched,
     trade,
     copyDecision: null,
+    shadowDecision: null,
     realDecision: {
       action: watched ? 'blocked' : 'ignored',
       reason: watched ? 'Real trading adapter is disabled' : 'Wallet is not in copy list',
     },
     observedAt: nowIso(),
   };
+
+  if (shadowWatched) {
+    event.shadowDecision = copyEligible
+      ? evaluateDemoCopy(shadow.portfolio, trade)
+      : {
+          action: 'observed',
+          reason: 'Loaded at startup; not copied by shadow strategy',
+          at: nowIso(),
+        };
+    if (event.shadowDecision?.action === 'copied') shadow.lastCopiedCount = Number(shadow.lastCopiedCount || 0) + 1;
+    shadow.feed.unshift(event);
+    shadow.feed = shadow.feed.slice(0, 200);
+  } else {
+    event.shadowDecision = {
+      action: 'ignored',
+      reason: 'Wallet is not selected by hybrid v1 shadow',
+      at: nowIso(),
+    };
+  }
 
   if (watched) {
     const trader = ensureTraderProfile(state, wallet, trade.trader);
@@ -238,9 +272,67 @@ export function snapshotState(state, options = {}) {
       decisions: state.demo.decisions.slice(0, 250),
     },
     real: state.real,
+    shadowTrader: shadowTraderView(state.shadowTrader),
     ...(includeAllTrades ? { allTrades: state.allTrades } : {}),
     copiedFeed: state.copiedFeed,
   };
+}
+
+function serializeShadowTrader(shadowTrader) {
+  const shadow = shadowTrader || createShadowTraderState();
+  const portfolio = normalizeShadowPortfolio(shadow.portfolio);
+  return {
+    ...shadow,
+    portfolio: {
+      ...portfolio,
+      copiedSourceTradeIds: [...portfolio.copiedSourceTradeIds],
+      copiedMarketKeys: [...portfolio.copiedMarketKeys],
+      copiedTraderMarketKeys: [...portfolio.copiedTraderMarketKeys],
+    },
+    feed: Array.isArray(shadow.feed) ? shadow.feed.slice(0, 200) : [],
+  };
+}
+
+function shadowTraderView(shadowTrader) {
+  const shadow = shadowTrader || createShadowTraderState();
+  const portfolio = normalizeShadowPortfolio(shadow.portfolio);
+  return {
+    enabled: shadow.enabled,
+    strategy: shadow.strategy,
+    label: shadow.label,
+    status: shadow.status,
+    criteria: shadow.criteria,
+    selectedWallets: shadow.selectedWallets || {},
+    selectedWalletCount: Number(shadow.selectedWalletCount || 0),
+    candidatesScoredCount: Number(shadow.candidatesScoredCount || 0),
+    lastEvaluatedAt: shadow.lastEvaluatedAt || null,
+    lastChangedCount: Number(shadow.lastChangedCount || 0),
+    lastCopiedCount: Number(shadow.lastCopiedCount || 0),
+    metrics: markToMarket(portfolio),
+    openPositions: portfolio.openPositions,
+    closedPositions: portfolio.closedPositions.slice(0, 250),
+    decisions: portfolio.decisions.slice(0, 250),
+    feed: Array.isArray(shadow.feed) ? shadow.feed.slice(0, 200) : [],
+  };
+}
+
+function restoreDemoPortfolio(storedPortfolio, basePortfolio) {
+  const restored = { ...basePortfolio, ...storedPortfolio };
+  restored.openPositions = Array.isArray(storedPortfolio.openPositions) ? storedPortfolio.openPositions : [];
+  restored.closedPositions = Array.isArray(storedPortfolio.closedPositions) ? storedPortfolio.closedPositions : [];
+  restored.decisions = Array.isArray(storedPortfolio.decisions) ? storedPortfolio.decisions : [];
+  restored.copiedSourceTradeIds = new Set(iterableValues(storedPortfolio.copiedSourceTradeIds));
+  restored.copiedMarketKeys = restoreMarketKeys(restored);
+  restored.copiedTraderMarketKeys = restoreTraderMarketKeys(restored);
+  repairPrematureResolutionSettlements(restored);
+  pruneDuplicateTraderMarkets(restored);
+  return restored;
+}
+
+function iterableValues(value) {
+  if (Array.isArray(value)) return value;
+  if (value && typeof value[Symbol.iterator] === 'function') return [...value];
+  return [];
 }
 
 function numberOrNull(value) {

@@ -8,6 +8,7 @@ import {
   makeCopyPoolWallet,
   normalizeWallet,
 } from '../copy-pool.js';
+import { SHADOW_TRADER_CRITERIA, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 
 const SCHEMA_VERSION = 2;
 
@@ -46,6 +47,7 @@ export async function createCandidateStorage() {
     getTrader: (wallet, params) => getTrader(pool, wallet, params),
     getSummary: () => getSummary(pool),
     evaluateCopyPool: (params) => evaluateCopyPool(pool, params),
+    evaluateShadowTrader: (params) => evaluateShadowTrader(pool, params),
     getCopyPoolSnapshot: (params) => getCopyPoolSnapshot(pool, params),
     close: () => pool.end(),
   };
@@ -777,6 +779,34 @@ async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresh
   };
 }
 
+async function evaluateShadowTrader(pool, { windowDays = 30, criteria = SHADOW_TRADER_CRITERIA } = {}) {
+  const result = await queryShadowTraderMetricRows(pool, { windowDays });
+  const selectedWallets = {};
+
+  for (const row of result.rows) {
+    const metrics = mapShadowMetricRow(row);
+    if (!isHybridV1Eligible(metrics, criteria)) continue;
+    selectedWallets[metrics.wallet] = {
+      ...metrics,
+      status: 'active',
+      strategy: SHADOW_TRADER_STRATEGY,
+      reason: 'Selected by hybrid v1 shadow gate',
+    };
+  }
+
+  return {
+    enabled: true,
+    strategy: SHADOW_TRADER_STRATEGY,
+    label: 'Hybrid v1 shadow',
+    status: 'ready',
+    criteria,
+    selectedWallets,
+    selectedWalletCount: Object.keys(selectedWallets).length,
+    candidatesScoredCount: result.rows.length,
+    lastEvaluatedAt: new Date().toISOString(),
+  };
+}
+
 async function getCopyPoolSnapshot(pool, { thresholds: thresholdOverrides = {} } = {}) {
   const thresholds = defaultCopyPoolThresholds(thresholdOverrides);
   const [walletResult, addedResult, removedResult] = await Promise.all([
@@ -916,6 +946,95 @@ async function queryCopyPoolMetricRows(clientOrPool, thresholds, wallet = null) 
   );
 }
 
+async function queryShadowTraderMetricRows(clientOrPool, { windowDays = 30 } = {}) {
+  return clientOrPool.query(
+    `
+      with trader_base as (
+        select wallet, display_name, pseudonym, profile_image, last_seen_at
+        from candidate_traders
+      ),
+      resolved_buy as (
+        select
+          wallet,
+          id,
+          coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as market_key,
+          coalesce(nullif(event_slug, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as event_key,
+          status,
+          price,
+          usd_size,
+          resolved_at,
+          trade_timestamp,
+          case when status = 'resolved_win' then 1 else 0 end - price as edge
+        from candidate_trades
+        where side = 'BUY'
+          and status in ('resolved_win', 'resolved_loss')
+          and resolved_at is not null
+          and resolved_at >= now() - ($1::integer * interval '1 day')
+          and price is not null
+          and price > 0
+          and price < 1
+      ),
+      deduped_buy as (
+        select *
+        from (
+          select
+            *,
+            row_number() over (
+              partition by wallet, market_key
+              order by resolved_at desc nulls last, trade_timestamp desc, id desc
+            ) as rn
+          from resolved_buy
+        ) x
+        where rn = 1
+      ),
+      resolved_stats as (
+        select
+          wallet,
+          count(*)::integer as distinct_resolved_trade_count,
+          count(*) filter (where status = 'resolved_win')::integer as win_count,
+          avg(case when status = 'resolved_win' then 1 else 0 end)::numeric * 100 as win_rate_pct,
+          avg(edge)::numeric as mean_edge,
+          (sum(usd_size * edge) / nullif(sum(usd_size), 0))::numeric as usd_weighted_edge,
+          sum(usd_size)::numeric as resolved_usd_volume,
+          count(distinct event_key)::integer as distinct_event_count
+        from deduped_buy
+        group by wallet
+      ),
+      entry_stats as (
+        select
+          wallet,
+          (sum(usd_size) / nullif(sum(shares), 0) * 100)::numeric as avg_entry_price_cents_30d,
+          count(*)::integer as avg_entry_trade_count_30d
+        from candidate_trades
+        where side = 'BUY'
+          and shares is not null
+          and shares > 0
+          and usd_size is not null
+          and trade_timestamp >= now() - ($1::integer * interval '1 day')
+        group by wallet
+      )
+      select
+        t.wallet,
+        t.display_name,
+        t.pseudonym,
+        t.profile_image,
+        coalesce(r.distinct_resolved_trade_count, 0)::integer as distinct_resolved_trade_count,
+        coalesce(r.win_count, 0)::integer as win_count,
+        r.win_rate_pct,
+        e.avg_entry_price_cents_30d,
+        coalesce(e.avg_entry_trade_count_30d, 0)::integer as avg_entry_trade_count_30d,
+        r.mean_edge,
+        r.usd_weighted_edge,
+        r.resolved_usd_volume,
+        coalesce(r.distinct_event_count, 0)::integer as distinct_event_count
+      from trader_base t
+      left join resolved_stats r on r.wallet = t.wallet
+      left join entry_stats e on e.wallet = t.wallet
+    `,
+    [windowDays]
+  );
+}
+
 async function upsertCopyPoolRow(client, row) {
   await client.query(
     `
@@ -1041,6 +1160,37 @@ function metricsFromRow(row, thresholds) {
     retained: isCopyPoolRetained(base, thresholds),
     retentionReason: copyPoolRetentionReason(base, thresholds),
   };
+}
+
+function mapShadowMetricRow(row) {
+  const wallet = normalizeWallet(row.wallet);
+  return {
+    wallet,
+    displayName: row.display_name,
+    pseudonym: row.pseudonym,
+    profileImage: row.profile_image,
+    distinctResolvedTradeCount: Number(row.distinct_resolved_trade_count || 0),
+    winCount: Number(row.win_count || 0),
+    winRatePct: nullableNumberFromPg(row.win_rate_pct),
+    avgEntryPriceCents30d: nullableNumberFromPg(row.avg_entry_price_cents_30d),
+    avgEntryTradeCount30d: Number(row.avg_entry_trade_count_30d || 0),
+    meanEdge: nullableNumberFromPg(row.mean_edge),
+    usdWeightedEdge: nullableNumberFromPg(row.usd_weighted_edge),
+    resolvedUsdVolume: nullableNumberFromPg(row.resolved_usd_volume),
+    distinctEventCount: Number(row.distinct_event_count || 0),
+  };
+}
+
+function isHybridV1Eligible(metrics, criteria = SHADOW_TRADER_CRITERIA) {
+  return (
+    Boolean(metrics.wallet) &&
+    metrics.distinctResolvedTradeCount >= criteria.minResolved &&
+    numberAtLeast(metrics.winRatePct, criteria.minWinRatePct) &&
+    metrics.avgEntryPriceCents30d !== null &&
+    metrics.avgEntryPriceCents30d < criteria.maxAvgEntryPriceCents &&
+    numberAbove(metrics.meanEdge, criteria.minMeanEdge) &&
+    numberAbove(metrics.usdWeightedEdge, criteria.minUsdWeightedEdge)
+  );
 }
 
 function mapCopyPoolEventRow(row) {
@@ -1173,6 +1323,14 @@ function nullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function numberAtLeast(value, minimum) {
+  return value !== null && Number.isFinite(value) && value >= minimum;
+}
+
+function numberAbove(value, minimum) {
+  return value !== null && Number.isFinite(value) && value > minimum;
 }
 
 function isoOrNull(value) {

@@ -238,7 +238,8 @@ button {
 
 .dashboardGrid,
 .realGrid,
-.profitGrid {
+.profitGrid,
+.shadowWorkspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 390px;
   gap: 18px;
@@ -444,6 +445,120 @@ button {
 
 .positionsPanel {
   min-height: 280px;
+}
+
+.shadowCard {
+  display: grid;
+  gap: 12px;
+}
+
+.shadowCardStats,
+.shadowSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.shadowCardStats div {
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.shadowCardStats span,
+.shadowStatus small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.shadowCardStats strong {
+  font-size: 1.1rem;
+}
+
+.shadowStatus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shadowPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.shadowSummary {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.shadowCriteria {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shadowCriteria span {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: #fbfcfe;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.shadowColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(270px, 0.45fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.compactHead {
+  margin-bottom: 10px;
+}
+
+.shadowWalletList {
+  display: grid;
+  gap: 8px;
+}
+
+.shadowWalletRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px;
+}
+
+.shadowWalletRow strong,
+.shadowWalletRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shadowWalletRow span,
+.shadowWalletRow small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.shadowWalletRow b {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
 }
 
 .positionRow {
@@ -1235,7 +1350,8 @@ button {
 
   .dashboardGrid,
   .profitGrid,
-  .realGrid {
+  .realGrid,
+  .shadowWorkspace {
     grid-template-columns: 1fr;
   }
 
@@ -1245,6 +1361,11 @@ button {
 
   .positionSummary {
     grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
+  .shadowSummary,
+  .shadowColumns {
+    grid-template-columns: 1fr;
   }
 
   .candidateSummary {
@@ -1315,6 +1436,11 @@ button {
 
   .positionSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shadowCardStats,
+  .shadowSummary {
+    grid-template-columns: 1fr;
   }
 
   .candidateSummary {

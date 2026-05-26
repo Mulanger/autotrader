@@ -3,8 +3,9 @@ import { buildEntryFeeModel } from './fee-model.js';
 import { getTradeCurrentPriceCents } from './trade-normalizer.js';
 import { nowIso } from './format.js';
 
-export function createDemoState() {
+export function createDemoState(options = {}) {
   return {
+    positionIdPrefix: options.positionIdPrefix || 'demo',
     startingCapitalUsd: DEMO_STARTING_CAPITAL_USD,
     cashUsd: DEMO_STARTING_CAPITAL_USD,
     fixedStakeUsd: DEMO_STAKE_USD,
@@ -131,7 +132,7 @@ function copyBuy(demo, trade) {
   const grossShares = demo.fixedStakeUsd / (price / 100);
   const fee = buildEntryFeeModel(trade, { priceCents: price, shares: grossShares });
   const position = {
-    id: `demo-${trade.id}`,
+    id: `${demo.positionIdPrefix || 'demo'}-${trade.id}`,
     sourceTradeId: trade.id,
     marketKey,
     traderMarketKey,

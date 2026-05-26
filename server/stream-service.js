@@ -60,7 +60,7 @@ export function startIngestion(state, broadcast, storage) {
           return;
         }
         const event = ingestTrade(state, normalized, 'websocket');
-        if (event?.watched) {
+        if (event?.watched || event?.shadowWatched) {
           storage.queueSave(state);
           broadcast();
         }
@@ -92,7 +92,7 @@ export function startIngestion(state, broadcast, storage) {
       let changed = false;
       for (const trade of trades.reverse()) {
         const event = ingestTrade(state, trade, 'poll');
-        if (event?.watched) changed = true;
+        if (event?.watched || event?.shadowWatched) changed = true;
       }
       state.service.pollStatus = 'ready';
       state.service.pollLastRunAt = nowIso();

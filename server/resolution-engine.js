@@ -1,7 +1,13 @@
 import { settleDemoPosition, updateOpenPositionPrices } from './demo-engine.js';
 
 export async function reconcileOpenDemoPositions(state, fetchTradeById, fetchMarketResolution = null) {
-  const openPositions = [...(state.demo?.openPositions || [])];
+  const portfolios = [
+    { key: 'demo', portfolio: state.demo },
+    { key: 'shadowTrader', portfolio: state.shadowTrader?.portfolio },
+  ].filter((item) => item.portfolio);
+  const openPositions = portfolios.flatMap(({ key, portfolio }) => {
+    return [...(portfolio.openPositions || [])].map((position) => ({ key, portfolio, position }));
+  });
   if (!openPositions.length) {
     return { changed: false, checked: 0, settled: [], errors: [] };
   }
@@ -11,20 +17,20 @@ export async function reconcileOpenDemoPositions(state, fetchTradeById, fetchMar
   const errors = [];
 
   const results = await Promise.all(
-    openPositions.map(async (position) => {
+    openPositions.map(async (entry) => {
       try {
-        const trade = await fetchTradeById(position.sourceTradeId);
-        return { position, trade, fetchError: null };
+        const trade = await fetchTradeById(entry.position.sourceTradeId);
+        return { ...entry, trade, fetchError: null };
       } catch (error) {
-        return { position, trade: null, fetchError: error };
+        return { ...entry, trade: null, fetchError: error };
       }
     })
   );
 
   for (const result of results) {
-    const { position, fetchError } = result;
+    const { portfolio, position, fetchError } = result;
 
-    const livePosition = state.demo.openPositions.find((item) => item.id === position.id);
+    const livePosition = portfolio.openPositions.find((item) => item.id === position.id);
     if (!livePosition) continue;
 
     const trade = result.trade || buildPositionResolutionTrade(livePosition);
@@ -39,7 +45,7 @@ export async function reconcileOpenDemoPositions(state, fetchTradeById, fetchMar
     livePosition.resolutionLastCheckedAt = new Date().toISOString();
 
     if (result.trade) {
-      updateOpenPositionPrices(state.demo, trade);
+      updateOpenPositionPrices(portfolio, trade);
       livePosition.resolutionFetchStatus = 'ok';
       livePosition.resolutionFetchError = null;
       livePosition.resolutionStatus = trade.resolution?.status || livePosition.resolutionStatus || 'open';
@@ -93,7 +99,7 @@ export async function reconcileOpenDemoPositions(state, fetchTradeById, fetchMar
       settlement.settlementSource === 'polymarket-gamma' ? 'settled_from_gamma' : 'settled_from_polywhale',
       `Settled from ${settlement.settlementSource || 'official resolution'}`
     );
-    const closed = settleDemoPosition(state.demo, livePosition.id, settlement);
+    const closed = settleDemoPosition(portfolio, livePosition.id, settlement);
     if (closed) {
       changed = true;
       settled.push(closed);

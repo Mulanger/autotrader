@@ -556,6 +556,7 @@ async function loadNormalizedState(pool) {
     },
     real: snapshot.real,
     copyPool: snapshot.copyPool,
+    shadowTrader: snapshot.shadowTrader,
     seenTradeIds: seenResult.rows.map((row) => row.id),
   };
 }

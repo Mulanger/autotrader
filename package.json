@@ -14,7 +14,8 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "backtest:gates": "node scripts/backtest-copy-gates.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.2",
