@@ -146,7 +146,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
       for (let page = 0; page < CANDIDATE_POLL_MAX_PAGES; page += 1) {
         const offset = page * CANDIDATE_POLL_LIMIT;
-        const rawTrades = await fetchTrades({ limit: CANDIDATE_POLL_LIMIT, offset });
+        const rawTrades = await fetchTrades({
+          limit: CANDIDATE_POLL_LIMIT,
+          offset,
+          filterType: 'CASH',
+          filterAmount: CANDIDATE_MIN_USD,
+        });
         if (!rawTrades.length) break;
 
         for (const raw of rawTrades.slice().reverse()) {
@@ -202,8 +207,10 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
       const cutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000);
       let reachedCutoff = false;
+      let reachedEnd = false;
       let partialReason = null;
       let inserted = 0;
+      let oldestFetchedTimestamp = null;
 
       for (let page = 0; page < CANDIDATE_BACKFILL_MAX_PAGES && !reachedCutoff; page += 1) {
         const offset = page * CANDIDATE_BACKFILL_PAGE_LIMIT;
@@ -214,7 +221,13 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
         let rawTrades;
         try {
-          rawTrades = await fetchTrades({ user: wallet, limit: CANDIDATE_BACKFILL_PAGE_LIMIT, offset });
+          rawTrades = await fetchTrades({
+            user: wallet,
+            limit: CANDIDATE_BACKFILL_PAGE_LIMIT,
+            offset,
+            filterType: 'CASH',
+            filterAmount: CANDIDATE_MIN_USD,
+          });
         } catch (error) {
           if (page > 0 && isDataApiOffsetLimitError(error)) {
             partialReason = `Stopped after Data API rejected offset ${offset}`;
@@ -222,7 +235,10 @@ export function createCandidateTracker(state, broadcast, options = {}) {
           }
           throw error;
         }
-        if (!rawTrades.length) break;
+        if (!rawTrades.length) {
+          reachedEnd = true;
+          break;
+        }
 
         await storage.saveServiceState?.(`backfill:${wallet}`, {
           wallet,
@@ -236,6 +252,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
         for (const raw of rawTrades.slice().reverse()) {
           const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
+          if (rawTimestamp && (!oldestFetchedTimestamp || rawTimestamp < oldestFetchedTimestamp)) {
+            oldestFetchedTimestamp = rawTimestamp;
+          }
           if (rawTimestamp && rawTimestamp * 1000 < cutoff.getTime()) {
             reachedCutoff = true;
             continue;
@@ -247,7 +266,15 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         }
       }
 
-      await storage.markBackfillComplete(wallet, cutoff.toISOString(), {
+      if (!reachedCutoff && !reachedEnd && !partialReason) {
+        partialReason = `Stopped after ${CANDIDATE_BACKFILL_MAX_PAGES} Data API pages before reaching cutoff`;
+      }
+
+      const coveredSince = partialReason && oldestFetchedTimestamp
+        ? new Date(oldestFetchedTimestamp * 1000).toISOString()
+        : cutoff.toISOString();
+
+      await storage.markBackfillComplete(wallet, coveredSince, {
         partial: Boolean(partialReason),
         reason: partialReason,
       });
@@ -255,6 +282,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         wallet,
         status: partialReason ? 'partial' : 'done',
         historyDays,
+        coveredSince,
+        reachedCutoff,
+        reachedEnd,
         inserted,
         partialReason,
         updatedAt: new Date().toISOString(),

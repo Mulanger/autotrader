@@ -19,5 +19,6 @@ describe('candidate storage helpers', () => {
     expect(calls[0].sql).toMatch(/where status = 'active'/i);
     expect(calls[0].sql).toMatch(/on conflict \(wallet\) do update set/i);
     expect(calls[0].sql).toMatch(/backfilled_since > now\(\) - \(\$2::integer \* interval '1 day'\)/i);
+    expect(calls[0].sql).toMatch(/configured max is 3000/i);
   });
 });

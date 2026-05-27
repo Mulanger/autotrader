@@ -60,7 +60,8 @@ Optional:
 - `CANDIDATE_BACKFILL_DAYS`: defaults to `30`.
 - `CANDIDATE_ACCEPTED_HISTORY_DAYS`: active copied candidate wallet history window for month cards, defaults to `90`.
 - `CANDIDATE_POLL_INTERVAL_MS`: defaults to `30000`.
-- `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `3000`.
+- `CANDIDATE_BACKFILL_PAGE_LIMIT`: defaults to `500`.
+- `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `10000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: defaults to `250`.
 - `AUTO_COPY_POOL_ENABLED`: enables automated candidate promotion/removal, defaults to `true`.
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: promotion and retention minimum resolved distinct BUY markets, defaults to `15`.

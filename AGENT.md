@@ -128,7 +128,8 @@ Production/Railway:
 - `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.
 - `CANDIDATE_ACCEPTED_HISTORY_DAYS`: deeper history window for active copied candidate wallets. Defaults to `90`.
 - `CANDIDATE_POLL_INTERVAL_MS`: candidate Data API poll interval. Defaults to `30000`.
-- `CANDIDATE_BACKFILL_MAX_OFFSET`: deepest candidate backfill Data API offset before marking a partial backfill. Defaults to `3000`.
+- `CANDIDATE_BACKFILL_PAGE_LIMIT`: candidate wallet backfill page size. Defaults to `500`.
+- `CANDIDATE_BACKFILL_MAX_OFFSET`: deepest candidate backfill Data API offset before marking a partial backfill. Defaults to `10000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: minimum candidate resolution worker batch size. Defaults to `250`.
 - `AUTO_COPY_POOL_ENABLED`: enables automated promotion/removal from the demo copy pool. Defaults to `true`.
 - `AUTO_COPY_POOL_INTERVAL_MS`: copy-pool evaluator interval. Defaults to `300000`.

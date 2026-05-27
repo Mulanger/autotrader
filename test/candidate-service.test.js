@@ -48,18 +48,18 @@ describe('candidate tracker service', () => {
   it('marks backfill partial when Data API rejects a deep offset after successful pages', async () => {
     const state = createAppState();
     const storage = fakeStorage();
-    const seenOffsets = [];
+    const seenCalls = [];
     const tracker = createCandidateTracker(state, () => {}, {
       enabled: true,
       copyPoolEnabled: false,
       storageFactory: async () => storage,
-      fetchDataApiTrades: async ({ offset = 0, user }) => {
+      fetchDataApiTrades: async ({ offset = 0, user, filterType, filterAmount }) => {
         if (!user) return [];
-        seenOffsets.push(offset);
-        if (offset === 100) {
-          const error = new Error('400 Bad Request for /trades?offset=100');
+        seenCalls.push({ offset, filterType, filterAmount });
+        if (offset === 500) {
+          const error = new Error('400 Bad Request for /trades?offset=500');
           error.status = 400;
-          error.url = '/trades?offset=100';
+          error.url = '/trades?offset=500';
           throw error;
         }
         return [rawTrade(offset)];
@@ -69,10 +69,13 @@ describe('candidate tracker service', () => {
     await tracker.start();
     await tracker.close();
 
-    expect(seenOffsets).toEqual([0, 100]);
+    expect(seenCalls).toEqual([
+      { offset: 0, filterType: 'CASH', filterAmount: 1000 },
+      { offset: 500, filterType: 'CASH', filterAmount: 1000 },
+    ]);
     expect(storage.calls.complete[0][2]).toEqual({
       partial: true,
-      reason: 'Stopped after Data API rejected offset 100',
+      reason: 'Stopped after Data API rejected offset 500',
     });
     expect(storage.calls.serviceState.at(-1)[1].status).toBe('partial');
   });
