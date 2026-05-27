@@ -204,7 +204,7 @@ function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCoun
         />
         <StatusLine
           active={['ready', 'polling'].includes(service?.real?.status)}
-          label={`Real dry-run ${service?.real?.status || 'disabled'}`}
+          label={`Real ${service?.real?.mode === 'live' ? 'live' : 'dry-run'} ${service?.real?.status || 'disabled'}`}
         />
       </div>
 
@@ -229,10 +229,12 @@ function storageLabel(storage) {
 function Topbar({ mode, tab, setTab, refresh, service }) {
   const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'positions', 'orders'];
   const lastPollAt = mode === 'real' ? service?.real?.lastPollAt : service?.pollLastRunAt;
+  const realLiveRequested = service?.real?.mode === 'live' && service?.real?.liveExecutionEnabled;
+  const realLiveReady = realLiveRequested && service?.real?.liveExecutionReady;
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">{mode === 'demo' ? 'Simulated execution' : 'Live execution disabled'}</p>
+        <p className="eyebrow">{mode === 'demo' ? 'Simulated execution' : realLiveReady ? 'Live execution enabled' : realLiveRequested ? 'Live execution blocked' : 'Live execution disabled'}</p>
         <h1>{mode === 'demo' ? 'Demo copy trading dashboard' : 'Real trading control room'}</h1>
       </div>
       <nav className="tabs" aria-label="Dashboard views">
@@ -300,7 +302,7 @@ function RealWorkspace({ tab }) {
   }
 
   if (realState.loading || !real) {
-    return <section className="panel fullPanel"><EmptyState title="Loading real dashboard" text="Fetching dry-run follow state." /></section>;
+    return <section className="panel fullPanel"><EmptyState title="Loading real dashboard" text="Fetching real follow state." /></section>;
   }
 
   if (tab === 'following') return <RealFollowingView real={real} realState={realState} />;
@@ -311,26 +313,34 @@ function RealWorkspace({ tab }) {
 
 function RealOverview({ real }) {
   const summary = real.summary || {};
+  const live = isLiveRealMode(real);
+  const liveReady = Boolean(real.service?.liveExecutionReady);
+  const stakeLabel = usd(real.service?.stakeUsd || 10);
+  const missingLiveConfig = real.service?.liveExecutionConfig?.missing || [];
   return (
     <div className="dashboardGrid">
       <section className="mainColumn">
-        <RealMetricStrip summary={summary} />
+        <RealMetricStrip summary={summary} real={real} />
         <section className="panel realPanel">
           <div className="lockPlate"><Lock size={22} /></div>
           <p className="eyebrow">Execution mode</p>
-          <h2>Dry-run FOK audit</h2>
+          <h2>{live ? 'Live FOK execution' : 'Dry-run FOK audit'}</h2>
           <p>
-            Real follows are manual. BUY entries are simulated as $10 FOK orders with a strict source-price ±4c precheck
-            and no live CLOB submission.
+            {live
+              ? 'Real follows are manual. BUY entries are submitted as fixed-stake FOK orders after the source-price guard passes.'
+              : 'Real follows are manual. BUY entries are simulated as fixed-stake FOK orders with a strict source-price +/-4c precheck and no live CLOB submission.'}
           </p>
           <div className="adapterList">
             <StatusLine active label="Manual follow list active" />
-            <StatusLine active label="$10 dry-run stake" />
-            <StatusLine active label="Source price ±4c guard" />
-            <StatusLine active={false} label="Live wallet signing disabled" />
+            <StatusLine active label={`${stakeLabel} fixed stake`} />
+            <StatusLine active label="Source price +/-4c guard" />
+            <StatusLine active={live && liveReady} label={live ? (liveReady ? 'Live wallet signing enabled' : 'Live wallet signing blocked') : 'Live wallet signing disabled'} />
+            {live && !liveReady && missingLiveConfig.length > 0 && (
+              <StatusLine active={false} label={`Missing ${missingLiveConfig.join(', ')}`} />
+            )}
           </div>
         </section>
-        <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact />
+        <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact live={live} />
       </section>
       <section className="sideColumn">
         <section className="panel">
@@ -349,12 +359,13 @@ function RealOverview({ real }) {
   );
 }
 
-function RealMetricStrip({ summary }) {
+function RealMetricStrip({ summary, real }) {
+  const live = isLiveRealMode(real);
   const items = [
-    { label: 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), icon: LineChart, tone: pnlTone(summary.totalPnlUsd) },
+    { label: live ? 'Live P/L' : 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), icon: LineChart, tone: pnlTone(summary.totalPnlUsd) },
     { label: 'Open value', value: usd(summary.openValueUsd || 0), icon: Wallet },
     { label: 'Attempts', value: summary.attemptedCount || 0, icon: Activity },
-    { label: 'Would fill', value: summary.wouldFillCount || 0, icon: CheckCircle2, tone: 'positive' },
+    { label: live ? 'Filled' : 'Would fill', value: summary.wouldFillCount || 0, icon: CheckCircle2, tone: 'positive' },
     { label: 'Rejected', value: summary.rejectedCount || 0, icon: AlertTriangle, tone: summary.rejectedCount ? 'negative' : 'neutral' },
   ];
   return (
@@ -379,7 +390,7 @@ function RealFollowingView({ real, realState }) {
     setActionError(null);
     setPinRequest({
       title: 'Remove real follow',
-      description: `${follow.displayName || follow.pseudonym || shortWallet(follow.wallet)} will stop being tracked for new dry-run entries.`,
+      description: `${follow.displayName || follow.pseudonym || shortWallet(follow.wallet)} will stop being tracked for new real entries.`,
       confirmLabel: 'Remove',
       onSubmit: async (pin) => {
         setPendingWallet(follow.wallet);
@@ -428,7 +439,7 @@ function RealFollowingView({ real, realState }) {
 
 function RealFollowList({ follows, compact = false, onRemove, pendingWallet }) {
   if (!follows.length) {
-    return <EmptyState title="No real follows yet" text="Use Add on a candidate row to start dry-run tracking from that moment forward." />;
+    return <EmptyState title="No real follows yet" text="Use Add on a candidate row to start tracking from that moment forward." />;
   }
   return (
     <div className={compact ? 'realFollowList compact' : 'realFollowList'}>
@@ -489,12 +500,13 @@ function RealPositionsView({ real }) {
   const positions = real.positions || [];
   const open = positions.filter((position) => isOpenPosition(position));
   const closed = positions.filter((position) => !isOpenPosition(position));
+  const live = isLiveRealMode(real);
   return (
     <section className="panel fullPanel positionsWorkspace">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">Real dry-run positions</p>
-          <h2>Since-added simulated fills</h2>
+          <p className="eyebrow">{live ? 'Live positions' : 'Real dry-run positions'}</p>
+          <h2>{live ? 'Since-added live fills' : 'Since-added simulated fills'}</h2>
         </div>
         <Layers3 size={18} />
       </div>
@@ -507,31 +519,34 @@ function RealPositionsView({ real }) {
       <PositionList
         positions={positions}
         expanded
-        emptyTitle="No real dry-run positions"
-        emptyText="New BUY trades from manually followed wallets will create $10 dry-run positions if the FOK quote guard passes."
+        emptyTitle={live ? 'No live positions' : 'No real dry-run positions'}
+        emptyText={live
+          ? 'New BUY trades from manually followed wallets will submit fixed-stake FOK orders if the price guard passes.'
+          : 'New BUY trades from manually followed wallets will create dry-run positions if the FOK quote guard passes.'}
       />
     </section>
   );
 }
 
 function RealOrdersView({ real }) {
+  const live = isLiveRealMode(real);
   return (
     <section className="panel fullPanel realOrdersPanel">
       <div className="sectionHead">
         <div>
           <p className="eyebrow">FOK audit</p>
-          <h2>Dry-run orders</h2>
+          <h2>{live ? 'Live orders' : 'Dry-run orders'}</h2>
         </div>
         <ListFilter size={18} />
       </div>
-      <RealOrdersList orders={real.orders || []} />
+      <RealOrdersList orders={real.orders || []} live={live} />
     </section>
   );
 }
 
-function RealOrdersList({ orders, compact = false }) {
+function RealOrdersList({ orders, compact = false, live = false }) {
   if (!orders.length) {
-    return <EmptyState title="No dry-run orders yet" text="The real follow poller will log would-fill and rejected entries after a followed trader buys." />;
+    return <EmptyState title={live ? 'No live orders yet' : 'No dry-run orders yet'} text="The real follow poller will log filled/would-fill and rejected entries after a followed trader buys." />;
   }
   return (
     <div className={compact ? 'realOrderList compact' : 'realOrderList'}>
@@ -541,7 +556,8 @@ function RealOrdersList({ orders, compact = false }) {
 }
 
 function RealOrderRow({ order, compact }) {
-  const filled = order.status === 'would_fill';
+  const filled = isFilledRealOrder(order);
+  const live = order.dryRun === false || order.liveExecution;
   return (
     <article className={`realOrderRow ${filled ? 'wouldFill' : 'rejected'}`}>
       <div className="realOrderMarket">
@@ -557,7 +573,7 @@ function RealOrderRow({ order, compact }) {
         </>
       )}
       <div className="realOrderStatus">
-        <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? 'would fill' : 'rejected'}</span>
+        <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? (live ? 'filled' : 'would fill') : 'rejected'}</span>
         <small title={order.reason}>{order.reasonCode || order.reason || 'ok'}</small>
       </div>
     </article>
@@ -1100,7 +1116,7 @@ function CandidatesView({ service, copyPoolState }) {
     setActionError(null);
     setPinRequest({
       title: 'Add real follow',
-      description: `${row.displayName || row.pseudonym || shortWallet(row.wallet)} will be tracked in dry-run real mode from now on.`,
+      description: `${row.displayName || row.pseudonym || shortWallet(row.wallet)} will be tracked by the Real engine from now on.`,
       confirmLabel: 'Add',
       onSubmit: async (pin) => {
         setActionPendingWallet(row.wallet);
@@ -2028,6 +2044,14 @@ function statusTone(status) {
 
 function isOpenPosition(position) {
   return String(position?.status || 'open').toLowerCase() === 'open';
+}
+
+function isLiveRealMode(real) {
+  return real?.mode === 'live' && Boolean(real?.service?.liveExecutionEnabled);
+}
+
+function isFilledRealOrder(order) {
+  return ['would_fill', 'filled', 'live_filled'].includes(String(order?.status || '').toLowerCase());
 }
 
 function marketDateLabel(position) {

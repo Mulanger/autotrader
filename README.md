@@ -8,7 +8,7 @@ Current state:
 - Risk rule: only copies watched BUY trades priced at `75c` or lower.
 - Repeat-entry rule: only the first copied trade from a given wallet on a given market is copied.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
-- Real dashboard is dry-run only: manual follows, PIN-gated add/remove, and $10 FOK quote audits without live order submission.
+- Real dashboard defaults to dry-run: manual follows, PIN-gated add/remove, and fixed-stake FOK quote audits. Live order submission is available only when Railway explicitly sets live mode and Polymarket signing credentials.
 - Watched trades are logged with copied/skipped decisions; unrelated whale rows are kept out of the normal dashboard payload.
 
 ## Run
@@ -72,11 +72,18 @@ Optional:
 - `FETCH_RETRY_COUNT`: defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions, defaults to `1993`.
-- `REAL_DRY_RUN_STAKE_USD`: fixed Real dry-run stake, defaults to `10`.
+- `REAL_TRADING_MODE`: `dry_run` by default. Set to `live` only when the live credential variables below are configured.
+- `REAL_LIVE_TRADING_ENABLED`: second live-execution gate, defaults to `false`; must be `true` with `REAL_TRADING_MODE=live`.
+- `REAL_STAKE_USD`: fixed live/dry-run Real stake, defaults to `10`. `REAL_DRY_RUN_STAKE_USD` is still accepted for old dry-run setups.
 - `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents, defaults to `4`.
 - `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval, defaults to `30000`.
 - `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow trade poll limit, defaults to `100`.
+- `POLYMARKET_PRIVATE_KEY`: signing key for the owner/session wallet. Required for live orders.
+- `POLYMARKET_FUNDER_ADDRESS`: Polymarket deposit/proxy/safe wallet address that funds orders. `POLYMARKET_DEPOSIT_WALLET_ADDRESS` and `DEPOSIT_WALLET_ADDRESS` are also accepted aliases.
+- `POLYMARKET_SIGNATURE_TYPE`: Polymarket signature type. Defaults to `3` for deposit wallet / `POLY_1271`; use `1` for proxy wallets, `2` for Safe, `0` only for standalone EOA.
+- `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`: optional CLOB L2 credentials. If omitted, the app derives credentials from `POLYMARKET_PRIVATE_KEY`.
+- `POLYMARKET_BUILDER_CODE`: optional bytes32 builder code for attribution.
 - `DEBUG_STATE_INCLUDE_ALL_TRADES`: defaults to `false`.
 - `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
-Real-money order submission is not implemented. Do not put wallet private keys into this app until a live execution adapter, signing flow, and risk gates are reviewed. Real routes require `DASHBOARD_AUTH_TOKEN`; add/remove also requires `REAL_ACTION_PIN`.
+Live order submission uses Polymarket's CLOB v2 SDK. It still keeps the existing gates: dashboard auth, PIN-gated follow changes, followed-wallet-only polling, new-trades-only copying, fixed stake, FOK order type, source-price guard, and duplicate source-trade prevention. Real routes require `DASHBOARD_AUTH_TOKEN`; add/remove also requires `REAL_ACTION_PIN`.

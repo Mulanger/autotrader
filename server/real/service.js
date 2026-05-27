@@ -2,12 +2,16 @@ import {
   REAL_ACTION_PIN,
   REAL_DRY_RUN_STAKE_USD,
   REAL_FOLLOW_POLL_INTERVAL_MS,
+  REAL_LIVE_TRADING_ENABLED,
   REAL_PRICE_GUARD_CENTS,
+  REAL_STAKE_USD,
+  REAL_TRADING_MODE,
   RESOLUTION_POLL_INTERVAL_MS,
 } from '../config.js';
 import { fetchGammaResolution } from '../polymarket-client.js';
 import { fetchClobMarketInfo, fetchOrderBook } from './clob-client.js';
 import { fetchRealFollowTrades } from './data-api-client.js';
+import { createPolymarketLiveExecutor } from './live-executor.js';
 import { resolveTradeToken } from './market.js';
 import { normalizeRealTrade } from './normalizer.js';
 import { evaluateDryRunFokBuy, normalizeLevels } from './quote-engine.js';
@@ -21,7 +25,10 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   const fetchResolution = options.fetchGammaResolution || fetchGammaResolution;
   const pollIntervalMs = options.pollIntervalMs ?? REAL_FOLLOW_POLL_INTERVAL_MS;
   const resolutionIntervalMs = options.resolutionIntervalMs ?? RESOLUTION_POLL_INTERVAL_MS;
-  const stakeUsd = options.stakeUsd ?? REAL_DRY_RUN_STAKE_USD;
+  const tradingMode = normalizeTradingMode(options.tradingMode ?? REAL_TRADING_MODE);
+  const liveTradingEnabled = options.liveTradingEnabled ?? REAL_LIVE_TRADING_ENABLED;
+  const liveExecutor = options.liveExecutor || createPolymarketLiveExecutor();
+  const stakeUsd = options.stakeUsd ?? (tradingMode === 'live' ? REAL_STAKE_USD : REAL_DRY_RUN_STAKE_USD);
   const guardCents = options.guardCents ?? REAL_PRICE_GUARD_CENTS;
   const setTimer = options.setInterval || setInterval;
   const clearTimer = options.clearInterval || clearInterval;
@@ -37,8 +44,12 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     state.service.real = {
       ...(state.service.real || {}),
       status: 'starting',
-      mode: 'dry_run',
-      liveExecutionEnabled: false,
+      mode: tradingMode,
+      liveExecutionEnabled: isLiveExecutionRequested(),
+      liveExecutionReady: liveReadiness().ready,
+      liveExecutionConfig: liveReadiness(),
+      stakeUsd,
+      priceGuardCents: guardCents,
     };
     broadcast();
     storage = await storageFactory();
@@ -91,6 +102,16 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     let checked = 0;
     let inserted = 0;
     try {
+      const readiness = liveReadiness();
+      state.service.real.mode = tradingMode;
+      state.service.real.liveExecutionEnabled = isLiveExecutionRequested();
+      state.service.real.liveExecutionReady = readiness.ready;
+      state.service.real.liveExecutionConfig = readiness;
+      state.service.real.stakeUsd = stakeUsd;
+      state.service.real.priceGuardCents = guardCents;
+      if (isLiveExecutionRequested() && !readiness.ready) {
+        throw new Error(`Live trading mode is enabled but not ready: missing ${readiness.missing.join(', ')}`);
+      }
       state.service.real.status = 'polling';
       broadcast();
       const follows = await storage.listActiveFollows();
@@ -101,7 +122,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
           if (!trade || trade.wallet !== follow.wallet) continue;
           if (!isAfterAdded(trade, follow)) continue;
           checked += 1;
-          const attempt = await buildDryRunAttempt({ trade, follow });
+          const attempt = await buildExecutionAttempt({ trade, follow });
           if (await storage.hasOrderAttempt(attempt.id)) continue;
           const result = await storage.recordOrderAttempt(attempt);
           if (result.inserted) inserted += 1;
@@ -164,7 +185,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     }
   }
 
-  async function buildDryRunAttempt({ trade, follow }) {
+  async function buildExecutionAttempt({ trade, follow }) {
     const checkedAt = new Date().toISOString();
     let marketInfo = null;
     if (!trade.asset && trade.conditionId) {
@@ -172,7 +193,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     }
     const token = resolveTradeToken(trade, marketInfo);
     if (!token.tokenId) {
-      return makeAttempt(trade, follow, {
+      return withExecutionMode(makeAttempt(trade, follow, {
         status: 'rejected',
         reasonCode: 'missing_token',
         reason: 'Could not resolve CLOB token for source trade',
@@ -182,14 +203,14 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
         maxGuardCents: Math.min(100, trade.priceCents + guardCents),
         stakeUsd,
         tokenSource: token.source,
-      });
+      }));
     }
 
     let orderBook;
     try {
       orderBook = await fetchBook(token.tokenId);
     } catch (error) {
-      return makeAttempt(trade, follow, {
+      return withExecutionMode(makeAttempt(trade, follow, {
         status: 'rejected',
         reasonCode: 'quote_error',
         reason: `Order book lookup failed: ${error.message}`,
@@ -200,11 +221,11 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
         stakeUsd,
         asset: token.tokenId,
         tokenSource: token.source,
-      });
+      }));
     }
 
     const quote = evaluateDryRunFokBuy({ trade, orderBook, stakeUsd, guardCents, checkedAt });
-    return makeAttempt(trade, follow, {
+    const attempt = makeAttempt(trade, follow, {
       ...quote,
       asset: token.tokenId,
       tokenSource: token.source,
@@ -212,6 +233,29 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       negRisk: booleanOrNull(orderBook?.neg_risk ?? orderBook?.negRisk ?? token.negRisk),
       minOrderSize: numberOrNull(orderBook?.min_order_size ?? orderBook?.minOrderSize),
     });
+    if (!isLiveExecutionRequested() || attempt.status !== 'would_fill') return withExecutionMode(attempt);
+
+    try {
+      const liveResult = await liveExecutor.executeFokBuy({ attempt, trade, follow, orderBook, marketInfo });
+      return {
+        ...attempt,
+        ...liveResult,
+        id: attempt.id,
+        status: liveResult.status || 'filled',
+        dryRun: false,
+        liveExecution: true,
+        checkedAt: liveResult.checkedAt || attempt.checkedAt,
+      };
+    } catch (error) {
+      return {
+        ...attempt,
+        status: 'rejected',
+        dryRun: false,
+        liveExecution: true,
+        reasonCode: 'live_order_error',
+        reason: `Live order submission failed: ${error.message}`,
+      };
+    }
   }
 
   async function markToBook(position) {
@@ -234,14 +278,19 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
 
   async function refreshState() {
     const real = await storage.getState();
+    const readiness = liveReadiness();
     state.real = {
       ...real,
+      mode: tradingMode,
       service: state.service.real,
-      notes: [
-        'Real mode is dry-run only.',
-        'No private key or live CLOB order submission is enabled in this version.',
-      ],
+      notes: realModeNotes({ readiness }),
     };
+    state.service.real.mode = tradingMode;
+    state.service.real.liveExecutionEnabled = isLiveExecutionRequested();
+    state.service.real.liveExecutionReady = readiness.ready;
+    state.service.real.liveExecutionConfig = readiness;
+    state.service.real.stakeUsd = stakeUsd;
+    state.service.real.priceGuardCents = guardCents;
     return state.real;
   }
 
@@ -253,8 +302,44 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     unfollowTrader,
     runPoll,
     runReconciliation,
-    buildDryRunAttempt,
+    buildDryRunAttempt: buildExecutionAttempt,
+    buildExecutionAttempt,
   };
+
+  function isLiveExecutionRequested() {
+    return tradingMode === 'live' && Boolean(liveTradingEnabled);
+  }
+
+  function liveReadiness() {
+    const readiness = liveExecutor.getReadiness?.() || { ready: false, missing: ['live executor'] };
+    return {
+      ...readiness,
+      ready: isLiveExecutionRequested() && readiness.ready,
+      mode: tradingMode,
+      enabled: isLiveExecutionRequested(),
+    };
+  }
+
+  function realModeNotes({ readiness }) {
+    if (isLiveExecutionRequested()) {
+      return readiness.ready
+        ? ['Live mode is enabled. Approved followed-wallet BUY entries are submitted as fixed-stake FOK orders after the price guard passes.']
+        : [`Live mode is requested but blocked until required Railway variables are set: ${readiness.missing.join(', ')}.`];
+    }
+    return [
+      'Real mode is dry-run only.',
+      'Set REAL_TRADING_MODE=live and REAL_LIVE_TRADING_ENABLED=true to allow live CLOB submission.',
+    ];
+  }
+
+  function withExecutionMode(attempt) {
+    if (!isLiveExecutionRequested()) return attempt;
+    return {
+      ...attempt,
+      dryRun: false,
+      liveExecution: true,
+    };
+  }
 }
 
 export function assertPin(pin) {
@@ -309,7 +394,7 @@ function makeAttempt(trade, follow, quote) {
 }
 
 function stakeOrDefault() {
-  return Number.isFinite(Number(REAL_DRY_RUN_STAKE_USD)) ? Number(REAL_DRY_RUN_STAKE_USD) : 10;
+  return Number.isFinite(Number(REAL_STAKE_USD)) ? Number(REAL_STAKE_USD) : 10;
 }
 
 function isAfterAdded(trade, follow) {
@@ -369,4 +454,8 @@ function booleanOrNull(value) {
   if (text === 'true') return true;
   if (text === 'false') return false;
   return null;
+}
+
+function normalizeTradingMode(value) {
+  return String(value || '').trim().toLowerCase().replace('-', '_') === 'live' ? 'live' : 'dry_run';
 }

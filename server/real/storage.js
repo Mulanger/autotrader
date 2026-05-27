@@ -96,13 +96,13 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
       if (orders.has(attempt.id)) return { inserted: false, order: orders.get(attempt.id), position: null };
       orders.set(attempt.id, attempt);
       let position = null;
-      if (attempt.status === 'would_fill') {
+      if (isFilledAttempt(attempt)) {
         position = buildPositionFromAttempt(attempt);
         positions.set(position.id, position);
       }
       addEvent({
         wallet: attempt.traderWallet,
-        action: attempt.status === 'would_fill' ? 'would_fill' : 'rejected',
+        action: isFilledAttempt(attempt) ? attempt.status : 'rejected',
         reason: attempt.reason,
         payload: attempt,
       });
@@ -389,13 +389,13 @@ async function recordOrderAttempt(pool, attempt) {
     }
 
     let position = null;
-    if (attempt.status === 'would_fill') {
+    if (isFilledAttempt(attempt)) {
       position = buildPositionFromAttempt(attempt);
       await upsertPosition(client, position);
     }
     await insertEvent(client, {
       wallet: attempt.traderWallet,
-      action: attempt.status === 'would_fill' ? 'would_fill' : 'rejected',
+      action: isFilledAttempt(attempt) ? attempt.status : 'rejected',
       reason: attempt.reason,
       payload: attempt,
     });
@@ -578,8 +578,13 @@ export function buildPositionFromAttempt(attempt) {
     feeStatus: 'unknown',
     openedAt: attempt.checkedAt,
     updatedAt: attempt.checkedAt,
-    dryRun: true,
+    dryRun: attempt.dryRun !== false,
+    liveExecution: Boolean(attempt.liveExecution),
     orderType: 'FOK',
+    clobOrderId: attempt.clobOrderId || null,
+    clobStatus: attempt.clobStatus || null,
+    clobTradeIds: attempt.clobTradeIds || [],
+    clobTransactionHashes: attempt.clobTransactionHashes || [],
     fillSlippageCents: Number.isFinite(entryPriceCents) && Number.isFinite(Number(attempt.sourcePriceCents))
       ? entryPriceCents - Number(attempt.sourcePriceCents)
       : null,
@@ -622,7 +627,7 @@ function metricsForWallet(follow, orders, positions) {
 
 function aggregateMetrics(orders, positions, follows = []) {
   const attemptedCount = orders.length;
-  const wouldFillCount = orders.filter((order) => order.status === 'would_fill').length;
+  const wouldFillCount = orders.filter(isFilledAttempt).length;
   const rejectedCount = orders.filter((order) => order.status === 'rejected').length;
   const openPositions = positions.filter((position) => position.status === 'open');
   const closedPositions = positions.filter((position) => position.status !== 'open');
@@ -665,6 +670,10 @@ function aggregateMetrics(orders, positions, follows = []) {
     avgSlippageCents: average(slippages),
     rejectReasons,
   };
+}
+
+function isFilledAttempt(order) {
+  return ['would_fill', 'filled', 'live_filled'].includes(String(order?.status || '').toLowerCase());
 }
 
 function mapFollowRow(row) {

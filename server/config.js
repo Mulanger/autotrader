@@ -81,6 +81,14 @@ export const REAL_ACTION_PIN = process.env.REAL_ACTION_PIN || '1993';
 
 export const REAL_DRY_RUN_STAKE_USD = Number(process.env.REAL_DRY_RUN_STAKE_USD || 10);
 
+export const REAL_STAKE_USD = Number(process.env.REAL_STAKE_USD || process.env.REAL_DRY_RUN_STAKE_USD || 10);
+
+export const REAL_TRADING_MODE = normalizeRealTradingMode(
+  process.env.REAL_TRADING_MODE || (parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false) ? 'live' : 'dry_run')
+);
+
+export const REAL_LIVE_TRADING_ENABLED = parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false);
+
 export const REAL_PRICE_GUARD_CENTS = Number(process.env.REAL_PRICE_GUARD_CENTS || 4);
 
 export const REAL_FOLLOW_POLL_INTERVAL_MS = Number(process.env.REAL_FOLLOW_POLL_INTERVAL_MS || 30_000);
@@ -94,4 +102,10 @@ export { WATCHED_WALLETS };
 function parseBoolean(value, fallback) {
   if (value === undefined || value === null || value === '') return fallback;
   return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+}
+
+function normalizeRealTradingMode(value) {
+  const text = String(value || '').trim().toLowerCase().replace('-', '_');
+  if (text === 'live') return 'live';
+  return 'dry_run';
 }

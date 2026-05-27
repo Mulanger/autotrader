@@ -22,7 +22,7 @@ https://github.com/Mulanger/autotrader.git
 - Backend: Express + `ws`.
 - Persistence: Postgres when `DATABASE_URL` exists, memory fallback otherwise.
 - Live source data: Polywhale whale API at `https://whaleserver-production.up.railway.app`.
-- Real dashboard: dry-run only. Manual follows can be added/removed behind dashboard auth + PIN, and copied BUY entries are quote-audited as $10 FOK dry-runs. Do not add private keys or live order submission without explicit risk-gate work.
+- Real dashboard: dry-run by default. Manual follows can be added/removed behind dashboard auth + PIN, and copied BUY entries are quote-audited as fixed-stake FOK dry-runs. Live CLOB order submission is available only when `REAL_TRADING_MODE=live`, `REAL_LIVE_TRADING_ENABLED=true`, and Polymarket signing/funder variables are configured.
 
 The dashboard is a demo/paper-trading system right now:
 
@@ -78,7 +78,7 @@ D:\autotrader
     app-state.js        In-memory app state, snapshots, serialization, restore.
     storage.js          Postgres persistence with memory fallback.
     format.js           Small formatting/time helpers.
-    real/               Real dry-run follow storage, routes, service, and CLOB quote checks.
+    real/               Real follow storage, routes, dry-run quote checks, and optional live CLOB execution.
   src/
     main.jsx            React dashboard, demo/real tabs, tape, positions, trader cards.
     styles.css          Dashboard styling and responsive layout.
@@ -117,7 +117,7 @@ Production/Railway:
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
 - `POLYMARKET_DATA_API_URL`: direct Polymarket Data API for the independent `$1k-$10k` candidate tracker. Defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
-- `POLYMARKET_CLOB_URL`: Polymarket CLOB API for public order book reads in Real dry-run mode. Defaults to `https://clob.polymarket.com`.
+- `POLYMARKET_CLOB_URL`: Polymarket CLOB API for public order book reads and optional Real live submission. Defaults to `https://clob.polymarket.com`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DEMO_STARTING_CAPITAL_USD`: demo portfolio starting cash. Defaults to `1000`.
@@ -141,10 +141,18 @@ Production/Railway:
 - `FETCH_RETRY_COUNT`: retry count for transient upstream 429/5xx/network failures. Defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional bearer/query token for `/api/state`, `/api/candidates/*`, and `/events`. Empty disables dashboard auth.
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions. Defaults to `1993`. Real routes are unavailable unless `DASHBOARD_AUTH_TOKEN` is configured.
-- `REAL_DRY_RUN_STAKE_USD`: fixed Real dry-run quote size. Defaults to `10`.
-- `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents for Real dry-run quote checks. Defaults to `4`.
+- `REAL_TRADING_MODE`: Real execution mode. Defaults to `dry_run`; set to `live` only with live credentials configured.
+- `REAL_LIVE_TRADING_ENABLED`: second live-execution gate. Defaults to `false`; must be `true` with `REAL_TRADING_MODE=live`.
+- `REAL_STAKE_USD`: fixed Real live/dry-run stake. Defaults to `REAL_DRY_RUN_STAKE_USD` or `10`.
+- `REAL_DRY_RUN_STAKE_USD`: legacy fixed Real dry-run quote size. Defaults to `10`.
+- `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents for Real quote checks and live order price limit. Defaults to `4`.
 - `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval. Defaults to `30000`.
 - `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow Data API poll limit. Defaults to `100`.
+- `POLYMARKET_PRIVATE_KEY`: signing key for the owner/session wallet. Required for live Real orders.
+- `POLYMARKET_FUNDER_ADDRESS`: Polymarket deposit/proxy/safe wallet address that funds live orders. Aliases: `POLYMARKET_DEPOSIT_WALLET_ADDRESS`, `DEPOSIT_WALLET_ADDRESS`.
+- `POLYMARKET_SIGNATURE_TYPE`: Polymarket signature type. Defaults to `3` (`POLY_1271` deposit wallet); `1` proxy, `2` Safe, `0` standalone EOA.
+- `POLYMARKET_API_KEY`, `POLYMARKET_API_SECRET`, `POLYMARKET_API_PASSPHRASE`: optional CLOB L2 credentials. If omitted, the app derives them from `POLYMARKET_PRIVATE_KEY`.
+- `POLYMARKET_BUILDER_CODE`: optional bytes32 builder code for attribution.
 - `DEBUG_STATE_INCLUDE_ALL_TRADES`: includes unrelated all-trade debug payloads in `/api/state` when true. Defaults to `false`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
@@ -211,11 +219,11 @@ Local/backend endpoints:
 - `GET /api/state`: complete dashboard state snapshot.
 - `GET /api/candidates/leaderboard`: independent `$1k-$10k` candidate trader leaderboard.
 - `GET /api/candidates/traders/:wallet`: independent candidate trader profile and recent tracked trades.
-- `GET /api/real/state`: Real dry-run dashboard state. Requires configured dashboard auth.
+- `GET /api/real/state`: Real dashboard state. Requires configured dashboard auth.
 - `POST /api/real/follow`: PIN-gated manual Real follow add.
 - `POST /api/real/unfollow`: PIN-gated manual Real follow removal.
-- `GET /api/real/orders`: recent Real dry-run order audit rows.
-- `GET /api/real/positions`: recent Real dry-run positions.
+- `GET /api/real/orders`: recent Real order audit rows.
+- `GET /api/real/positions`: recent Real positions.
 - `WS /events`: dashboard state updates.
 
 Polywhale upstream endpoints used:
@@ -273,7 +281,7 @@ Implemented in `src/main.jsx`.
 - `Profit`: total P/L, realized/unrealized split, closed-trade history.
 - `Positions`: full current open copied-trades list.
 - `Traders`: watched-wallet cards with profit leaderboard metadata and recent watched trades.
-- `Real`: separate dry-run control room for manual follows, quote-audited $10 FOK attempts, and simulated position performance. It does not submit live orders.
+- `Real`: separate control room for manual follows, quote-audited fixed-stake FOK attempts, and dry-run or live position performance depending on `REAL_TRADING_MODE`.
 
 Main tape behavior:
 
@@ -338,15 +346,15 @@ Without Postgres, all of the above is only in process memory and will be lost on
 
 ## Real Trading Boundary
 
-Live real-money order submission is intentionally not implemented.
+The Real dashboard defaults to dry-run. In dry-run, it stores manual follows in `real_followed_traders`, polls Polymarket Data API for post-add BUY trades, checks public CLOB order books, and records would-fill/rejected fixed-stake FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
 
-The Real dashboard is dry-run only. It stores manual follows in `real_followed_traders`, polls Polymarket Data API for post-add BUY trades, checks public CLOB order books, and records would-fill/rejected $10 FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
+Live order submission now uses a separate Polymarket CLOB v2 adapter in `server/real/live-executor.js`. It only arms when both `REAL_TRADING_MODE=live` and `REAL_LIVE_TRADING_ENABLED=true` are set and the required Polymarket signing/funder variables are present. Do not bypass these gates or call order endpoints from the demo path.
 
-Do not add live trading by simply calling an order endpoint from the current demo or Real dry-run path. Real execution needs a separate adapter and explicit safety controls:
+Preserve these live execution controls:
 
 - wallet connection/signing model
 - no private keys committed or pasted into source
-- max stake, max daily loss, max open exposure
+- fixed stake, with future max daily loss / max open exposure controls still recommended
 - slippage/price bounds
 - duplicate order protection
 - market liquidity checks
@@ -354,8 +362,6 @@ Do not add live trading by simply calling an order endpoint from the current dem
 - clear manual arming switch
 - audit log for every attempted live order
 - dry-run/live mode separation
-
-The current `Real` tab must remain dry-run until those pieces exist.
 
 ## Important Cautions
 

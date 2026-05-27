@@ -78,4 +78,75 @@ describe('real trader service', () => {
     expect(real.orders[0].reasonCode).toBe('missing_token');
     await service.close();
   });
+
+  it('submits a guarded FOK order through the live executor when live mode is enabled', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    const follow = (await storage.listActiveFollows())[0];
+    const addedSeconds = Math.floor(Date.parse(follow.addedAt) / 1000);
+    const liveCalls = [];
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      tradingMode: 'live',
+      liveTradingEnabled: true,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => [rawTrade({ timestamp: addedSeconds + 60, tx: '0xlive' })],
+      fetchOrderBook: async () => ({ asks: [{ price: '0.51', size: '100' }], tick_size: '0.01' }),
+      fetchGammaResolution: async () => null,
+      liveExecutor: {
+        getReadiness: () => ({ ready: true, missing: [] }),
+        executeFokBuy: async ({ attempt }) => {
+          liveCalls.push(attempt);
+          return {
+            status: 'filled',
+            dryRun: false,
+            liveExecution: true,
+            reason: 'Live FOK BUY accepted by Polymarket',
+            clobOrderId: 'order-1',
+          };
+        },
+      },
+    });
+
+    await service.start();
+    const result = await service.runPoll();
+    const real = await service.getState();
+
+    expect(result.checked).toBe(1);
+    expect(liveCalls).toHaveLength(1);
+    expect(real.orders[0].status).toBe('filled');
+    expect(real.orders[0].dryRun).toBe(false);
+    expect(real.orders[0].clobOrderId).toBe('order-1');
+    expect(real.positions).toHaveLength(1);
+    expect(real.positions[0].dryRun).toBe(false);
+    expect(real.summary.wouldFillCount).toBe(1);
+    await service.close();
+  });
+
+  it('blocks live polling when the live executor is not ready', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      tradingMode: 'live',
+      liveTradingEnabled: true,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => {
+        throw new Error('should not poll trades without live credentials');
+      },
+      liveExecutor: {
+        getReadiness: () => ({ ready: false, missing: ['POLYMARKET_PRIVATE_KEY'] }),
+      },
+    });
+
+    await service.start();
+    const result = await service.runPoll();
+
+    expect(result.checked).toBe(0);
+    expect(result.error.message).toContain('POLYMARKET_PRIVATE_KEY');
+    expect(state.service.real.status).toBe('error');
+    await service.close();
+  });
 });

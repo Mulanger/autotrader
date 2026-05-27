@@ -47,6 +47,12 @@ export function redactServiceForPublicHealth(service) {
           lastError: service.candidates.lastError ? 'redacted' : null,
         }
       : service.candidates,
+    real: service.real
+      ? {
+          ...service.real,
+          lastError: service.real.lastError ? 'redacted' : null,
+        }
+      : service.real,
   };
 }
 

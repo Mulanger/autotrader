@@ -12,7 +12,7 @@ export function evaluateDryRunFokBuy({
     return rejected('missing_source_price', 'Source trade has no usable BUY price', { checkedAt, stakeUsd: stake });
   }
   if (!Number.isFinite(stake) || stake <= 0) {
-    return rejected('invalid_stake', 'Real dry-run stake is not usable', { checkedAt, sourcePriceCents });
+    return rejected('invalid_stake', 'Real stake is not usable', { checkedAt, sourcePriceCents });
   }
 
   const minGuardCents = Math.max(0, sourcePriceCents - (Number.isFinite(guard) ? guard : 4));
