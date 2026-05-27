@@ -1186,8 +1186,6 @@ function isHybridV1Eligible(metrics, criteria = SHADOW_TRADER_CRITERIA) {
     Boolean(metrics.wallet) &&
     metrics.distinctResolvedTradeCount >= criteria.minResolved &&
     numberAtLeast(metrics.winRatePct, criteria.minWinRatePct) &&
-    metrics.avgEntryPriceCents30d !== null &&
-    metrics.avgEntryPriceCents30d < criteria.maxAvgEntryPriceCents &&
     numberAbove(metrics.meanEdge, criteria.minMeanEdge) &&
     numberAbove(metrics.usdWeightedEdge, criteria.minUsdWeightedEdge)
   );

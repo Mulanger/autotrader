@@ -69,14 +69,15 @@ describe('copy pool eligibility', () => {
     expect(metrics(below).eligible).toBe(false);
   });
 
-  it('requires trailing 30-day AEP below 75c', () => {
+  it('reports trailing 30-day AEP without using it as a follow gate', () => {
     const below = Array.from({ length: 15 }, (_, index) => trade(index, { price: 0.749 }));
-    const atLimit = Array.from({ length: 15 }, (_, index) => trade(index, { price: 0.75 }));
+    const aboveLimit = Array.from({ length: 15 }, (_, index) => trade(index, { price: 0.8 }));
 
     expect(metrics(below).avgEntryPriceCents30d).toBeCloseTo(74.9, 5);
     expect(metrics(below).eligible).toBe(true);
-    expect(metrics(atLimit).avgEntryPriceCents30d).toBe(75);
-    expect(metrics(atLimit).eligible).toBe(false);
+    expect(metrics(aboveLimit).avgEntryPriceCents30d).toBe(80);
+    expect(metrics(aboveLimit).eligible).toBe(true);
+    expect(metrics(aboveLimit).retained).toBe(true);
   });
 
   it('retains active traders above the lower removal threshold', () => {

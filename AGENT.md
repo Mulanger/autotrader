@@ -132,7 +132,7 @@ Production/Railway:
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: minimum trailing 30-day resolved distinct BUY markets. Defaults to `15`.
 - `AUTO_COPY_MIN_WIN_RATE_PCT`: minimum trailing 30-day distinct-market win rate for auto promotion. Defaults to `75`.
 - `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT`: lower trailing 30-day distinct-market win rate used before removing active auto-added traders. Defaults to `70`.
-- `AUTO_COPY_MAX_AEP_CENTS`: maximum trailing 30-day BUY AEP for auto promotion and retention. Defaults to `75`.
+- `AUTO_COPY_MAX_AEP_CENTS`: legacy/display trailing 30-day BUY AEP reference. Defaults to `75`; auto promotion and retention do not reject traders by AEP.
 - `FETCH_TIMEOUT_MS`: timeout for upstream Polywhale, Gamma, and Data API requests. Defaults to `15000`.
 - `FETCH_RETRY_COUNT`: retry count for transient upstream 429/5xx/network failures. Defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional bearer/query token for `/api/state`, `/api/candidates/*`, and `/events`. Empty disables dashboard auth.
@@ -342,7 +342,7 @@ The `Real` tab is currently read-only and should stay blocked until those pieces
 - Do not re-add a demo reset button or reset API route without an explicit confirmation workflow. It was removed to avoid accidental state loss.
 - Do not show unrelated whale trades in the main tape; it should stay focused on copied/watched wallets.
 - Do not copy startup/historical trades. They are context only.
-- Do not add trader sizing discipline, size-weighted win rate, or confidence-based stake scaling as hard copy-pool rules without new evidence. A read-only production backtest on May 26, 2026 found these ideas worsened or failed to improve the fixed-stake strategy.
+- Do not add trader sizing discipline, size-weighted win rate, confidence-based stake scaling, or trader-level AEP caps as hard copy-pool rules without new evidence. A read-only production backtest on May 26, 2026 found the sizing ideas worsened or failed to improve the fixed-stake strategy. AEP is currently display-only because individual entries above the max copy price are already skipped by the demo execution rule.
 - Do not treat `Storage memory only` as production-safe.
 - Keep `dist/`, logs, and `node_modules/` out of commits.
 - Check `git status` before edits and avoid reverting unrelated user work.
@@ -376,7 +376,7 @@ Mild scaling        avg stake $14.23, +$2263.11 P/L, 10.5% ROI, $416.10 max draw
 Aggressive scaling  avg stake $18.47, +$2916.99 P/L, 10.4% ROI, $548.56 max drawdown
 ```
 
-Conclusion: keep fixed `$10` sizing. Keep resolved distinct-market win rate and AEP as the hard copy-pool gates. Do not repeat similar sizing/filter simulations unless the copy strategy changes materially, such as moving from fixed stake to proportional live stake sizing.
+Conclusion: keep fixed `$10` sizing. Keep resolved distinct-market count and win rate as the hard copy-pool gates. AEP is display-only, because the execution engine already skips individual entries above the max copy price. Do not repeat similar sizing/filter simulations unless the copy strategy changes materially, such as moving from fixed stake to proportional live stake sizing.
 
 ## Copy-Pool Hysteresis
 
@@ -387,7 +387,7 @@ Current add 75 / remove 75: 1621 copies, 1519 resolved, +$1599.13 P/L, 10.5% ROI
 Hysteresis add 75 / remove 70: 1846 copies, 1740 resolved, +$1769.29 P/L, 10.2% ROI, 76 removals
 ```
 
-The system now uses `AUTO_COPY_MIN_WIN_RATE_PCT` for promotion and `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT` for retention/removal. The default is add at `75%`, remove below `70%`, with the same `15` distinct-market and `75c` AEP gates. This reduces churn from normal win-rate variance while preserving the original promotion standard.
+The system now uses `AUTO_COPY_MIN_WIN_RATE_PCT` for promotion and `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT` for retention/removal. The default is add at `75%` and remove below `70%`, with the same `15` distinct-market gate. AEP stays visible as a metric but is not a follow/removal gate. This reduces churn from normal win-rate variance while preserving the original promotion standard.
 
 ## Recommended Next Work
 

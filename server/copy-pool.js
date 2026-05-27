@@ -197,18 +197,14 @@ export function buildCopyPoolMetrics(trades = [], options = {}) {
 export function isCopyPoolEligible(metrics, thresholds = defaultCopyPoolThresholds()) {
   return (
     Number(metrics.distinctResolvedTradeCount || 0) >= thresholds.minDistinctResolvedMarkets &&
-    Number(metrics.winRatePct || 0) >= thresholds.minWinRatePct &&
-    Number.isFinite(Number(metrics.avgEntryPriceCents30d)) &&
-    Number(metrics.avgEntryPriceCents30d) < thresholds.maxAvgEntryPriceCents
+    Number(metrics.winRatePct || 0) >= thresholds.minWinRatePct
   );
 }
 
 export function isCopyPoolRetained(metrics, thresholds = defaultCopyPoolThresholds()) {
   return (
     Number(metrics.distinctResolvedTradeCount || 0) >= thresholds.minDistinctResolvedMarkets &&
-    Number(metrics.winRatePct || 0) >= thresholds.removeMinWinRatePct &&
-    Number.isFinite(Number(metrics.avgEntryPriceCents30d)) &&
-    Number(metrics.avgEntryPriceCents30d) < thresholds.maxAvgEntryPriceCents
+    Number(metrics.winRatePct || 0) >= thresholds.removeMinWinRatePct
   );
 }
 
@@ -223,12 +219,6 @@ export function copyPoolEligibilityReason(metrics, thresholds = defaultCopyPoolT
     return `Win rate ${winRate.toFixed(1)}% below ${thresholds.minWinRatePct.toFixed(1)}%`;
   }
 
-  const aep = Number(metrics.avgEntryPriceCents30d);
-  if (!Number.isFinite(aep)) return 'No trailing 30-day BUY entry price';
-  if (aep >= thresholds.maxAvgEntryPriceCents) {
-    return `AEP ${aep.toFixed(1)}c at or above ${thresholds.maxAvgEntryPriceCents.toFixed(1)}c`;
-  }
-
   return 'Eligible';
 }
 
@@ -241,12 +231,6 @@ export function copyPoolRetentionReason(metrics, thresholds = defaultCopyPoolThr
   const winRate = Number(metrics.winRatePct || 0);
   if (winRate < thresholds.removeMinWinRatePct) {
     return `Removal threshold missed: win rate ${winRate.toFixed(1)}% below ${thresholds.removeMinWinRatePct.toFixed(1)}%`;
-  }
-
-  const aep = Number(metrics.avgEntryPriceCents30d);
-  if (!Number.isFinite(aep)) return 'Removal threshold missed: no trailing 30-day BUY entry price';
-  if (aep >= thresholds.maxAvgEntryPriceCents) {
-    return `Removal threshold missed: AEP ${aep.toFixed(1)}c at or above ${thresholds.maxAvgEntryPriceCents.toFixed(1)}c`;
   }
 
   return 'Retained by removal threshold';

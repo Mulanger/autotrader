@@ -394,7 +394,6 @@ function ShadowTraderView({ shadowTrader }) {
         <div className="shadowCriteria">
           <span>n &gt;= {shadow.criteria?.minResolved ?? 15}</span>
           <span>win &gt;= {pct(shadow.criteria?.minWinRatePct ?? 70)}</span>
-          <span>AEP &lt; {formatCents(shadow.criteria?.maxAvgEntryPriceCents ?? 75)}</span>
           <span>mean edge &gt; 0</span>
           <span>weighted edge &gt; 0</span>
         </div>
@@ -838,7 +837,7 @@ function CandidatesView({ service, copyPoolState }) {
 
           <div className="candidateToolbar">
             <span className="statusBadge neutral">{candidateStatusLabel(leaderboard?.status || service?.status)}</span>
-            <span className="muted">AEP is a rolling 30-day BUY average; recent form uses resolved BUY trades only.</span>
+            <span className="muted">AEP is a rolling 30-day BUY average for visibility only; high-price entries are skipped at execution.</span>
           </div>
 
           <CopyPoolCards copyPool={copyPool} />
@@ -1295,7 +1294,6 @@ function copyPoolBadge(entry) {
 function candidateEligibility(row, entry, thresholds = {}) {
   const minDistinct = Number(thresholds?.minDistinctResolvedMarkets || 15);
   const minWinRate = Number(thresholds?.minWinRatePct || 75);
-  const maxAep = Number(thresholds?.maxAvgEntryPriceCents || 75);
   const distinct = Number(entry?.distinctResolvedTradeCount ?? row.resolvedDistinctTradeCount30d);
   const winRate = Number(entry?.winRatePct ?? row.winRatePctDistinct30d);
   const aep = Number(entry?.avgEntryPriceCents30d ?? row.avgEntryPriceCents30d);
@@ -1310,12 +1308,12 @@ function candidateEligibility(row, entry, thresholds = {}) {
   }
 
   const status = String(entry?.status || '').toLowerCase();
-  const reason = entry?.reason || eligibilityReason({ distinct, winRate, aep }, { minDistinct, minWinRate, maxAep });
-  const eligible = distinct >= minDistinct && Number.isFinite(winRate) && winRate >= minWinRate && Number.isFinite(aep) && aep < maxAep;
+  const reason = entry?.reason || eligibilityReason({ distinct, winRate }, { minDistinct, minWinRate });
+  const eligible = distinct >= minDistinct && Number.isFinite(winRate) && winRate >= minWinRate;
   return {
     label: status === 'active' ? 'Pass' : eligible ? 'Pass' : 'No',
     tone: status === 'active' || eligible ? 'positive' : 'negative',
-    meta: `${distinct || 0}/${minDistinct} distinct - ${pct(winRate)} WR`,
+    meta: `${distinct || 0}/${minDistinct} distinct - ${pct(winRate)} WR - AEP ${formatAep(aep)}`,
     reason,
   };
 }
@@ -1327,9 +1325,7 @@ function eligibilityReason(metrics, thresholds) {
   if (!Number.isFinite(metrics.winRate) || metrics.winRate < thresholds.minWinRate) {
     return `30-day distinct win rate is below ${thresholds.minWinRate.toFixed(1)}%.`;
   }
-  if (!Number.isFinite(metrics.aep)) return 'No 30-day BUY average entry price yet.';
-  if (metrics.aep >= thresholds.maxAep) return `30-day AEP is at or above ${thresholds.maxAep.toFixed(1)}c.`;
-  return 'Eligible for automated following.';
+  return 'Eligible for automated following. AEP is display-only; individual entries above the max copy price are still skipped.';
 }
 
 function candidateTradePnlDisplay(trade) {

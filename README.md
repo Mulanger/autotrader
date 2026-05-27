@@ -64,7 +64,7 @@ Optional:
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: promotion and retention minimum resolved distinct BUY markets, defaults to `15`.
 - `AUTO_COPY_MIN_WIN_RATE_PCT`: promotion win-rate threshold, defaults to `75`.
 - `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT`: lower retention/removal win-rate threshold, defaults to `70`.
-- `AUTO_COPY_MAX_AEP_CENTS`: promotion and retention AEP cap, defaults to `75`.
+- `AUTO_COPY_MAX_AEP_CENTS`: legacy/display AEP reference, defaults to `75`; auto promotion no longer rejects traders by AEP.
 - `FETCH_TIMEOUT_MS`: defaults to `15000`.
 - `FETCH_RETRY_COUNT`: defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.
