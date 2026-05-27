@@ -146,6 +146,7 @@ Production/Railway:
 - `REAL_STAKE_USD`: fixed Real live/dry-run stake. Defaults to `REAL_DRY_RUN_STAKE_USD` or `10`.
 - `REAL_DRY_RUN_STAKE_USD`: legacy fixed Real dry-run quote size. Defaults to `10`.
 - `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents for Real quote checks and live order price limit. Defaults to `4`.
+- `REAL_MAX_ENTRY_PRICE_CENTS`: maximum source BUY price Real will copy. Defaults to `75`.
 - `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval. Defaults to `30000`.
 - `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow Data API poll limit. Defaults to `100`.
 - `POLYMARKET_PRIVATE_KEY`: signing key for the owner/session wallet. Required for live Real orders.
@@ -346,7 +347,7 @@ Without Postgres, all of the above is only in process memory and will be lost on
 
 ## Real Trading Boundary
 
-The Real dashboard defaults to dry-run. In dry-run, it stores manual follows in `real_followed_traders`, polls Polymarket Data API for post-add BUY trades, checks public CLOB order books, and records would-fill/rejected fixed-stake FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
+The Real dashboard defaults to dry-run. In dry-run, it stores manual follows in `real_followed_traders`, polls Polymarket Data API for post-add BUY trades, applies the max-entry and one-position-per-market gates, checks public CLOB order books, and records would-fill/rejected fixed-stake FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
 
 Live order submission now uses a separate Polymarket CLOB v2 adapter in `server/real/live-executor.js`. It only arms when both `REAL_TRADING_MODE=live` and `REAL_LIVE_TRADING_ENABLED=true` are set and the required Polymarket signing/funder variables are present. Do not bypass these gates or call order endpoints from the demo path.
 
@@ -355,6 +356,8 @@ Preserve these live execution controls:
 - wallet connection/signing model
 - no private keys committed or pasted into source
 - fixed stake, with future max daily loss / max open exposure controls still recommended
+- one position per market across all manually followed Real traders
+- max source entry price
 - slippage/price bounds
 - duplicate order protection
 - market liquidity checks

@@ -316,6 +316,7 @@ function RealOverview({ real }) {
   const live = isLiveRealMode(real);
   const liveReady = Boolean(real.service?.liveExecutionReady);
   const stakeLabel = usd(real.service?.stakeUsd || 10);
+  const maxEntryLabel = formatCents(real.service?.maxEntryPriceCents || 75);
   const missingLiveConfig = real.service?.liveExecutionConfig?.missing || [];
   return (
     <div className="dashboardGrid">
@@ -333,6 +334,8 @@ function RealOverview({ real }) {
           <div className="adapterList">
             <StatusLine active label="Manual follow list active" />
             <StatusLine active label={`${stakeLabel} fixed stake`} />
+            <StatusLine active label={`${maxEntryLabel} max entry`} />
+            <StatusLine active label="One position per market" />
             <StatusLine active label="Source price +/-4c guard" />
             <StatusLine active={live && liveReady} label={live ? (liveReady ? 'Live wallet signing enabled' : 'Live wallet signing blocked') : 'Live wallet signing disabled'} />
             {live && !liveReady && missingLiveConfig.length > 0 && (

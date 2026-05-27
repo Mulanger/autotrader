@@ -27,6 +27,7 @@ export async function createRealStorage() {
     unfollowTrader: (wallet) => unfollowTrader(pool, wallet),
     listActiveFollows: () => listActiveFollows(pool),
     hasOrderAttempt: (id) => hasOrderAttempt(pool, id),
+    findPositionByMarketKeys: (params) => findPositionByMarketKeys(pool, params),
     recordOrderAttempt: (attempt) => recordOrderAttempt(pool, attempt),
     getOpenPositions: (limit) => getOpenPositions(pool, limit),
     updatePosition: (id, patch) => updatePosition(pool, id, patch),
@@ -91,6 +92,17 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
     },
     async hasOrderAttempt(id) {
       return orders.has(id);
+    },
+    async findPositionByMarketKeys({ marketKeys, traderWallet = null } = {}) {
+      const keys = normalizeMarketKeys(marketKeys);
+      if (!keys.length) return null;
+      const wallet = normalizeWallet(traderWallet);
+      return [...positions.values()]
+        .filter((position) => position.status)
+        .find((position) => {
+          if (wallet && position.traderWallet !== wallet) return false;
+          return positionMarketKeys(position).some((key) => keys.includes(key));
+        }) || null;
     },
     async recordOrderAttempt(attempt) {
       if (orders.has(attempt.id)) return { inserted: false, order: orders.get(attempt.id), position: null };
@@ -328,6 +340,34 @@ async function hasOrderAttempt(pool, id) {
   if (!id) return false;
   const result = await pool.query('select 1 from real_orders where id = $1', [id]);
   return result.rowCount > 0;
+}
+
+async function findPositionByMarketKeys(pool, { marketKeys, traderWallet = null } = {}) {
+  const keys = normalizeMarketKeys(marketKeys);
+  if (!keys.length) return null;
+  const wallet = normalizeWallet(traderWallet);
+  const values = [keys];
+  let walletClause = '';
+  if (wallet) {
+    values.push(wallet);
+    walletClause = `and trader_wallet = $${values.length}`;
+  }
+  const result = await pool.query(
+    `
+      select *
+      from real_positions
+      where (
+        lower(coalesce(condition_id, '')) = any($1::text[])
+        or lower(coalesce(market_slug, '')) = any($1::text[])
+        or lower(coalesce(market_title, '')) = any($1::text[])
+      )
+      ${walletClause}
+      order by opened_at asc nulls last, created_at asc
+      limit 1
+    `,
+    values
+  );
+  return result.rowCount ? mapPositionRow(result.rows[0]) : null;
 }
 
 async function recordOrderAttempt(pool, attempt) {
@@ -770,6 +810,21 @@ function mapEventRow(row) {
 function normalizeWallet(wallet) {
   const text = String(wallet || '').trim().toLowerCase();
   return /^0x[a-f0-9]{40}$/.test(text) ? text : null;
+}
+
+function normalizeMarketKeys(values) {
+  return [...new Set((Array.isArray(values) ? values : [values])
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+function positionMarketKeys(position) {
+  return normalizeMarketKeys([
+    position?.conditionId,
+    position?.marketConditionId,
+    position?.marketSlug,
+    position?.marketTitle,
+  ]);
 }
 
 function average(values) {

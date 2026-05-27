@@ -4,16 +4,27 @@ import { assertPin, createRealTraderService } from '../server/real/service.js';
 import { createMemoryRealStorage } from '../server/real/storage.js';
 
 const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const wallet2 = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
-function rawTrade({ timestamp, price = 0.5, asset = 'token-1', tx = '0x1' } = {}) {
+function rawTrade({
+  trader = wallet,
+  timestamp,
+  price = 0.5,
+  asset = 'token-1',
+  tx = '0x1',
+  conditionId = 'condition-1',
+  slug = 'market-1',
+} = {}) {
   return {
-    proxyWallet: wallet,
+    proxyWallet: trader,
     side: 'BUY',
     asset,
+    conditionId,
     size: 100,
     price,
     timestamp,
     title: 'Market',
+    slug,
     outcome: 'YES',
     transactionHash: tx,
   };
@@ -121,6 +132,133 @@ describe('real trader service', () => {
     expect(real.positions).toHaveLength(1);
     expect(real.positions[0].dryRun).toBe(false);
     expect(real.summary.wouldFillCount).toBe(1);
+    await service.close();
+  });
+
+  it('checks source-trade duplicates before any live submission', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    const follow = (await storage.listActiveFollows())[0];
+    const addedSeconds = Math.floor(Date.parse(follow.addedAt) / 1000);
+    const liveCalls = [];
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      tradingMode: 'live',
+      liveTradingEnabled: true,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => [
+        rawTrade({ timestamp: addedSeconds + 60, tx: '0xduplicate' }),
+        rawTrade({ timestamp: addedSeconds + 60, tx: '0xduplicate' }),
+      ],
+      fetchOrderBook: async () => ({ asks: [{ price: '0.51', size: '100' }], tick_size: '0.01' }),
+      fetchGammaResolution: async () => null,
+      liveExecutor: {
+        getReadiness: () => ({ ready: true, missing: [] }),
+        executeFokBuy: async ({ attempt }) => {
+          liveCalls.push(attempt);
+          return {
+            status: 'filled',
+            dryRun: false,
+            liveExecution: true,
+            reason: 'Live FOK BUY accepted by Polymarket',
+            clobOrderId: `order-${liveCalls.length}`,
+          };
+        },
+      },
+    });
+
+    await service.start();
+    await service.runPoll();
+    const real = await service.getState();
+
+    expect(liveCalls).toHaveLength(1);
+    expect(real.orders).toHaveLength(1);
+    await service.close();
+  });
+
+  it('rejects repeat entries from the same trader on the same market', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    const follow = (await storage.listActiveFollows())[0];
+    const addedSeconds = Math.floor(Date.parse(follow.addedAt) / 1000);
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => [
+        rawTrade({ timestamp: addedSeconds + 120, tx: '0xsecond' }),
+        rawTrade({ timestamp: addedSeconds + 60, tx: '0xfirst' }),
+      ],
+      fetchOrderBook: async () => ({ asks: [{ price: '0.51', size: '100' }] }),
+      fetchGammaResolution: async () => null,
+    });
+
+    await service.start();
+    await service.runPoll();
+    const real = await service.getState();
+
+    expect(real.orders).toHaveLength(2);
+    expect(real.positions).toHaveLength(1);
+    expect(real.orders.some((order) => order.reasonCode === 'trader_market_already_copied')).toBe(true);
+    await service.close();
+  });
+
+  it('rejects additional traders on an already copied market', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    await storage.followTrader({ wallet: wallet2 });
+    const follows = await storage.listActiveFollows();
+    const addedSeconds = Math.floor(Date.parse(follows[0].addedAt) / 1000);
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async ({ user }) => [
+        rawTrade({
+          trader: user,
+          timestamp: addedSeconds + 60,
+          tx: user === wallet ? '0xfirst-wallet' : '0xsecond-wallet',
+        }),
+      ],
+      fetchOrderBook: async () => ({ asks: [{ price: '0.51', size: '100' }] }),
+      fetchGammaResolution: async () => null,
+    });
+
+    await service.start();
+    await service.runPoll();
+    const real = await service.getState();
+
+    expect(real.orders).toHaveLength(2);
+    expect(real.positions).toHaveLength(1);
+    expect(real.orders.some((order) => order.reasonCode === 'market_already_copied')).toBe(true);
+    await service.close();
+  });
+
+  it('rejects entries above the real max entry price', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    const follow = (await storage.listActiveFollows())[0];
+    const addedSeconds = Math.floor(Date.parse(follow.addedAt) / 1000);
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => [rawTrade({ timestamp: addedSeconds + 60, price: 0.76 })],
+      fetchOrderBook: async () => {
+        throw new Error('should not quote entries above the max entry price');
+      },
+      fetchGammaResolution: async () => null,
+    });
+
+    await service.start();
+    await service.runPoll();
+    const real = await service.getState();
+
+    expect(real.orders).toHaveLength(1);
+    expect(real.orders[0].status).toBe('rejected');
+    expect(real.orders[0].reasonCode).toBe('above_max_entry_price');
+    expect(real.positions).toHaveLength(0);
     await service.close();
   });
 

@@ -76,6 +76,7 @@ Optional:
 - `REAL_LIVE_TRADING_ENABLED`: second live-execution gate, defaults to `false`; must be `true` with `REAL_TRADING_MODE=live`.
 - `REAL_STAKE_USD`: fixed live/dry-run Real stake, defaults to `10`. `REAL_DRY_RUN_STAKE_USD` is still accepted for old dry-run setups.
 - `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents, defaults to `4`.
+- `REAL_MAX_ENTRY_PRICE_CENTS`: maximum source BUY price Real will copy, defaults to `75`.
 - `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval, defaults to `30000`.
 - `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow trade poll limit, defaults to `100`.
 - `POLYMARKET_PRIVATE_KEY`: signing key for the owner/session wallet. Required for live orders.
@@ -86,4 +87,4 @@ Optional:
 - `DEBUG_STATE_INCLUDE_ALL_TRADES`: defaults to `false`.
 - `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
-Live order submission uses Polymarket's CLOB v2 SDK. It still keeps the existing gates: dashboard auth, PIN-gated follow changes, followed-wallet-only polling, new-trades-only copying, fixed stake, FOK order type, source-price guard, and duplicate source-trade prevention. Real routes require `DASHBOARD_AUTH_TOKEN`; add/remove also requires `REAL_ACTION_PIN`.
+Live order submission uses Polymarket's CLOB v2 SDK. It still keeps the existing gates: dashboard auth, PIN-gated follow changes, followed-wallet-only polling, new-trades-only copying, fixed stake, max entry price, one position per market, FOK order type, source-price guard, and duplicate source-trade prevention. Real routes require `DASHBOARD_AUTH_TOKEN`; add/remove also requires `REAL_ACTION_PIN`.

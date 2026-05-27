@@ -3,6 +3,7 @@ import {
   REAL_DRY_RUN_STAKE_USD,
   REAL_FOLLOW_POLL_INTERVAL_MS,
   REAL_LIVE_TRADING_ENABLED,
+  REAL_MAX_ENTRY_PRICE_CENTS,
   REAL_PRICE_GUARD_CENTS,
   REAL_STAKE_USD,
   REAL_TRADING_MODE,
@@ -30,6 +31,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   const liveExecutor = options.liveExecutor || createPolymarketLiveExecutor();
   const stakeUsd = options.stakeUsd ?? (tradingMode === 'live' ? REAL_STAKE_USD : REAL_DRY_RUN_STAKE_USD);
   const guardCents = options.guardCents ?? REAL_PRICE_GUARD_CENTS;
+  const maxEntryPriceCents = options.maxEntryPriceCents ?? REAL_MAX_ENTRY_PRICE_CENTS;
   const setTimer = options.setInterval || setInterval;
   const clearTimer = options.clearInterval || clearInterval;
   const autoRun = options.autoRun !== false;
@@ -50,6 +52,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       liveExecutionConfig: liveReadiness(),
       stakeUsd,
       priceGuardCents: guardCents,
+      maxEntryPriceCents,
     };
     broadcast();
     storage = await storageFactory();
@@ -109,6 +112,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.liveExecutionConfig = readiness;
       state.service.real.stakeUsd = stakeUsd;
       state.service.real.priceGuardCents = guardCents;
+      state.service.real.maxEntryPriceCents = maxEntryPriceCents;
       if (isLiveExecutionRequested() && !readiness.ready) {
         throw new Error(`Live trading mode is enabled but not ready: missing ${readiness.missing.join(', ')}`);
       }
@@ -122,6 +126,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
           if (!trade || trade.wallet !== follow.wallet) continue;
           if (!isAfterAdded(trade, follow)) continue;
           checked += 1;
+          if (await storage.hasOrderAttempt(makeOrderAttemptId(trade.id))) continue;
           const attempt = await buildExecutionAttempt({ trade, follow });
           if (await storage.hasOrderAttempt(attempt.id)) continue;
           const result = await storage.recordOrderAttempt(attempt);
@@ -187,6 +192,54 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
 
   async function buildExecutionAttempt({ trade, follow }) {
     const checkedAt = new Date().toISOString();
+    const sourcePriceCents = numberOrNull(trade.priceCents);
+    const minGuardCents = Math.max(0, sourcePriceCents - guardCents);
+    const maxGuardCents = Math.min(100, sourcePriceCents + guardCents);
+
+    if (Number.isFinite(sourcePriceCents) && sourcePriceCents > maxEntryPriceCents) {
+      return withExecutionMode(makeAttempt(trade, follow, {
+        status: 'rejected',
+        reasonCode: 'above_max_entry_price',
+        reason: `Entry price ${formatCents(sourcePriceCents)} above ${formatCents(maxEntryPriceCents)} max`,
+        checkedAt,
+        sourcePriceCents,
+        minGuardCents,
+        maxGuardCents,
+        stakeUsd,
+      }));
+    }
+
+    const marketKeys = makeMarketKeys(trade);
+    const traderMarketPosition = await findExistingMarketPosition({ marketKeys, traderWallet: trade.wallet });
+    if (traderMarketPosition) {
+      return withExecutionMode(makeAttempt(trade, follow, {
+        status: 'rejected',
+        reasonCode: 'trader_market_already_copied',
+        reason: 'Trader market already copied; ignoring repeat entry',
+        checkedAt,
+        sourcePriceCents,
+        minGuardCents,
+        maxGuardCents,
+        stakeUsd,
+        duplicatePositionId: traderMarketPosition.id,
+      }));
+    }
+
+    const marketPosition = await findExistingMarketPosition({ marketKeys });
+    if (marketPosition) {
+      return withExecutionMode(makeAttempt(trade, follow, {
+        status: 'rejected',
+        reasonCode: 'market_already_copied',
+        reason: 'Market already copied; ignoring additional trader entry',
+        checkedAt,
+        sourcePriceCents,
+        minGuardCents,
+        maxGuardCents,
+        stakeUsd,
+        duplicatePositionId: marketPosition.id,
+      }));
+    }
+
     let marketInfo = null;
     if (!trade.asset && trade.conditionId) {
       marketInfo = await fetchMarketInfo(trade.conditionId).catch(() => null);
@@ -199,8 +252,8 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
         reason: 'Could not resolve CLOB token for source trade',
         checkedAt,
         sourcePriceCents: trade.priceCents,
-        minGuardCents: Math.max(0, trade.priceCents - guardCents),
-        maxGuardCents: Math.min(100, trade.priceCents + guardCents),
+        minGuardCents,
+        maxGuardCents,
         stakeUsd,
         tokenSource: token.source,
       }));
@@ -216,8 +269,8 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
         reason: `Order book lookup failed: ${error.message}`,
         checkedAt,
         sourcePriceCents: trade.priceCents,
-        minGuardCents: Math.max(0, trade.priceCents - guardCents),
-        maxGuardCents: Math.min(100, trade.priceCents + guardCents),
+        minGuardCents,
+        maxGuardCents,
         stakeUsd,
         asset: token.tokenId,
         tokenSource: token.source,
@@ -291,6 +344,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     state.service.real.liveExecutionConfig = readiness;
     state.service.real.stakeUsd = stakeUsd;
     state.service.real.priceGuardCents = guardCents;
+    state.service.real.maxEntryPriceCents = maxEntryPriceCents;
     return state.real;
   }
 
@@ -308,6 +362,12 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
 
   function isLiveExecutionRequested() {
     return tradingMode === 'live' && Boolean(liveTradingEnabled);
+  }
+
+  async function findExistingMarketPosition({ marketKeys, traderWallet = null } = {}) {
+    const keys = normalizeMarketKeys(marketKeys);
+    if (!keys.length || !storage?.findPositionByMarketKeys) return null;
+    return storage.findPositionByMarketKeys({ marketKeys: keys, traderWallet });
   }
 
   function liveReadiness() {
@@ -352,7 +412,7 @@ export function assertPin(pin) {
 
 function makeAttempt(trade, follow, quote) {
   return {
-    id: `real-order-${trade.id}`,
+    id: makeOrderAttemptId(trade.id),
     sourceTradeId: trade.id,
     traderWallet: trade.wallet,
     traderName: follow.displayName || follow.pseudonym || trade.displayName || trade.pseudonym || trade.wallet,
@@ -384,6 +444,8 @@ function makeAttempt(trade, follow, quote) {
     notionalAvailableUsd: quote.notionalAvailableUsd ?? null,
     bookHash: quote.bookHash || null,
     tokenSource: quote.tokenSource || null,
+    marketKeys: makeMarketKeys(trade),
+    duplicatePositionId: quote.duplicatePositionId || null,
     tickSize: quote.tickSize ?? null,
     negRisk: quote.negRisk ?? null,
     minOrderSize: quote.minOrderSize ?? null,
@@ -391,6 +453,10 @@ function makeAttempt(trade, follow, quote) {
     checkedAt: quote.checkedAt || new Date().toISOString(),
     sourceTrade: trade,
   };
+}
+
+function makeOrderAttemptId(sourceTradeId) {
+  return `real-order-${sourceTradeId}`;
 }
 
 function stakeOrDefault() {
@@ -445,6 +511,25 @@ function numberOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function makeMarketKeys(tradeOrPosition) {
+  return normalizeMarketKeys([
+    tradeOrPosition?.conditionId,
+    tradeOrPosition?.marketConditionId,
+    tradeOrPosition?.marketSlug,
+    tradeOrPosition?.marketTitle,
+  ]);
+}
+
+function normalizeMarketKeys(values) {
+  return [...new Set((Array.isArray(values) ? values : [values])
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+function formatCents(value) {
+  return `${Number(value).toFixed(1)}c`;
 }
 
 function booleanOrNull(value) {
