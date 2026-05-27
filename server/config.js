@@ -9,6 +9,9 @@ export const POLYMARKET_GAMMA_URL =
 export const POLYMARKET_DATA_API_URL =
   process.env.POLYMARKET_DATA_API_URL || 'https://data-api.polymarket.com';
 
+export const POLYMARKET_CLOB_URL =
+  process.env.POLYMARKET_CLOB_URL || 'https://clob.polymarket.com';
+
 export const POLYWHALE_WS_URL =
   POLYWHALE_API_BASE_URL.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:') + '/v1/whales/stream';
 
@@ -33,6 +36,8 @@ export const CANDIDATE_MIN_USD = Number(process.env.CANDIDATE_MIN_USD || 1_000);
 export const CANDIDATE_MAX_USD = Number(process.env.CANDIDATE_MAX_USD || 10_000);
 
 export const CANDIDATE_BACKFILL_DAYS = Number(process.env.CANDIDATE_BACKFILL_DAYS || 30);
+
+export const CANDIDATE_ACCEPTED_HISTORY_DAYS = Number(process.env.CANDIDATE_ACCEPTED_HISTORY_DAYS || 90);
 
 export const CANDIDATE_POLL_INTERVAL_MS = Number(process.env.CANDIDATE_POLL_INTERVAL_MS || 30_000);
 
@@ -71,6 +76,16 @@ export const FETCH_TIMEOUT_MS = Number(process.env.FETCH_TIMEOUT_MS || 15_000);
 export const FETCH_RETRY_COUNT = Number(process.env.FETCH_RETRY_COUNT || 2);
 
 export const DASHBOARD_AUTH_TOKEN = process.env.DASHBOARD_AUTH_TOKEN || '';
+
+export const REAL_ACTION_PIN = process.env.REAL_ACTION_PIN || '1993';
+
+export const REAL_DRY_RUN_STAKE_USD = Number(process.env.REAL_DRY_RUN_STAKE_USD || 10);
+
+export const REAL_PRICE_GUARD_CENTS = Number(process.env.REAL_PRICE_GUARD_CENTS || 4);
+
+export const REAL_FOLLOW_POLL_INTERVAL_MS = Number(process.env.REAL_FOLLOW_POLL_INTERVAL_MS || 30_000);
+
+export const REAL_FOLLOW_POLL_LIMIT = Number(process.env.REAL_FOLLOW_POLL_LIMIT || 100);
 
 export const DEBUG_STATE_INCLUDE_ALL_TRADES = parseBoolean(process.env.DEBUG_STATE_INCLUDE_ALL_TRADES, false);
 

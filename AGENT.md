@@ -22,7 +22,7 @@ https://github.com/Mulanger/autotrader.git
 - Backend: Express + `ws`.
 - Persistence: Postgres when `DATABASE_URL` exists, memory fallback otherwise.
 - Live source data: Polywhale whale API at `https://whaleserver-production.up.railway.app`.
-- Real trading: intentionally disabled. Do not add private keys or live order submission without explicit risk-gate work.
+- Real dashboard: dry-run only. Manual follows can be added/removed behind dashboard auth + PIN, and copied BUY entries are quote-audited as $10 FOK dry-runs. Do not add private keys or live order submission without explicit risk-gate work.
 
 The dashboard is a demo/paper-trading system right now:
 
@@ -78,6 +78,7 @@ D:\autotrader
     app-state.js        In-memory app state, snapshots, serialization, restore.
     storage.js          Postgres persistence with memory fallback.
     format.js           Small formatting/time helpers.
+    real/               Real dry-run follow storage, routes, service, and CLOB quote checks.
   src/
     main.jsx            React dashboard, demo/real tabs, tape, positions, trader cards.
     styles.css          Dashboard styling and responsive layout.
@@ -116,6 +117,7 @@ Production/Railway:
 - `POLYWHALE_API_BASE_URL`: upstream API base. Defaults to `https://whaleserver-production.up.railway.app`.
 - `POLYMARKET_DATA_API_URL`: direct Polymarket Data API for the independent `$1k-$10k` candidate tracker. Defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
+- `POLYMARKET_CLOB_URL`: Polymarket CLOB API for public order book reads in Real dry-run mode. Defaults to `https://clob.polymarket.com`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DEMO_STARTING_CAPITAL_USD`: demo portfolio starting cash. Defaults to `1000`.
@@ -124,6 +126,7 @@ Production/Railway:
 - `CANDIDATE_MIN_USD`: candidate tracker minimum trade notional. Defaults to `1000`.
 - `CANDIDATE_MAX_USD`: candidate tracker exclusive maximum trade notional. Defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.
+- `CANDIDATE_ACCEPTED_HISTORY_DAYS`: deeper history window for active copied candidate wallets. Defaults to `90`.
 - `CANDIDATE_POLL_INTERVAL_MS`: candidate Data API poll interval. Defaults to `30000`.
 - `CANDIDATE_BACKFILL_MAX_OFFSET`: deepest candidate backfill Data API offset before marking a partial backfill. Defaults to `3000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: minimum candidate resolution worker batch size. Defaults to `250`.
@@ -136,6 +139,11 @@ Production/Railway:
 - `FETCH_TIMEOUT_MS`: timeout for upstream Polywhale, Gamma, and Data API requests. Defaults to `15000`.
 - `FETCH_RETRY_COUNT`: retry count for transient upstream 429/5xx/network failures. Defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional bearer/query token for `/api/state`, `/api/candidates/*`, and `/events`. Empty disables dashboard auth.
+- `REAL_ACTION_PIN`: PIN required for Real add/remove actions. Defaults to `1993`. Real routes are unavailable unless `DASHBOARD_AUTH_TOKEN` is configured.
+- `REAL_DRY_RUN_STAKE_USD`: fixed Real dry-run quote size. Defaults to `10`.
+- `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents for Real dry-run quote checks. Defaults to `4`.
+- `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval. Defaults to `30000`.
+- `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow Data API poll limit. Defaults to `100`.
 - `DEBUG_STATE_INCLUDE_ALL_TRADES`: includes unrelated all-trade debug payloads in `/api/state` when true. Defaults to `false`.
 - `DATABASE_URL`: Postgres connection string. Required for durable demo state.
 - `PGSSLMODE`: optional. Set to `require` or `disable` to override Postgres SSL behavior.
@@ -169,6 +177,10 @@ candidate_market_resolutions
 candidate_service_state
 copy_pool_traders
 copy_pool_events
+real_followed_traders
+real_orders
+real_positions
+real_events
 ```
 
 The primary durable model is normalized. `autotrader_snapshots` keeps a compact app snapshot for restore compatibility, while `observed_trades`, `copy_decisions`, `demo_positions`, `demo_account`, and `trader_profiles` are the audit/query tables. `candidate_*` tables power the `$1k-$10k` discovery leaderboard and feed the isolated automated copy-pool evaluator; `copy_pool_*` tables hold promotion/removal state and audit events. `autotrader_state` is kept only so older single-JSON deployments can be migrated on first successful save.
@@ -198,6 +210,11 @@ Local/backend endpoints:
 - `GET /api/state`: complete dashboard state snapshot.
 - `GET /api/candidates/leaderboard`: independent `$1k-$10k` candidate trader leaderboard.
 - `GET /api/candidates/traders/:wallet`: independent candidate trader profile and recent tracked trades.
+- `GET /api/real/state`: Real dry-run dashboard state. Requires configured dashboard auth.
+- `POST /api/real/follow`: PIN-gated manual Real follow add.
+- `POST /api/real/unfollow`: PIN-gated manual Real follow removal.
+- `GET /api/real/orders`: recent Real dry-run order audit rows.
+- `GET /api/real/positions`: recent Real dry-run positions.
 - `WS /events`: dashboard state updates.
 
 Polywhale upstream endpoints used:
@@ -255,7 +272,7 @@ Implemented in `src/main.jsx`.
 - `Profit`: total P/L, realized/unrealized split, closed-trade history.
 - `Positions`: full current open copied-trades list.
 - `Traders`: watched-wallet cards with profit leaderboard metadata and recent watched trades.
-- `Real`: separate read-only page showing live trading is not armed.
+- `Real`: separate dry-run control room for manual follows, quote-audited $10 FOK attempts, and simulated position performance. It does not submit live orders.
 
 Main tape behavior:
 
@@ -320,9 +337,11 @@ Without Postgres, all of the above is only in process memory and will be lost on
 
 ## Real Trading Boundary
 
-Real trading is intentionally not implemented.
+Live real-money order submission is intentionally not implemented.
 
-Do not add live trading by simply calling an order endpoint from the current demo path. Real execution needs a separate adapter and explicit safety controls:
+The Real dashboard is dry-run only. It stores manual follows in `real_followed_traders`, polls Polymarket Data API for post-add BUY trades, checks public CLOB order books, and records would-fill/rejected $10 FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
+
+Do not add live trading by simply calling an order endpoint from the current demo or Real dry-run path. Real execution needs a separate adapter and explicit safety controls:
 
 - wallet connection/signing model
 - no private keys committed or pasted into source
@@ -332,10 +351,10 @@ Do not add live trading by simply calling an order endpoint from the current dem
 - market liquidity checks
 - chain/order failure handling
 - clear manual arming switch
-- audit log for every attempted order
+- audit log for every attempted live order
 - dry-run/live mode separation
 
-The `Real` tab is currently read-only and should stay blocked until those pieces exist.
+The current `Real` tab must remain dry-run until those pieces exist.
 
 ## Important Cautions
 

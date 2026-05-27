@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCandidateMetrics, buildLeaderboardRows } from '../server/candidate-tracker/leaderboard.js';
+import {
+  buildCandidateMetrics,
+  buildCandidateMonthlyPerformance,
+  buildLeaderboardRows,
+} from '../server/candidate-tracker/leaderboard.js';
 
 describe('candidate leaderboard aggregation', () => {
   it('ranks realized BUY profit and excludes SELL pnl-null rows from P/L and form', () => {
@@ -67,7 +71,46 @@ describe('candidate leaderboard aggregation', () => {
     expect(rows[0].metrics.roiPct).toBeCloseTo(47.62, 2);
     expect(rows[0].metrics.profitFactorDisplayCapHit).toBe(true);
     expect(rows[0].metrics.medianEntryCents).toBe(45);
+    expect(rows[0].monthlyPerformance).toHaveLength(3);
+    expect(rows[0].monthlyPerformance[0].label).toBe('Last 30D');
     expect(rows[1].allTimeProfitUsd).toBe(-5);
+  });
+
+  it('splits candidate month cards into independent 30-day windows', () => {
+    const windows = buildCandidateMonthlyPerformance([
+      trade('latest-win', {
+        status: 'resolved_win',
+        pnlUsd: 20,
+        usdSize: 50,
+        shares: 100,
+        tradeTimestamp: '2026-05-20T00:00:00.000Z',
+        resolvedAt: '2026-05-21T00:00:00.000Z',
+      }),
+      trade('middle-loss', {
+        status: 'resolved_loss',
+        pnlUsd: -25,
+        usdSize: 100,
+        shares: 200,
+        tradeTimestamp: '2026-04-10T00:00:00.000Z',
+        resolvedAt: '2026-04-11T00:00:00.000Z',
+      }),
+      trade('old-win', {
+        status: 'resolved_win',
+        pnlUsd: 60,
+        usdSize: 120,
+        shares: 200,
+        tradeTimestamp: '2026-03-01T00:00:00.000Z',
+        resolvedAt: '2026-03-02T00:00:00.000Z',
+      }),
+    ], { now: '2026-05-23T00:00:00.000Z' });
+
+    expect(windows.map((window) => window.label)).toEqual(['Last 30D', '30-60D', '60-90D']);
+    expect(windows[0].profitUsd).toBe(20);
+    expect(windows[0].winRatePct).toBe(100);
+    expect(windows[1].profitUsd).toBe(-25);
+    expect(windows[1].winRatePct).toBe(0);
+    expect(windows[2].avgEntryPriceCents).toBe(60);
+    expect(windows[2].roiPct).toBe(50);
   });
 
   it('calculates candidate metrics for normal wins/losses and drawdown path order', () => {

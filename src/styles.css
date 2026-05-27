@@ -908,7 +908,7 @@ button {
 .candidateRow {
   min-height: 76px;
   display: grid;
-  grid-template-columns: 30px 36px 34px minmax(180px, 1.15fr) repeat(4, minmax(78px, 0.32fr)) minmax(138px, 0.5fr) minmax(118px, 0.55fr) minmax(110px, auto);
+  grid-template-columns: 30px 36px 34px minmax(180px, 1.15fr) repeat(4, minmax(78px, 0.32fr)) minmax(138px, 0.5fr) minmax(118px, 0.55fr) minmax(110px, auto) minmax(76px, auto);
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
@@ -1074,6 +1074,105 @@ button {
   background: #b05b68;
 }
 
+.candidateMonthCarousel {
+  grid-column: span 2;
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  padding: 7px;
+  overflow: hidden;
+}
+
+.candidateMonthCardHead {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+}
+
+.candidateMonthNav {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.candidateMonthNav:hover {
+  color: var(--ink);
+  border-color: #b8cdfd;
+}
+
+.candidateMonthTitle {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.candidateMonthTitle span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.candidateMonthTitle strong {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+}
+
+.candidateMonthViewport {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.candidateMonthTrack {
+  display: flex;
+  transition: transform 180ms ease;
+}
+
+.candidateMonthSlide {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+
+.candidateMonthStats {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.candidateMonthStats span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.candidateMonthStats b {
+  min-width: 0;
+  color: var(--ink);
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .candidateProfit {
   display: grid;
   justify-items: end;
@@ -1082,6 +1181,28 @@ button {
 
 .candidateProfit strong {
   font-size: 1rem;
+}
+
+.candidateRealAction {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.realAddButton,
+.realRemoveButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.realFollowBadge {
+  border-radius: 999px;
+  background: #e9f7ef;
+  color: #078158;
+  padding: 5px 9px;
+  font-size: 0.75rem;
+  font-weight: 850;
+  text-transform: uppercase;
 }
 
 .candidateTradeDrawer {
@@ -1192,6 +1313,56 @@ button {
   justify-self: start;
 }
 
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.26);
+  padding: 18px;
+}
+
+.pinModal {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.22);
+  padding: 18px;
+}
+
+.pinModal h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.pinModal span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.pinModal input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 11px 12px;
+  font: inherit;
+}
+
+.pinModalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.primaryAction {
+  background: var(--ink);
+  color: #fff;
+}
+
 .miniTrade {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -1227,6 +1398,98 @@ button {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
+}
+
+.realAuthPanel {
+  min-height: 340px;
+  align-content: center;
+  justify-items: start;
+}
+
+.realFollowPanel,
+.realOrdersPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.realFollowList,
+.realOrderList {
+  display: grid;
+  gap: 8px;
+}
+
+.realFollowList.compact {
+  gap: 7px;
+}
+
+.realFollowRow,
+.realOrderRow {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.realFollowRow {
+  grid-template-columns: 34px minmax(180px, 1fr) repeat(5, minmax(86px, 0.35fr)) minmax(100px, auto);
+}
+
+.realFollowList.compact .realFollowRow {
+  grid-template-columns: 34px minmax(0, 1fr);
+}
+
+.realOrderRow {
+  grid-template-columns: minmax(220px, 1.2fr) repeat(4, minmax(80px, 0.35fr)) minmax(110px, auto);
+}
+
+.realOrderList.compact .realOrderRow {
+  grid-template-columns: minmax(0, 1fr) minmax(110px, auto);
+}
+
+.realOrderRow.wouldFill {
+  border-color: #b7dcc8;
+}
+
+.realOrderRow.rejected {
+  border-color: #efc5cc;
+}
+
+.realFollowIdentity,
+.realOrderMarket,
+.realMiniStat,
+.realOrderStatus {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.realFollowIdentity strong,
+.realOrderMarket strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realFollowIdentity span,
+.realOrderMarket span,
+.realMiniStat span,
+.realOrderStatus small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realMiniStat strong {
+  font-size: 0.92rem;
+}
+
+.realOrderStatus {
+  justify-items: end;
 }
 
 .lockPlate {
@@ -1412,7 +1675,8 @@ button {
 
   .candidateMetric,
   .candidateEligibility,
-  .candidateForm {
+  .candidateForm,
+  .candidateMonthCarousel {
     grid-column: 4 / span 2;
   }
 
@@ -1424,9 +1688,19 @@ button {
     justify-content: flex-start;
   }
 
+  .candidateMonthCarousel {
+    justify-items: stretch;
+    justify-content: stretch;
+  }
+
   .candidateProfit {
     grid-column: 5;
     grid-row: 1 / span 2;
+  }
+
+  .candidateRealAction {
+    grid-column: 5;
+    grid-row: 3;
   }
 
   .candidateTradeRow {
@@ -1435,6 +1709,22 @@ button {
 
   .candidateMetricsSummary {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .realFollowRow {
+    grid-template-columns: 34px minmax(180px, 1fr) repeat(2, minmax(86px, 0.35fr)) minmax(100px, auto);
+  }
+
+  .realFollowRow .realMiniStat:nth-of-type(n + 3) {
+    display: none;
+  }
+
+  .realOrderRow {
+    grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(80px, 0.35fr)) minmax(110px, auto);
+  }
+
+  .realOrderRow .realMiniStat:nth-of-type(n + 3) {
+    display: none;
   }
 }
 
@@ -1525,7 +1815,8 @@ button {
 
   .candidateMetric,
   .candidateEligibility,
-  .candidateForm {
+  .candidateForm,
+  .candidateMonthCarousel {
     grid-column: 3 / span 2;
     grid-row: auto;
     justify-items: start;
@@ -1538,8 +1829,41 @@ button {
     justify-items: end;
   }
 
+  .candidateRealAction {
+    grid-column: 3 / span 2;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
+  .candidateMonthCarousel {
+    justify-items: stretch;
+    justify-content: stretch;
+  }
+
   .candidateMetricsSummary {
     grid-template-columns: 1fr;
+  }
+
+  .realFollowRow,
+  .realOrderRow,
+  .realFollowList.compact .realFollowRow,
+  .realOrderList.compact .realOrderRow {
+    grid-template-columns: 34px minmax(0, 1fr);
+  }
+
+  .realFollowIdentity,
+  .realOrderMarket,
+  .realMiniStat,
+  .realOrderStatus,
+  .realRemoveButton,
+  .realOrderStatus {
+    grid-column: 2;
+    justify-self: start;
+    justify-items: start;
+  }
+
+  .realOrderStatus .statusBadge {
+    justify-self: start;
   }
 
   .candidateTradeHead {

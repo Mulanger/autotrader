@@ -4,6 +4,7 @@ import {
   AUTO_COPY_MAX_AEP_CENTS,
   AUTO_COPY_MIN_DISTINCT_MARKETS,
   AUTO_COPY_MIN_WIN_RATE_PCT,
+  CANDIDATE_ACCEPTED_HISTORY_DAYS,
   CANDIDATE_BACKFILL_DAYS,
   CANDIDATE_BACKFILL_MAX_PAGES,
   CANDIDATE_BACKFILL_MAX_OFFSET,
@@ -20,7 +21,7 @@ import {
   WATCHED_WALLETS,
 } from '../config.js';
 import { ingestTrade } from '../app-state.js';
-import { applyCopyPoolSnapshot, defaultCopyPoolThresholds, isWalletWatched } from '../copy-pool.js';
+import { applyCopyPoolSnapshot, defaultCopyPoolThresholds, isWalletWatched, normalizeWallet } from '../copy-pool.js';
 import { fetchGammaResolution } from '../polymarket-client.js';
 import { applyShadowTraderSnapshot, isShadowTraderWalletSelected, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 import { fetchDataApiTrades, isDataApiOffsetLimitError } from './data-api-client.js';
@@ -59,6 +60,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     minUsd: CANDIDATE_MIN_USD,
     maxUsd: CANDIDATE_MAX_USD,
     backfillDays: CANDIDATE_BACKFILL_DAYS,
+    acceptedHistoryDays: CANDIDATE_ACCEPTED_HISTORY_DAYS,
     lastPollAt: null,
     lastPollInserted: 0,
     lastBackfillAt: null,
@@ -94,7 +96,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     try {
       storage = await storageFactory();
       const recoveredBackfills = await storage.recoverStaleBackfills?.(CANDIDATE_STALE_BACKFILL_MS);
-      const seededBackfills = await storage.seedActiveCopyPoolBackfill?.(WATCHED_WALLETS);
+      const seededBackfills = await storage.seedActiveCopyPoolBackfill?.(WATCHED_WALLETS, {
+        historyDays: CANDIDATE_ACCEPTED_HISTORY_DAYS,
+      });
       state.service.candidates.storageStatus = 'ready';
       state.service.candidates.status = 'ready';
       state.service.candidates.recoveredStaleBackfillCount = recoveredBackfills?.length || 0;
@@ -189,13 +193,14 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     try {
       const [wallet] = await storage.getQueuedBackfillTraders(1);
       if (!wallet) return;
+      const historyDays = backfillDaysForWallet(wallet);
 
       state.service.candidates.status = 'backfilling';
       state.service.candidates.lastBackfillWallet = wallet;
       broadcast();
       await storage.markBackfillRunning(wallet);
 
-      const cutoff = new Date(Date.now() - CANDIDATE_BACKFILL_DAYS * 24 * 60 * 60 * 1000);
+      const cutoff = new Date(Date.now() - historyDays * 24 * 60 * 60 * 1000);
       let reachedCutoff = false;
       let partialReason = null;
       let inserted = 0;
@@ -221,6 +226,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
         await storage.saveServiceState?.(`backfill:${wallet}`, {
           wallet,
+          historyDays,
           offset,
           page,
           status: 'running',
@@ -248,6 +254,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       await storage.saveServiceState?.(`backfill:${wallet}`, {
         wallet,
         status: partialReason ? 'partial' : 'done',
+        historyDays,
         inserted,
         partialReason,
         updatedAt: new Date().toISOString(),
@@ -336,6 +343,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         baselineWallets: WATCHED_WALLETS,
         thresholds: copyPoolThresholds,
       });
+      await storage.seedActiveCopyPoolBackfill?.(WATCHED_WALLETS, {
+        historyDays: CANDIDATE_ACCEPTED_HISTORY_DAYS,
+      });
       applyCopyPoolSnapshot(state, result.snapshot);
       const shadowSnapshot = await storage.evaluateShadowTrader?.({
         windowDays: CANDIDATE_BACKFILL_DAYS,
@@ -359,6 +369,15 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     } finally {
       copyPoolRunning = false;
     }
+  }
+
+  function backfillDaysForWallet(wallet) {
+    const normalized = normalizeWallet(wallet);
+    const entry = normalized ? state.copyPool?.wallets?.[normalized] : null;
+    if (entry?.status === 'active') {
+      return Math.max(CANDIDATE_BACKFILL_DAYS, CANDIDATE_ACCEPTED_HISTORY_DAYS);
+    }
+    return CANDIDATE_BACKFILL_DAYS;
   }
 
   async function getLeaderboard(params = {}) {

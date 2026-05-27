@@ -72,6 +72,7 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
         ? (winCountDistinct30d / recentResolvedDistinctTrades.length) * 100
         : null,
       recentFormResults,
+      monthlyPerformance: buildCandidateMonthlyPerformance(walletTrades, { now: nowMs }),
       metrics: buildCandidateMetrics(walletTrades, { now: nowMs }),
     };
   });
@@ -80,6 +81,57 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
     .sort(compareLeaderboardRows)
     .map((row, index) => ({ ...row, rank: index + 1 }))
     .slice(offset, offset + limit);
+}
+
+export function buildCandidateMonthlyPerformance(trades = [], { now = Date.now(), windowDays = 30, windowCount = 3 } = {}) {
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  const windowMs = windowDays * 24 * 60 * 60 * 1000;
+  return Array.from({ length: windowCount }, (_, index) => {
+    const endMs = nowMs - index * windowMs;
+    const startMs = endMs - windowMs;
+    const windowTrades = trades.filter((trade) => {
+      const tradeTime = Date.parse(trade.tradeTimestamp || trade.timestamp || 0);
+      return Number.isFinite(tradeTime) && tradeTime >= startMs && tradeTime < endMs;
+    });
+    const entryTrades = windowTrades.filter((trade) => {
+      return (
+        String(trade?.side || '').toUpperCase() === 'BUY' &&
+        Number.isFinite(Number(trade.usdSize)) &&
+        Number.isFinite(Number(trade.shares)) &&
+        Number(trade.shares) > 0
+      );
+    });
+    const entryUsd = sum(entryTrades.map((trade) => Number(trade.usdSize)));
+    const entryShares = sum(entryTrades.map((trade) => Number(trade.shares)));
+    const resolvedBuyTrades = windowTrades.filter((trade) => {
+      return (
+        String(trade?.side || '').toUpperCase() === 'BUY' &&
+        ['resolved_win', 'resolved_loss'].includes(String(trade?.status || '').toLowerCase())
+      );
+    });
+    const distinctResolved = latestDistinctMarketTrades(resolvedBuyTrades);
+    const winCount = distinctResolved.filter((trade) => String(trade.status || '').toLowerCase() === 'resolved_win').length;
+    const pnlTrades = resolvedBuyTrades.filter((trade) => {
+      return trade.pnlUsd !== null && trade.pnlUsd !== undefined && trade.pnlUsd !== '' && Number.isFinite(Number(trade.pnlUsd));
+    });
+    const profitUsd = sum(pnlTrades.map((trade) => Number(trade.pnlUsd)));
+    const deployedCapital = sum(pnlTrades.map((trade) => Number(trade.usdSize)).filter(Number.isFinite));
+
+    return {
+      index,
+      label: monthWindowLabel(index, windowDays),
+      startAt: new Date(startMs).toISOString(),
+      endAt: new Date(endMs).toISOString(),
+      distinctResolvedTradeCount: distinctResolved.length,
+      winCount,
+      winRatePct: distinctResolved.length ? (winCount / distinctResolved.length) * 100 : null,
+      avgEntryPriceCents: entryShares > 0 ? (entryUsd / entryShares) * 100 : null,
+      avgEntryTradeCount: entryTrades.length,
+      pnlTradeCount: pnlTrades.length,
+      profitUsd,
+      roiPct: deployedCapital > 0 ? (profitUsd / deployedCapital) * 100 : null,
+    };
+  });
 }
 
 export function buildCandidateMetrics(trades = [], { now = Date.now() } = {}) {
@@ -160,6 +212,11 @@ function latestDistinctMarketTrades(trades) {
     byMarket.set(key, trade);
   }
   return [...byMarket.values()];
+}
+
+function monthWindowLabel(index, windowDays) {
+  if (index === 0) return `Last ${windowDays}D`;
+  return `${index * windowDays}-${(index + 1) * windowDays}D`;
 }
 
 function recentResolvedTrades(trades, nowMs, days) {

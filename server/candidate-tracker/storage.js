@@ -33,7 +33,7 @@ export async function createCandidateStorage() {
 
   return {
     upsertTrade: (trade) => upsertTrade(pool, trade),
-    seedActiveCopyPoolBackfill: (baselineWallets) => seedActiveCopyPoolBackfill(pool, baselineWallets),
+    seedActiveCopyPoolBackfill: (baselineWallets, options) => seedActiveCopyPoolBackfill(pool, baselineWallets, options),
     getQueuedBackfillTraders: (limit) => getQueuedBackfillTraders(pool, limit),
     recoverStaleBackfills: (staleMs) => recoverStaleBackfills(pool, staleMs),
     markBackfillRunning: (wallet) => markBackfillRunning(pool, wallet),
@@ -249,7 +249,7 @@ async function upsertTrade(pool, trade) {
   }
 }
 
-export async function seedActiveCopyPoolBackfill(pool, baselineWallets = []) {
+export async function seedActiveCopyPoolBackfill(pool, baselineWallets = [], { historyDays = 30 } = {}) {
   const wallets = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
   const result = await pool.query(
     `
@@ -270,10 +270,18 @@ export async function seedActiveCopyPoolBackfill(pool, baselineWallets = []) {
       )
       select wallet, now(), null, 'queued', now()
       from normalized
-      on conflict (wallet) do nothing
+      on conflict (wallet) do update set
+        backfill_status = 'queued',
+        backfill_error = null,
+        updated_at = now()
+      where candidate_traders.backfill_status in ('done', 'partial', 'error')
+        and (
+          candidate_traders.backfilled_since is null
+          or candidate_traders.backfilled_since > now() - ($2::integer * interval '1 day')
+        )
       returning wallet
     `,
-    [wallets]
+    [wallets, historyDays]
   );
   return result.rows.map((row) => row.wallet);
 }
@@ -680,6 +688,111 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
         where rn <= 8
         group by wallet
       ),
+      month_windows as (
+        select
+          t.wallet,
+          series.window_index,
+          now() - (series.window_index * interval '30 days') as window_end,
+          now() - ((series.window_index + 1) * interval '30 days') as window_start
+        from candidate_traders t
+        cross join generate_series(0, 2) as series(window_index)
+      ),
+      monthly_entry_stats as (
+        select
+          mw.wallet,
+          mw.window_index,
+          (sum(ct.usd_size) / nullif(sum(ct.shares), 0) * 100)::numeric as avg_entry_price_cents,
+          count(ct.id)::integer as avg_entry_trade_count
+        from month_windows mw
+        left join candidate_trades ct on ct.wallet = mw.wallet
+          and ct.side = 'BUY'
+          and ct.shares is not null
+          and ct.shares > 0
+          and ct.usd_size is not null
+          and ct.trade_timestamp >= mw.window_start
+          and ct.trade_timestamp < mw.window_end
+        group by mw.wallet, mw.window_index
+      ),
+      monthly_resolved_ranked as (
+        select
+          mw.wallet,
+          mw.window_index,
+          ct.status,
+          row_number() over (
+            partition by mw.wallet, mw.window_index,
+              coalesce(nullif(ct.condition_id, ''), nullif(ct.market_slug, ''), nullif(ct.market_title, ''), ct.id)
+            order by ct.resolved_at desc nulls last, ct.trade_timestamp desc, ct.id desc
+          ) as rn
+        from month_windows mw
+        join candidate_trades ct on ct.wallet = mw.wallet
+          and ct.side = 'BUY'
+          and ct.status in ('resolved_win', 'resolved_loss')
+          and ct.trade_timestamp >= mw.window_start
+          and ct.trade_timestamp < mw.window_end
+      ),
+      monthly_resolved_stats as (
+        select
+          wallet,
+          window_index,
+          count(*)::integer as resolved_distinct_trade_count,
+          count(*) filter (where status = 'resolved_win')::integer as win_count
+        from monthly_resolved_ranked
+        where rn = 1
+        group by wallet, window_index
+      ),
+      monthly_pnl_stats as (
+        select
+          mw.wallet,
+          mw.window_index,
+          count(ct.id)::integer as pnl_trade_count,
+          coalesce(sum(ct.pnl_usd), 0)::numeric as profit_usd,
+          coalesce(sum(ct.usd_size), 0)::numeric as deployed_capital_usd
+        from month_windows mw
+        left join candidate_trades ct on ct.wallet = mw.wallet
+          and ct.side = 'BUY'
+          and ct.status in ('resolved_win', 'resolved_loss')
+          and ct.pnl_usd is not null
+          and ct.trade_timestamp >= mw.window_start
+          and ct.trade_timestamp < mw.window_end
+        group by mw.wallet, mw.window_index
+      ),
+      monthly_stats as (
+        select
+          mw.wallet,
+          jsonb_agg(
+            jsonb_build_object(
+              'index', mw.window_index,
+              'label', case
+                when mw.window_index = 0 then 'Last 30D'
+                else (mw.window_index * 30)::text || '-' || ((mw.window_index + 1) * 30)::text || 'D'
+              end,
+              'startAt', mw.window_start,
+              'endAt', mw.window_end,
+              'distinctResolvedTradeCount', coalesce(mrs.resolved_distinct_trade_count, 0),
+              'winCount', coalesce(mrs.win_count, 0),
+              'winRatePct', case
+                when coalesce(mrs.resolved_distinct_trade_count, 0) > 0
+                  then mrs.win_count::numeric / mrs.resolved_distinct_trade_count * 100
+                else null
+              end,
+              'avgEntryPriceCents', mes.avg_entry_price_cents,
+              'avgEntryTradeCount', coalesce(mes.avg_entry_trade_count, 0),
+              'pnlTradeCount', coalesce(mps.pnl_trade_count, 0),
+              'profitUsd', coalesce(mps.profit_usd, 0),
+              'roiPct', case
+                when coalesce(mps.deployed_capital_usd, 0) > 0
+                  then mps.profit_usd / mps.deployed_capital_usd * 100
+                else null
+              end
+            )
+            order by mw.window_index
+          ) as monthly_performance
+        from month_windows mw
+        left join monthly_entry_stats mes on mes.wallet = mw.wallet and mes.window_index = mw.window_index
+        left join monthly_resolved_stats mrs on mrs.wallet = mw.wallet and mrs.window_index = mw.window_index
+        left join monthly_pnl_stats mps on mps.wallet = mw.wallet and mps.window_index = mw.window_index
+        group by mw.wallet
+      ),
       ranked as (
         select
           row_number() over (
@@ -717,7 +830,8 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
           p.recent_7d_win_rate_pct,
           coalesce(p.recent_14d_trade_count, 0)::integer as recent_14d_trade_count,
           p.recent_14d_win_rate_pct,
-          p.top_win_share_pct
+          p.top_win_share_pct,
+          coalesce(ms.monthly_performance, '[]'::jsonb) as monthly_performance
         from candidate_traders t
         left join buy_stats b on b.wallet = t.wallet
         left join activity_stats a on a.wallet = t.wallet
@@ -727,6 +841,7 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
         left join performance_stats p on p.wallet = t.wallet
         left join entry_metric_stats em on em.wallet = t.wallet
         left join drawdown_stats dd on dd.wallet = t.wallet
+        left join monthly_stats ms on ms.wallet = t.wallet
       )
       select *
       from ranked
@@ -1388,6 +1503,7 @@ function mapLeaderboardRow(row) {
     winCountDistinct30d,
     winRatePctDistinct30d: distinct30d ? (winCountDistinct30d / distinct30d) * 100 : null,
     recentFormResults: Array.isArray(row.recent_form_results) ? row.recent_form_results : [],
+    monthlyPerformance: mapMonthlyPerformance(row.monthly_performance),
     metrics: {
       roiPct: nullableNumberFromPg(row.roi_pct),
       profitFactor: nullableNumberFromPg(row.profit_factor),
@@ -1404,6 +1520,26 @@ function mapLeaderboardRow(row) {
       topWinSharePct: nullableNumberFromPg(row.top_win_share_pct),
     },
   };
+}
+
+function mapMonthlyPerformance(value) {
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => ({
+      index: Number(item.index || 0),
+      label: item.label || null,
+      startAt: isoOrNull(item.startAt),
+      endAt: isoOrNull(item.endAt),
+      distinctResolvedTradeCount: Number(item.distinctResolvedTradeCount || 0),
+      winCount: Number(item.winCount || 0),
+      winRatePct: nullableNumber(item.winRatePct),
+      avgEntryPriceCents: nullableNumber(item.avgEntryPriceCents),
+      avgEntryTradeCount: Number(item.avgEntryTradeCount || 0),
+      pnlTradeCount: Number(item.pnlTradeCount || 0),
+      profitUsd: numberFromPg(item.profitUsd),
+      roiPct: nullableNumber(item.roiPct),
+    }))
+    .sort((a, b) => a.index - b.index);
 }
 
 function mapTraderRow(row) {

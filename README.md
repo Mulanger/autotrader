@@ -8,7 +8,7 @@ Current state:
 - Risk rule: only copies watched BUY trades priced at `75c` or lower.
 - Repeat-entry rule: only the first copied trade from a given wallet on a given market is copied.
 - Live whale stream + polling from `https://whaleserver-production.up.railway.app`.
-- Real trading page is intentionally disabled until an execution adapter is added and explicitly armed.
+- Real dashboard is dry-run only: manual follows, PIN-gated add/remove, and $10 FOK quote audits without live order submission.
 - Watched trades are logged with copied/skipped decisions; unrelated whale rows are kept out of the normal dashboard payload.
 
 ## Run
@@ -38,7 +38,7 @@ For durable demo state, add Railway Postgres to the service so Railway injects `
 
 ## Candidate Tracker
 
-The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_ENABLED=true`. When enabled with `DATABASE_URL`, it polls Polymarket Data API directly, stores qualifying trades in `candidate_*` tables, backfills newly seen wallets for 30 days, resolves markets through Gamma, and serves the dashboard Candidates tab from `/api/candidates/leaderboard`.
+The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_ENABLED=true`. When enabled with `DATABASE_URL`, it polls Polymarket Data API directly, stores qualifying trades in `candidate_*` tables, backfills newly seen wallets for 30 days, keeps active copied wallets queued for 90 days of card history, resolves markets through Gamma, and serves the dashboard Candidates tab from `/api/candidates/leaderboard`.
 
 ## Environment
 
@@ -49,6 +49,7 @@ Optional:
 - `POLYWHALE_API_BASE_URL`: defaults to `https://whaleserver-production.up.railway.app`.
 - `POLYMARKET_DATA_API_URL`: defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: defaults to `https://gamma-api.polymarket.com`.
+- `POLYMARKET_CLOB_URL`: defaults to `https://clob.polymarket.com`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: defaults to `60000`.
 - `DEMO_STARTING_CAPITAL_USD`: defaults to `1000`.
@@ -57,6 +58,7 @@ Optional:
 - `CANDIDATE_MIN_USD`: defaults to `1000`.
 - `CANDIDATE_MAX_USD`: exclusive maximum, defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: defaults to `30`.
+- `CANDIDATE_ACCEPTED_HISTORY_DAYS`: active copied candidate wallet history window for month cards, defaults to `90`.
 - `CANDIDATE_POLL_INTERVAL_MS`: defaults to `30000`.
 - `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `3000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: defaults to `250`.
@@ -68,7 +70,12 @@ Optional:
 - `FETCH_TIMEOUT_MS`: defaults to `15000`.
 - `FETCH_RETRY_COUNT`: defaults to `2`.
 - `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.
+- `REAL_ACTION_PIN`: PIN required for Real add/remove actions, defaults to `1993`.
+- `REAL_DRY_RUN_STAKE_USD`: fixed Real dry-run stake, defaults to `10`.
+- `REAL_PRICE_GUARD_CENTS`: strict source-price guard in cents, defaults to `4`.
+- `REAL_FOLLOW_POLL_INTERVAL_MS`: Real follow Data API poll interval, defaults to `30000`.
+- `REAL_FOLLOW_POLL_LIMIT`: per-wallet Real follow trade poll limit, defaults to `100`.
 - `DEBUG_STATE_INCLUDE_ALL_TRADES`: defaults to `false`.
 - `DATABASE_URL`: Postgres connection string used to persist demo state and trade history.
 
-Real-money trading is not implemented in this scaffold. Do not put wallet private keys into this app until a real execution adapter, signing flow, and risk gates are reviewed.
+Real-money order submission is not implemented. Do not put wallet private keys into this app until a live execution adapter, signing flow, and risk gates are reviewed. Real routes require `DASHBOARD_AUTH_TOKEN`; add/remove also requires `REAL_ACTION_PIN`.

@@ -9,11 +9,14 @@ import {
   isAuthorizedRequest,
   isDashboardAuthEnabled,
   redactServiceForPublicHealth,
+  requireConfiguredDashboardAuth,
   requireDashboardAuth,
 } from './auth.js';
 import { HOST, PORT } from './config.js';
 import { createCandidateRoutes } from './candidate-tracker/routes.js';
 import { createCandidateTracker } from './candidate-tracker/service.js';
+import { createRealRoutes } from './real/routes.js';
+import { createRealTraderService } from './real/service.js';
 import { startIngestion } from './stream-service.js';
 import { createMemoryStorage, createStorage } from './storage.js';
 
@@ -29,10 +32,12 @@ const state = createAppState();
 let storage = createMemoryStorage(state.service.storage, 'starting');
 let ingestionStarted = false;
 let candidateTrackerStarted = false;
+let realServiceStarted = false;
 
 const candidateTracker = createCandidateTracker(state, broadcast, {
   onStateChanged: () => storage.queueSave(state),
 });
+const realService = createRealTraderService(state, broadcast);
 
 app.use(express.json());
 
@@ -47,6 +52,7 @@ app.get('/api/state', requireDashboardAuth, (_request, response) => {
 });
 
 app.use('/api/candidates', requireDashboardAuth, createCandidateRoutes(candidateTracker));
+app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService));
 
 if (existsSync(indexPath)) {
   app.use(express.static(distPath, {
@@ -110,6 +116,14 @@ async function initializeStorageAndIngestion() {
         broadcast();
       });
     }
+    if (!realServiceStarted) {
+      realServiceStarted = true;
+      realService.start().catch((error) => {
+        state.service.real.status = 'error';
+        state.service.real.lastError = error.message;
+        broadcast();
+      });
+    }
     broadcast();
   }
 }
@@ -118,6 +132,7 @@ process.on('SIGINT', async () => {
   await storage.flush(state);
   await storage.close();
   await candidateTracker.close();
+  await realService.close();
   process.exit(0);
 });
 
@@ -125,6 +140,7 @@ process.on('SIGTERM', async () => {
   await storage.flush(state);
   await storage.close();
   await candidateTracker.close();
+  await realService.close();
   process.exit(0);
 });
 

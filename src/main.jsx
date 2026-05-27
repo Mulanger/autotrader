@@ -7,6 +7,7 @@ import {
   BarChart3,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   Clock3,
@@ -58,7 +59,7 @@ function App() {
   const [tab, setTab] = React.useState('overview');
 
   React.useEffect(() => {
-    if (mode === 'real' && !['overview', 'traders'].includes(tab)) setTab('overview');
+    if (mode === 'real' && !['overview', 'following', 'positions', 'orders'].includes(tab)) setTab('overview');
   }, [mode, tab]);
 
   const data = state || emptyState();
@@ -201,6 +202,10 @@ function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCoun
           active={Boolean(service?.candidates?.enabled) && ['ready', 'polling', 'backfilling', 'resolving'].includes(service?.candidates?.status)}
           label={`Candidate tracker ${service?.candidates?.status || 'disabled'}`}
         />
+        <StatusLine
+          active={['ready', 'polling'].includes(service?.real?.status)}
+          label={`Real dry-run ${service?.real?.status || 'disabled'}`}
+        />
       </div>
 
       <div className="sidebarBlock">
@@ -222,7 +227,8 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service }) {
-  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'traders'];
+  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'positions', 'orders'];
+  const lastPollAt = mode === 'real' ? service?.real?.lastPollAt : service?.pollLastRunAt;
   return (
     <header className="topbar">
       <div>
@@ -237,7 +243,7 @@ function Topbar({ mode, tab, setTab, refresh, service }) {
         ))}
       </nav>
       <div className="topActions">
-        <span className="lastSync">Last poll {formatTimeAgo(service?.pollLastRunAt)}</span>
+        <span className="lastSync">Last poll {formatTimeAgo(lastPollAt)}</span>
         <button className="iconButton" onClick={refresh} aria-label="Refresh state"><RefreshCcw size={16} /></button>
       </div>
     </header>
@@ -274,30 +280,287 @@ function DemoWorkspace({ data, metrics, tab }) {
   );
 }
 
-function RealWorkspace({ data, tab }) {
-  if (tab === 'traders') return <TraderGrid traders={data.traders} />;
+function RealWorkspace({ tab }) {
+  const realState = useRealState();
+  const real = realState.real;
 
-  return (
-    <div className="realGrid">
-      <section className="realPanel">
+  if (realState.error) {
+    return (
+      <section className="panel fullPanel realAuthPanel">
         <div className="lockPlate"><Lock size={22} /></div>
-        <p className="eyebrow">Execution adapter</p>
-        <h2>Real copy trading is not armed</h2>
-        <p>
-          This page is separate from demo state and only observes matched trades. Live orders need a reviewed
-          Polymarket adapter, wallet signing, position checks, max-loss limits, and a manual arming step.
-        </p>
+        <p className="eyebrow">Real dashboard</p>
+        <h2>Real controls are locked</h2>
+        <p>{realState.error}</p>
         <div className="adapterList">
-          <StatusLine active={false} label="Wallet signer missing" />
-          <StatusLine active={false} label="Order placement adapter missing" />
-          <StatusLine active={false} label="Manual live-trading arm switch missing" />
-          <StatusLine active label="Read-only whale monitoring active" />
+          <StatusLine active={false} label="DASHBOARD_AUTH_TOKEN required for real routes" />
+          <StatusLine active label="Demo dashboard remains separate" />
         </div>
       </section>
-      <section>
-        <LiveFeed events={data.copiedFeed} realMode />
+    );
+  }
+
+  if (realState.loading || !real) {
+    return <section className="panel fullPanel"><EmptyState title="Loading real dashboard" text="Fetching dry-run follow state." /></section>;
+  }
+
+  if (tab === 'following') return <RealFollowingView real={real} realState={realState} />;
+  if (tab === 'positions') return <RealPositionsView real={real} />;
+  if (tab === 'orders') return <RealOrdersView real={real} />;
+  return <RealOverview real={real} />;
+}
+
+function RealOverview({ real }) {
+  const summary = real.summary || {};
+  return (
+    <div className="dashboardGrid">
+      <section className="mainColumn">
+        <RealMetricStrip summary={summary} />
+        <section className="panel realPanel">
+          <div className="lockPlate"><Lock size={22} /></div>
+          <p className="eyebrow">Execution mode</p>
+          <h2>Dry-run FOK audit</h2>
+          <p>
+            Real follows are manual. BUY entries are simulated as $10 FOK orders with a strict source-price ±4c precheck
+            and no live CLOB submission.
+          </p>
+          <div className="adapterList">
+            <StatusLine active label="Manual follow list active" />
+            <StatusLine active label="$10 dry-run stake" />
+            <StatusLine active label="Source price ±4c guard" />
+            <StatusLine active={false} label="Live wallet signing disabled" />
+          </div>
+        </section>
+        <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact />
+      </section>
+      <section className="sideColumn">
+        <section className="panel">
+          <div className="sectionHead">
+            <div>
+              <p className="eyebrow">Following</p>
+              <h2>Real follow list</h2>
+            </div>
+            <Users size={18} />
+          </div>
+          <RealFollowList follows={(real.follows || []).filter((follow) => follow.status === 'active').slice(0, 6)} compact />
+        </section>
+        <OpenPositionsCard positions={(real.positions || []).filter((position) => isOpenPosition(position))} />
       </section>
     </div>
+  );
+}
+
+function RealMetricStrip({ summary }) {
+  const items = [
+    { label: 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), icon: LineChart, tone: pnlTone(summary.totalPnlUsd) },
+    { label: 'Open value', value: usd(summary.openValueUsd || 0), icon: Wallet },
+    { label: 'Attempts', value: summary.attemptedCount || 0, icon: Activity },
+    { label: 'Would fill', value: summary.wouldFillCount || 0, icon: CheckCircle2, tone: 'positive' },
+    { label: 'Rejected', value: summary.rejectedCount || 0, icon: AlertTriangle, tone: summary.rejectedCount ? 'negative' : 'neutral' },
+  ];
+  return (
+    <section className="metricStrip">
+      {items.map(({ label, value, icon: Icon, tone }) => (
+        <div className={`metric ${tone || ''}`} key={label}>
+          <Icon size={18} />
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function RealFollowingView({ real, realState }) {
+  const [pinRequest, setPinRequest] = React.useState(null);
+  const [actionError, setActionError] = React.useState(null);
+  const [pendingWallet, setPendingWallet] = React.useState(null);
+
+  const requestRemove = React.useCallback((follow) => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Remove real follow',
+      description: `${follow.displayName || follow.pseudonym || shortWallet(follow.wallet)} will stop being tracked for new dry-run entries.`,
+      confirmLabel: 'Remove',
+      onSubmit: async (pin) => {
+        setPendingWallet(follow.wallet);
+        try {
+          const response = await fetch(`${API_BASE}/api/real/unfollow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ wallet: follow.wallet, pin }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Real remove failed');
+          realState.setReal(payload.real);
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setPendingWallet(null);
+        }
+      },
+    });
+  }, [realState]);
+
+  return (
+    <section className="panel fullPanel realFollowPanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Real follows</p>
+          <h2>Manual copy list</h2>
+        </div>
+        <button className="iconButton" onClick={realState.refresh} aria-label="Refresh real follows"><RefreshCcw size={16} /></button>
+      </div>
+      {actionError && <div className="candidateTradeMessage negative">{actionError}</div>}
+      <RealFollowList follows={real.follows || []} onRemove={requestRemove} pendingWallet={pendingWallet} />
+      <PinPromptModal
+        request={pinRequest}
+        error={actionError}
+        pending={Boolean(pendingWallet)}
+        onCancel={() => {
+          setPinRequest(null);
+          setActionError(null);
+        }}
+      />
+    </section>
+  );
+}
+
+function RealFollowList({ follows, compact = false, onRemove, pendingWallet }) {
+  if (!follows.length) {
+    return <EmptyState title="No real follows yet" text="Use Add on a candidate row to start dry-run tracking from that moment forward." />;
+  }
+  return (
+    <div className={compact ? 'realFollowList compact' : 'realFollowList'}>
+      {follows.map((follow) => (
+        <RealFollowRow
+          key={follow.wallet}
+          follow={follow}
+          compact={compact}
+          onRemove={onRemove}
+          pending={pendingWallet === follow.wallet}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RealFollowRow({ follow, compact, onRemove, pending }) {
+  const metrics = follow.metrics || {};
+  const active = follow.status === 'active';
+  return (
+    <article className="realFollowRow">
+      <div className="avatar">
+        {follow.profileImage ? <img src={follow.profileImage} alt="" /> : <Cpu size={17} />}
+      </div>
+      <div className="realFollowIdentity">
+        <strong>{follow.displayName || follow.pseudonym || shortWallet(follow.wallet)}</strong>
+        <span>{shortWallet(follow.wallet)} - {active ? `added ${formatTimeAgo(follow.addedAt)}` : `removed ${formatTimeAgo(follow.removedAt)}`}</span>
+      </div>
+      {!compact && (
+        <>
+          <RealMiniStat label="P/L" value={signedUsd(metrics.totalPnlUsd || 0)} tone={pnlTone(metrics.totalPnlUsd)} />
+          <RealMiniStat label="Fill rate" value={formatNullablePct(metrics.fillRatePct)} />
+          <RealMiniStat label="Attempts" value={`${metrics.wouldFillCount || 0}/${metrics.attemptedCount || 0}`} />
+          <RealMiniStat label="Avg slip" value={formatNullableCents(metrics.avgSlippageCents)} tone={pnlTone(-Number(metrics.avgSlippageCents || 0))} />
+          <RealMiniStat label="Open" value={usd(metrics.openValueUsd || 0)} />
+        </>
+      )}
+      {active && onRemove && (
+        <button className="textButton realRemoveButton" onClick={() => onRemove(follow)} disabled={pending}>
+          <UserMinus size={14} /> {pending ? 'Removing' : 'Remove'}
+        </button>
+      )}
+      {!active && <span className="statusBadge neutral">removed</span>}
+    </article>
+  );
+}
+
+function RealMiniStat({ label, value, tone }) {
+  return (
+    <div className="realMiniStat">
+      <span>{label}</span>
+      <strong className={tone || ''}>{value}</strong>
+    </div>
+  );
+}
+
+function RealPositionsView({ real }) {
+  const positions = real.positions || [];
+  const open = positions.filter((position) => isOpenPosition(position));
+  const closed = positions.filter((position) => !isOpenPosition(position));
+  return (
+    <section className="panel fullPanel positionsWorkspace">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Real dry-run positions</p>
+          <h2>Since-added simulated fills</h2>
+        </div>
+        <Layers3 size={18} />
+      </div>
+      <div className="positionSummary">
+        <div className="positionStat"><span>Open</span><strong>{open.length}</strong></div>
+        <div className="positionStat"><span>Closed</span><strong>{closed.length}</strong></div>
+        <div className="positionStat"><span>Realized</span><strong className={pnlTone(real.summary?.realizedPnlUsd)}>{signedUsd(real.summary?.realizedPnlUsd || 0)}</strong></div>
+        <div className="positionStat"><span>Unrealized</span><strong className={pnlTone(real.summary?.unrealizedPnlUsd)}>{signedUsd(real.summary?.unrealizedPnlUsd || 0)}</strong></div>
+      </div>
+      <PositionList
+        positions={positions}
+        expanded
+        emptyTitle="No real dry-run positions"
+        emptyText="New BUY trades from manually followed wallets will create $10 dry-run positions if the FOK quote guard passes."
+      />
+    </section>
+  );
+}
+
+function RealOrdersView({ real }) {
+  return (
+    <section className="panel fullPanel realOrdersPanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">FOK audit</p>
+          <h2>Dry-run orders</h2>
+        </div>
+        <ListFilter size={18} />
+      </div>
+      <RealOrdersList orders={real.orders || []} />
+    </section>
+  );
+}
+
+function RealOrdersList({ orders, compact = false }) {
+  if (!orders.length) {
+    return <EmptyState title="No dry-run orders yet" text="The real follow poller will log would-fill and rejected entries after a followed trader buys." />;
+  }
+  return (
+    <div className={compact ? 'realOrderList compact' : 'realOrderList'}>
+      {orders.map((order) => <RealOrderRow key={order.id} order={order} compact={compact} />)}
+    </div>
+  );
+}
+
+function RealOrderRow({ order, compact }) {
+  const filled = order.status === 'would_fill';
+  return (
+    <article className={`realOrderRow ${filled ? 'wouldFill' : 'rejected'}`}>
+      <div className="realOrderMarket">
+        <strong>{order.marketTitle || 'Unknown market'}</strong>
+        <span>{order.outcome} - {shortWallet(order.traderWallet)} - {formatTimeAgo(order.checkedAt)}</span>
+      </div>
+      {!compact && (
+        <>
+          <RealMiniStat label="Source" value={formatCents(order.sourcePriceCents)} />
+          <RealMiniStat label="Guard" value={`${formatCents(order.minGuardCents)}-${formatCents(order.maxGuardCents)}`} />
+          <RealMiniStat label="Quote" value={filled ? formatCents(order.vwapCents) : formatCents(order.bestAskCents)} />
+          <RealMiniStat label="Stake" value={usd(order.stakeUsd || 10)} />
+        </>
+      )}
+      <div className="realOrderStatus">
+        <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? 'would fill' : 'rejected'}</span>
+        <small title={order.reason}>{order.reasonCode || order.reason || 'ok'}</small>
+      </div>
+    </article>
   );
 }
 
@@ -748,16 +1011,55 @@ function useCandidateLeaderboard() {
   return { leaderboard, loading, error, refresh };
 }
 
+function useRealState() {
+  const [real, setReal] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  const refresh = React.useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE}/api/real/state`, { headers: authHeaders() });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Real state request failed');
+      setReal(payload);
+      setError(null);
+    } catch (fetchError) {
+      setError(fetchError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  return { real, loading, error, refresh, setReal };
+}
+
 function CandidatesView({ service, copyPoolState }) {
   const { leaderboard, loading, error, refresh } = useCandidateLeaderboard();
+  const realState = useRealState();
   const [expandedWallet, setExpandedWallet] = React.useState(null);
   const [detailsByWallet, setDetailsByWallet] = React.useState({});
   const [detailLoading, setDetailLoading] = React.useState({});
   const [detailErrors, setDetailErrors] = React.useState({});
+  const [pinRequest, setPinRequest] = React.useState(null);
+  const [actionError, setActionError] = React.useState(null);
+  const [actionPendingWallet, setActionPendingWallet] = React.useState(null);
   const rows = leaderboard?.rows || [];
   const summary = leaderboard?.summary || {};
   const copyPool = leaderboard?.copyPool?.wallets ? leaderboard.copyPool : copyPoolState || {};
   const enabled = leaderboard?.enabled ?? service?.enabled;
+  const realFollows = React.useMemo(() => {
+    const entries = {};
+    for (const follow of realState.real?.follows || []) {
+      entries[String(follow.wallet || '').toLowerCase()] = follow;
+    }
+    return entries;
+  }, [realState.real]);
 
   const loadTraderDetails = React.useCallback(async (wallet, append = false) => {
     const current = detailsByWallet[wallet];
@@ -793,6 +1095,39 @@ function CandidatesView({ service, copyPoolState }) {
     setExpandedWallet(wallet);
     if (!detailsByWallet[wallet]) loadTraderDetails(wallet, false);
   }, [detailsByWallet, expandedWallet, loadTraderDetails]);
+
+  const requestRealAdd = React.useCallback((row) => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Add real follow',
+      description: `${row.displayName || row.pseudonym || shortWallet(row.wallet)} will be tracked in dry-run real mode from now on.`,
+      confirmLabel: 'Add',
+      onSubmit: async (pin) => {
+        setActionPendingWallet(row.wallet);
+        try {
+          const response = await fetch(`${API_BASE}/api/real/follow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({
+              pin,
+              wallet: row.wallet,
+              displayName: row.displayName,
+              pseudonym: row.pseudonym,
+              profileImage: row.profileImage,
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Real follow failed');
+          realState.setReal(payload.real);
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setActionPendingWallet(null);
+        }
+      },
+    });
+  }, [realState]);
 
   return (
     <section className="panel fullPanel candidatePanel">
@@ -839,6 +1174,7 @@ function CandidatesView({ service, copyPoolState }) {
           <div className="candidateToolbar">
             <span className="statusBadge neutral">{candidateStatusLabel(leaderboard?.status || service?.status)}</span>
             <span className="muted">AEP is a rolling 30-day BUY average for visibility only; high-price entries are skipped at execution.</span>
+            {actionError && <span className="negative">{actionError}</span>}
           </div>
 
           <CopyPoolCards copyPool={copyPool} />
@@ -850,8 +1186,11 @@ function CandidatesView({ service, copyPoolState }) {
                   row={row}
                   copyPoolEntry={copyPool?.wallets?.[String(row.wallet || '').toLowerCase()]}
                   thresholds={copyPool?.thresholds}
+                  realFollowEntry={realFollows[String(row.wallet || '').toLowerCase()]}
                   expanded={expandedWallet === row.wallet}
                   onToggle={() => toggleCandidate(row.wallet)}
+                  onRealAdd={() => requestRealAdd(row)}
+                  realActionPending={actionPendingWallet === row.wallet}
                 />
                 {expandedWallet === row.wallet && (
                   <CandidateTradeDrawer
@@ -872,6 +1211,15 @@ function CandidatesView({ service, copyPoolState }) {
               />
             )}
           </div>
+          <PinPromptModal
+            request={pinRequest}
+            error={actionError}
+            pending={Boolean(actionPendingWallet)}
+            onCancel={() => {
+              setPinRequest(null);
+              setActionError(null);
+            }}
+          />
         </>
       )}
     </section>
@@ -926,11 +1274,57 @@ function CopyPoolCard({ title, icon: Icon, empty, events, tone }) {
   );
 }
 
-function CandidateRow({ row, copyPoolEntry, thresholds, expanded, onToggle }) {
+function PinPromptModal({ request, error, pending, onCancel }) {
+  const [pin, setPin] = React.useState('');
+
+  React.useEffect(() => {
+    setPin('');
+  }, [request]);
+
+  if (!request) return null;
+
+  return (
+    <div className="modalBackdrop" role="presentation">
+      <form
+        className="pinModal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          request.onSubmit(pin);
+        }}
+      >
+        <div>
+          <p className="eyebrow">Real dashboard</p>
+          <h3>{request.title}</h3>
+          {request.description && <span>{request.description}</span>}
+        </div>
+        <input
+          autoFocus
+          type="password"
+          inputMode="numeric"
+          value={pin}
+          onChange={(event) => setPin(event.target.value)}
+          placeholder="PIN"
+          aria-label="Real action PIN"
+        />
+        {error && <strong className="negative">{error}</strong>}
+        <div className="pinModalActions">
+          <button type="button" className="textButton" onClick={onCancel} disabled={pending}>Cancel</button>
+          <button type="submit" className="textButton primaryAction" disabled={pending || !pin}>
+            {pending ? 'Working...' : request.confirmLabel || 'Confirm'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function CandidateRow({ row, copyPoolEntry, thresholds, realFollowEntry, expanded, onToggle, onRealAdd, realActionPending }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const form = row.recentFormResults || [];
   const ExpandIcon = expanded ? ChevronDown : ChevronRight;
   const badge = copyPoolBadge(copyPoolEntry);
+  const realActive = realFollowEntry?.status === 'active';
+  const acceptedCopyWallet = copyPoolEntry?.status === 'active';
   const eligibility = candidateEligibility(row, copyPoolEntry, thresholds);
   const metrics = row.metrics || {};
   return (
@@ -975,25 +1369,97 @@ function CandidateRow({ row, copyPoolEntry, thresholds, expanded, onToggle }) {
         <span>ROI / DD</span>
         <strong className={pnlTone(metrics.roiPct)}>{formatNullableSignedPct(metrics.roiPct)} / {formatDrawdownUsd(metrics.maxDrawdownUsd)}</strong>
       </div>
-      <div className="candidateEligibility" title={eligibility.reason}>
-        <span>30D eligible</span>
-        <strong className={eligibility.tone}>{eligibility.label}</strong>
-        <small>{eligibility.meta}</small>
-      </div>
-      <div className="candidateForm" aria-label="Recent form">
-        {form.length ? form.map((result, index) => (
-          <span
-            key={`${result}-${index}`}
-            title={statusLabel(result)}
-            className={`formSquare ${result === 'resolved_win' ? 'win' : 'loss'}`}
-          />
-        )) : <small className="muted">No resolved form</small>}
-      </div>
+      {acceptedCopyWallet ? (
+        <CandidateMonthCarousel row={row} />
+      ) : (
+        <>
+          <div className="candidateEligibility" title={eligibility.reason}>
+            <span>30D eligible</span>
+            <strong className={eligibility.tone}>{eligibility.label}</strong>
+            <small>{eligibility.meta}</small>
+          </div>
+          <div className="candidateForm" aria-label="Recent form">
+            {form.length ? form.map((result, index) => (
+              <span
+                key={`${result}-${index}`}
+                title={statusLabel(result)}
+                className={`formSquare ${result === 'resolved_win' ? 'win' : 'loss'}`}
+              />
+            )) : <small className="muted">No resolved form</small>}
+          </div>
+        </>
+      )}
       <div className="candidateProfit">
         <strong className={pnlTone(row.allTimeProfitUsd)}>{compactSignedUsd(row.allTimeProfitUsd || 0)}</strong>
         <span>{row.backfillStatus || 'queued'}</span>
       </div>
+      <div className="candidateRealAction">
+        {realActive ? (
+          <span className="realFollowBadge">Real</span>
+        ) : (
+          <button className="textButton realAddButton" onClick={onRealAdd} disabled={realActionPending}>
+            <UserPlus size={14} /> {realActionPending ? 'Adding' : 'Add'}
+          </button>
+        )}
+      </div>
     </article>
+  );
+}
+
+function CandidateMonthCarousel({ row }) {
+  const cards = candidateMonthCards(row);
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const activeCard = cards[activeIndex] || cards[0];
+
+  React.useEffect(() => {
+    if (activeIndex >= cards.length) setActiveIndex(0);
+  }, [activeIndex, cards.length]);
+
+  const move = React.useCallback((direction) => {
+    setActiveIndex((index) => (index + direction + cards.length) % cards.length);
+  }, [cards.length]);
+
+  if (!activeCard) return null;
+
+  return (
+    <div className="candidateMonthCarousel" aria-label="Accepted wallet monthly stats">
+      <div className="candidateMonthCardHead">
+        <button
+          type="button"
+          className="candidateMonthNav"
+          onClick={() => move(-1)}
+          aria-label="Previous month card"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <div className="candidateMonthTitle">
+          <span>{activeCard.label}</span>
+          <strong className={winRateTone(activeCard.winRatePct)}>{formatNullablePct(activeCard.winRatePct)}</strong>
+        </div>
+        <button
+          type="button"
+          className="candidateMonthNav"
+          onClick={() => move(1)}
+          aria-label="Next month card"
+        >
+          <ChevronRight size={14} />
+        </button>
+      </div>
+      <div className="candidateMonthViewport">
+        <div className="candidateMonthTrack" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+          {cards.map((card) => (
+            <div className="candidateMonthSlide" key={card.index}>
+              <div className="candidateMonthStats" title={monthCardRangeTitle(card)}>
+                <span><b>{card.distinctResolvedTradeCount || 0}</b> mkts</span>
+                <span><b className={card.pnlTradeCount ? pnlTone(card.profitUsd) : 'neutral'}>{formatMonthProfit(card)}</b> P/L</span>
+                <span><b className={card.pnlTradeCount ? pnlTone(card.roiPct) : 'neutral'}>{formatMonthRoi(card)}</b> ROI</span>
+                <span><b>{formatNullableCents(card.avgEntryPriceCents)}</b> AEP</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1372,6 +1838,70 @@ function formatDrawdownUsd(value) {
   return compactSignedUsd(number);
 }
 
+function candidateMonthCards(row) {
+  const cards = Array.isArray(row?.monthlyPerformance) ? row.monthlyPerformance : [];
+  const normalized = cards.map((card, index) => ({
+    index: Number.isFinite(Number(card.index)) ? Number(card.index) : index,
+    label: card.label || monthWindowLabel(index),
+    startAt: card.startAt || null,
+    endAt: card.endAt || null,
+    distinctResolvedTradeCount: Number(card.distinctResolvedTradeCount || 0),
+    winCount: Number(card.winCount || 0),
+    winRatePct: metricNumber(card.winRatePct),
+    avgEntryPriceCents: metricNumber(card.avgEntryPriceCents),
+    avgEntryTradeCount: Number(card.avgEntryTradeCount || 0),
+    pnlTradeCount: Number(card.pnlTradeCount || 0),
+    profitUsd: metricNumber(card.profitUsd) ?? 0,
+    roiPct: metricNumber(card.roiPct),
+  }));
+
+  if (normalized.length) return normalized.sort((a, b) => a.index - b.index);
+
+  return [{
+    index: 0,
+    label: 'Last 30D',
+    startAt: null,
+    endAt: null,
+    distinctResolvedTradeCount: Number(row?.resolvedDistinctTradeCount30d || 0),
+    winCount: Number(row?.winCountDistinct30d || 0),
+    winRatePct: metricNumber(row?.winRatePctDistinct30d),
+    avgEntryPriceCents: metricNumber(row?.avgEntryPriceCents30d),
+    avgEntryTradeCount: Number(row?.avgEntryTradeCount30d || 0),
+    pnlTradeCount: 0,
+    profitUsd: 0,
+    roiPct: null,
+  }];
+}
+
+function monthWindowLabel(index) {
+  if (index === 0) return 'Last 30D';
+  return `${index * 30}-${(index + 1) * 30}D`;
+}
+
+function monthCardRangeTitle(card) {
+  if (!card?.startAt || !card?.endAt) return card?.label || 'Month card';
+  return `${formatShortDate(card.startAt)} to ${formatShortDate(card.endAt)}`;
+}
+
+function formatShortDate(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }).format(date);
+}
+
+function formatMonthProfit(card) {
+  return card?.pnlTradeCount ? formatNullableSignedCompactUsd(card.profitUsd) : EMPTY_METRIC;
+}
+
+function formatMonthRoi(card) {
+  return card?.pnlTradeCount ? formatNullableSignedPct(card.roiPct) : EMPTY_METRIC;
+}
+
+function metricNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function copyPoolBadge(entry) {
   if (!entry || entry.status !== 'active') return null;
   if (entry.protected) return { label: 'Following', tone: 'protected', title: 'Protected baseline wallet is being copied' };
@@ -1459,6 +1989,14 @@ function pnlTone(value) {
   const number = Number(value || 0);
   if (number > 0.005) return 'positive';
   if (number < -0.005) return 'negative';
+  return 'neutral';
+}
+
+function winRateTone(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'neutral';
+  if (number >= 75) return 'positive';
+  if (number < 70) return 'negative';
   return 'neutral';
 }
 

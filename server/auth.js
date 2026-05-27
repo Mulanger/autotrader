@@ -18,6 +18,17 @@ export function requireDashboardAuth(request, response, next) {
   response.status(401).json({ ok: false, error: 'Unauthorized' });
 }
 
+export function requireConfiguredDashboardAuth(request, response, next) {
+  if (!isDashboardAuthEnabled()) {
+    response.status(403).json({
+      ok: false,
+      error: 'Dashboard auth must be configured before real trading controls are available',
+    });
+    return;
+  }
+  requireDashboardAuth(request, response, next);
+}
+
 export function redactServiceForPublicHealth(service) {
   if (!isDashboardAuthEnabled()) return service;
   return {
