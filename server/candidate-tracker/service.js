@@ -94,9 +94,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     try {
       storage = await storageFactory();
       const recoveredBackfills = await storage.recoverStaleBackfills?.(CANDIDATE_STALE_BACKFILL_MS);
+      const seededBackfills = await storage.seedActiveCopyPoolBackfill?.(WATCHED_WALLETS);
       state.service.candidates.storageStatus = 'ready';
       state.service.candidates.status = 'ready';
       state.service.candidates.recoveredStaleBackfillCount = recoveredBackfills?.length || 0;
+      state.service.candidates.seededActiveCopyPoolBackfillCount = seededBackfills?.length || 0;
       await runCopyPoolEvaluation();
       broadcast();
     } catch (error) {

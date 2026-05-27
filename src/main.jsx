@@ -35,6 +35,7 @@ import './styles.css';
 const API_BASE = '';
 const CANDIDATE_TRADE_PAGE_SIZE = 80;
 const DASHBOARD_TOKEN_KEY = 'AUTOTRADER_DASHBOARD_TOKEN';
+const EMPTY_METRIC = '\u2014';
 
 function dashboardAuthToken() {
   const params = new URLSearchParams(window.location.search);
@@ -931,6 +932,7 @@ function CandidateRow({ row, copyPoolEntry, thresholds, expanded, onToggle }) {
   const ExpandIcon = expanded ? ChevronDown : ChevronRight;
   const badge = copyPoolBadge(copyPoolEntry);
   const eligibility = candidateEligibility(row, copyPoolEntry, thresholds);
+  const metrics = row.metrics || {};
   return (
     <article className={`candidateRow ${row.rank <= 3 ? 'topCandidate' : ''} ${expanded ? 'expanded' : ''}`}>
       <button
@@ -962,12 +964,16 @@ function CandidateRow({ row, copyPoolEntry, thresholds, expanded, onToggle }) {
         <strong>{row.allTimePnlTradeCount || 0}</strong>
       </div>
       <div className="candidateMetric">
-        <span>Win rate</span>
-        <strong>{pct(row.allTimeWinRatePct)}</strong>
+        <span>WR / PF</span>
+        <strong>{pct(row.allTimeWinRatePct)} / {formatProfitFactor(metrics)}</strong>
       </div>
       <div className="candidateMetric" title={`${row.avgEntryTradeCount30d || 0} BUY entries in the last 30 days`}>
-        <span>AEP</span>
-        <strong>{formatAep(row.avgEntryPriceCents30d)}</strong>
+        <span>AEP / Med</span>
+        <strong>{formatAep(row.avgEntryPriceCents30d)} / {formatNullableCents(metrics.medianEntryCents)}</strong>
+      </div>
+      <div className="candidateMetric">
+        <span>ROI / DD</span>
+        <strong className={pnlTone(metrics.roiPct)}>{formatNullableSignedPct(metrics.roiPct)} / {formatDrawdownUsd(metrics.maxDrawdownUsd)}</strong>
       </div>
       <div className="candidateEligibility" title={eligibility.reason}>
         <span>30D eligible</span>
@@ -1007,6 +1013,7 @@ function CandidateTradeDrawer({ row, details, loading, error, onCollapse, onLoad
           Collapse
         </button>
       </div>
+      <CandidateMetricsSummary metrics={row.metrics || {}} />
       {error ? (
         <div className="candidateTradeMessage negative">{error}</div>
       ) : loading && !trades.length ? (
@@ -1025,6 +1032,31 @@ function CandidateTradeDrawer({ row, details, loading, error, onCollapse, onLoad
       ) : (
         <div className="candidateTradeMessage">No tracked trades stored for this trader yet.</div>
       )}
+    </div>
+  );
+}
+
+function CandidateMetricsSummary({ metrics }) {
+  const items = [
+    { label: 'ROI', value: formatNullableSignedPct(metrics.roiPct), tone: pnlTone(metrics.roiPct) },
+    { label: 'Profit factor', value: formatProfitFactor(metrics) },
+    { label: 'Max drawdown', value: formatDrawdownUsd(metrics.maxDrawdownUsd), tone: metrics.maxDrawdownUsd < 0 ? 'negative' : 'neutral' },
+    { label: 'Avg size', value: formatNullableCompactUsd(metrics.avgTradeSizeUsd) },
+    { label: 'Avg W/L', value: `${formatNullableSignedCompactUsd(metrics.avgWinUsd)} / ${formatNullableSignedCompactUsd(metrics.avgLossUsd)}` },
+    { label: 'Median entry', value: formatNullableCents(metrics.medianEntryCents) },
+    { label: '7D', value: `${metrics.recent7dTradeCount || 0} trades / ${formatNullablePct(metrics.recent7dWinRatePct)}` },
+    { label: '14D', value: `${metrics.recent14dTradeCount || 0} trades / ${formatNullablePct(metrics.recent14dWinRatePct)}` },
+    { label: 'Top win share', value: formatNullablePct(metrics.topWinSharePct) },
+  ];
+
+  return (
+    <div className="candidateMetricsSummary">
+      {items.map((item) => (
+        <div className="candidateMetricTile" key={item.label}>
+          <span>{item.label}</span>
+          <strong className={item.tone || ''}>{item.value}</strong>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1273,9 +1305,25 @@ function compactSignedUsd(value) {
   return `${prefix}${formatted}`;
 }
 
+function compactUsd(value) {
+  const number = Number(value || 0);
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(number);
+}
+
 function formatAep(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 'n/a';
+  return `${number.toFixed(1)}c`;
+}
+
+function formatNullableCents(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
   return `${number.toFixed(1)}c`;
 }
 
@@ -1283,6 +1331,45 @@ function formatTradeEntry(trade) {
   const price = Number(trade?.price);
   if (!Number.isFinite(price)) return 'n/a';
   return `${(price * 100).toFixed(1)}c`;
+}
+
+function formatProfitFactor(metrics = {}) {
+  if (metrics.profitFactorDisplayCapHit) return '>5.0x';
+  const number = Number(metrics.profitFactor);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return `${number.toFixed(number >= 10 ? 1 : 2)}x`;
+}
+
+function formatNullablePct(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return `${number.toFixed(number >= 99 ? 0 : 1)}%`;
+}
+
+function formatNullableSignedPct(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  const prefix = number >= 0 ? '+' : '';
+  return `${prefix}${number.toFixed(1)}%`;
+}
+
+function formatNullableCompactUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return compactUsd(number);
+}
+
+function formatNullableSignedCompactUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return compactSignedUsd(number);
+}
+
+function formatDrawdownUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  if (Math.abs(number) < 0.005) return '$0';
+  return compactSignedUsd(number);
 }
 
 function copyPoolBadge(entry) {

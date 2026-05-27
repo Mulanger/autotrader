@@ -94,6 +94,30 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.recoveredStaleBackfillCount).toBe(1);
   });
 
+  it('seeds active copy-pool wallets for normal candidate backfill on startup', async () => {
+    const state = createAppState();
+    const calls = {};
+    const storage = fakeStorage({
+      getQueuedBackfillTraders: async () => [],
+      seedActiveCopyPoolBackfill: async (wallets) => {
+        calls.seedWallets = wallets;
+        return ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'];
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: true,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => [],
+    });
+
+    await tracker.start();
+    await tracker.close();
+
+    expect(calls.seedWallets.length).toBeGreaterThan(0);
+    expect(state.service.candidates.seededActiveCopyPoolBackfillCount).toBe(1);
+  });
+
   it('scales candidate resolution batches for large due queues', () => {
     expect(resolutionBatchSize({ eligibleOpenTradeCount: 0 })).toBe(250);
     expect(resolutionBatchSize({ eligibleOpenTradeCount: 900 })).toBe(250);

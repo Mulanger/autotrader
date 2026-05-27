@@ -33,6 +33,7 @@ export async function createCandidateStorage() {
 
   return {
     upsertTrade: (trade) => upsertTrade(pool, trade),
+    seedActiveCopyPoolBackfill: (baselineWallets) => seedActiveCopyPoolBackfill(pool, baselineWallets),
     getQueuedBackfillTraders: (limit) => getQueuedBackfillTraders(pool, limit),
     recoverStaleBackfills: (staleMs) => recoverStaleBackfills(pool, staleMs),
     markBackfillRunning: (wallet) => markBackfillRunning(pool, wallet),
@@ -246,6 +247,35 @@ async function upsertTrade(pool, trade) {
   } finally {
     client.release();
   }
+}
+
+export async function seedActiveCopyPoolBackfill(pool, baselineWallets = []) {
+  const wallets = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
+  const result = await pool.query(
+    `
+      with active_wallets as (
+        select wallet
+        from copy_pool_traders
+        where status = 'active'
+        union
+        select unnest($1::text[]) as wallet
+      ),
+      normalized as (
+        select distinct lower(trim(wallet)) as wallet
+        from active_wallets
+        where wallet is not null and trim(wallet) <> ''
+      )
+      insert into candidate_traders (
+        wallet, first_seen_at, last_seen_at, backfill_status, updated_at
+      )
+      select wallet, now(), null, 'queued', now()
+      from normalized
+      on conflict (wallet) do nothing
+      returning wallet
+    `,
+    [wallets]
+  );
+  return result.rows.map((row) => row.wallet);
 }
 
 async function getQueuedBackfillTraders(pool, limit = 1) {
@@ -527,6 +557,114 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
         where rn = 1
         group by wallet
       ),
+      resolved_metric_raw as (
+        select
+          wallet,
+          id,
+          status,
+          pnl_usd,
+          usd_size,
+          resolved_at,
+          trade_timestamp
+        from candidate_trades
+        where side = 'BUY'
+          and status in ('resolved_win', 'resolved_loss')
+          and pnl_usd is not null
+      ),
+      performance_raw as (
+        select
+          wallet,
+          coalesce(sum(pnl_usd), 0)::numeric as total_pnl_usd,
+          coalesce(sum(usd_size), 0)::numeric as deployed_capital_usd,
+          coalesce(sum(pnl_usd) filter (where pnl_usd > 0), 0)::numeric as gross_winning_pnl_usd,
+          abs(coalesce(sum(pnl_usd) filter (where pnl_usd < 0), 0))::numeric as gross_losing_pnl_usd,
+          (max(pnl_usd) filter (where pnl_usd > 0))::numeric as largest_win_usd,
+          (avg(pnl_usd) filter (where pnl_usd > 0))::numeric as avg_win_usd,
+          (avg(pnl_usd) filter (where pnl_usd < 0))::numeric as avg_loss_usd,
+          count(*) filter (where resolved_at >= now() - interval '7 days')::integer as recent_7d_trade_count,
+          count(*) filter (
+            where resolved_at >= now() - interval '7 days' and status = 'resolved_win'
+          )::integer as recent_7d_win_count,
+          count(*) filter (where resolved_at >= now() - interval '14 days')::integer as recent_14d_trade_count,
+          count(*) filter (
+            where resolved_at >= now() - interval '14 days' and status = 'resolved_win'
+          )::integer as recent_14d_win_count
+        from resolved_metric_raw
+        group by wallet
+      ),
+      performance_stats as (
+        select
+          wallet,
+          case
+            when deployed_capital_usd > 0 then total_pnl_usd / deployed_capital_usd * 100
+            else null
+          end as roi_pct,
+          case
+            when gross_winning_pnl_usd > 0 and gross_losing_pnl_usd > 0 then gross_winning_pnl_usd / gross_losing_pnl_usd
+            else null
+          end as profit_factor,
+          (gross_winning_pnl_usd > 0 and gross_losing_pnl_usd = 0) as profit_factor_display_cap_hit,
+          avg_win_usd,
+          avg_loss_usd,
+          recent_7d_trade_count,
+          case
+            when recent_7d_trade_count > 0 then recent_7d_win_count::numeric / recent_7d_trade_count * 100
+            else null
+          end as recent_7d_win_rate_pct,
+          recent_14d_trade_count,
+          case
+            when recent_14d_trade_count > 0 then recent_14d_win_count::numeric / recent_14d_trade_count * 100
+            else null
+          end as recent_14d_win_rate_pct,
+          case
+            when gross_winning_pnl_usd > 0 then largest_win_usd / gross_winning_pnl_usd * 100
+            else null
+          end as top_win_share_pct
+        from performance_raw
+      ),
+      entry_metric_stats as (
+        select
+          wallet,
+          (percentile_cont(0.5) within group (order by price * 100))::numeric as median_entry_cents,
+          avg(usd_size)::numeric as avg_trade_size_usd
+        from candidate_trades
+        where side = 'BUY'
+          and price is not null
+          and shares is not null
+          and shares > 0
+          and usd_size is not null
+        group by wallet
+      ),
+      drawdown_curve as (
+        select
+          wallet,
+          coalesce(resolved_at, trade_timestamp) as close_ts,
+          id,
+          (sum(pnl_usd) over (
+            partition by wallet
+            order by coalesce(resolved_at, trade_timestamp), id
+            rows between unbounded preceding and current row
+          ))::numeric as cumulative_pnl_usd
+        from resolved_metric_raw
+      ),
+      drawdown_points as (
+        select
+          wallet,
+          cumulative_pnl_usd - greatest(
+            0::numeric,
+            max(cumulative_pnl_usd) over (
+              partition by wallet
+              order by close_ts, id
+              rows between unbounded preceding and current row
+            )
+          ) as drawdown_usd
+        from drawdown_curve
+      ),
+      drawdown_stats as (
+        select wallet, min(drawdown_usd)::numeric as max_drawdown_usd
+        from drawdown_points
+        group by wallet
+      ),
       recent_form as (
         select wallet, jsonb_agg(status order by resolved_at desc, trade_timestamp desc) as recent_form_results
         from (
@@ -566,13 +704,29 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
           coalesce(e.avg_entry_trade_count_30d, 0)::integer as avg_entry_trade_count_30d,
           coalesce(d.resolved_distinct_trade_count_30d, 0)::integer as resolved_distinct_trade_count_30d,
           coalesce(d.win_count_distinct_30d, 0)::integer as win_count_distinct_30d,
-          coalesce(r.recent_form_results, '[]'::jsonb) as recent_form_results
+          coalesce(r.recent_form_results, '[]'::jsonb) as recent_form_results,
+          p.roi_pct,
+          p.profit_factor,
+          coalesce(p.profit_factor_display_cap_hit, false) as profit_factor_display_cap_hit,
+          dd.max_drawdown_usd,
+          em.median_entry_cents,
+          em.avg_trade_size_usd,
+          p.avg_win_usd,
+          p.avg_loss_usd,
+          coalesce(p.recent_7d_trade_count, 0)::integer as recent_7d_trade_count,
+          p.recent_7d_win_rate_pct,
+          coalesce(p.recent_14d_trade_count, 0)::integer as recent_14d_trade_count,
+          p.recent_14d_win_rate_pct,
+          p.top_win_share_pct
         from candidate_traders t
         left join buy_stats b on b.wallet = t.wallet
         left join activity_stats a on a.wallet = t.wallet
         left join entry_price_stats e on e.wallet = t.wallet
         left join resolved_distinct_30d d on d.wallet = t.wallet
         left join recent_form r on r.wallet = t.wallet
+        left join performance_stats p on p.wallet = t.wallet
+        left join entry_metric_stats em on em.wallet = t.wallet
+        left join drawdown_stats dd on dd.wallet = t.wallet
       )
       select *
       from ranked
@@ -1234,6 +1388,21 @@ function mapLeaderboardRow(row) {
     winCountDistinct30d,
     winRatePctDistinct30d: distinct30d ? (winCountDistinct30d / distinct30d) * 100 : null,
     recentFormResults: Array.isArray(row.recent_form_results) ? row.recent_form_results : [],
+    metrics: {
+      roiPct: nullableNumberFromPg(row.roi_pct),
+      profitFactor: nullableNumberFromPg(row.profit_factor),
+      profitFactorDisplayCapHit: Boolean(row.profit_factor_display_cap_hit),
+      maxDrawdownUsd: nullableNumberFromPg(row.max_drawdown_usd),
+      medianEntryCents: nullableNumberFromPg(row.median_entry_cents),
+      avgTradeSizeUsd: nullableNumberFromPg(row.avg_trade_size_usd),
+      avgWinUsd: nullableNumberFromPg(row.avg_win_usd),
+      avgLossUsd: nullableNumberFromPg(row.avg_loss_usd),
+      recent7dTradeCount: Number(row.recent_7d_trade_count || 0),
+      recent7dWinRatePct: nullableNumberFromPg(row.recent_7d_win_rate_pct),
+      recent14dTradeCount: Number(row.recent_14d_trade_count || 0),
+      recent14dWinRatePct: nullableNumberFromPg(row.recent_14d_win_rate_pct),
+      topWinSharePct: nullableNumberFromPg(row.top_win_share_pct),
+    },
   };
 }
 

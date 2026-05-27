@@ -908,7 +908,7 @@ button {
 .candidateRow {
   min-height: 76px;
   display: grid;
-  grid-template-columns: 30px 36px 34px minmax(180px, 1.15fr) repeat(3, minmax(76px, 0.32fr)) minmax(138px, 0.5fr) minmax(118px, 0.55fr) minmax(110px, auto);
+  grid-template-columns: 30px 36px 34px minmax(180px, 1.15fr) repeat(4, minmax(78px, 0.32fr)) minmax(138px, 0.5fr) minmax(118px, 0.55fr) minmax(110px, auto);
   align-items: center;
   gap: 12px;
   border: 1px solid var(--line);
@@ -1109,6 +1109,32 @@ button {
 .candidateTradeHead div {
   display: grid;
   gap: 2px;
+}
+
+.candidateMetricsSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.candidateMetricTile {
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 9px 10px;
+}
+
+.candidateMetricTile span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.candidateMetricTile strong {
+  font-size: 0.94rem;
 }
 
 .candidateCollapseButton {
@@ -1406,6 +1432,10 @@ button {
   .candidateTradeRow {
     grid-template-columns: minmax(180px, 1fr) repeat(4, minmax(70px, auto)) 36px;
   }
+
+  .candidateMetricsSummary {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
 }
 
 @media (max-width: 780px) {
@@ -1506,6 +1536,10 @@ button {
     grid-column: 4;
     grid-row: 1 / span 2;
     justify-items: end;
+  }
+
+  .candidateMetricsSummary {
+    grid-template-columns: 1fr;
   }
 
   .candidateTradeHead {

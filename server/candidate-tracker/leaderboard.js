@@ -1,6 +1,6 @@
-export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, offset = 0 } = {}) {
+export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, offset = 0, now = Date.now() } = {}) {
   const entryWindowMs = 30 * 24 * 60 * 60 * 1000;
-  const nowMs = Date.now();
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
   const traderMap = new Map();
   for (const trader of traders) {
     if (!trader?.wallet) continue;
@@ -72,6 +72,7 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
         ? (winCountDistinct30d / recentResolvedDistinctTrades.length) * 100
         : null,
       recentFormResults,
+      metrics: buildCandidateMetrics(walletTrades, { now: nowMs }),
     };
   });
 
@@ -79,6 +80,60 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
     .sort(compareLeaderboardRows)
     .map((row, index) => ({ ...row, rank: index + 1 }))
     .slice(offset, offset + limit);
+}
+
+export function buildCandidateMetrics(trades = [], { now = Date.now() } = {}) {
+  const nowMs = typeof now === 'number' ? now : Date.parse(now);
+  const resolvedBuyTrades = trades.filter((trade) => {
+    return (
+      String(trade?.side || '').toUpperCase() === 'BUY' &&
+      ['resolved_win', 'resolved_loss'].includes(String(trade?.status || '').toLowerCase()) &&
+      trade.pnlUsd !== null &&
+      trade.pnlUsd !== undefined &&
+      trade.pnlUsd !== '' &&
+      Number.isFinite(Number(trade.pnlUsd))
+    );
+  });
+  const entryTrades = trades.filter((trade) => {
+    return (
+      String(trade?.side || '').toUpperCase() === 'BUY' &&
+      trade.price !== null &&
+      trade.price !== undefined &&
+      Number.isFinite(Number(trade.price)) &&
+      trade.shares !== null &&
+      trade.shares !== undefined &&
+      Number.isFinite(Number(trade.shares)) &&
+      Number(trade.shares) > 0 &&
+      trade.usdSize !== null &&
+      trade.usdSize !== undefined &&
+      Number.isFinite(Number(trade.usdSize))
+    );
+  });
+
+  const totalPnl = sum(resolvedBuyTrades.map((trade) => Number(trade.pnlUsd)));
+  const deployedCapital = sum(resolvedBuyTrades.map((trade) => Number(trade.usdSize)).filter(Number.isFinite));
+  const wins = resolvedBuyTrades.map((trade) => Number(trade.pnlUsd)).filter((pnl) => pnl > 0);
+  const losses = resolvedBuyTrades.map((trade) => Number(trade.pnlUsd)).filter((pnl) => pnl < 0);
+  const grossWin = sum(wins);
+  const grossLoss = Math.abs(sum(losses));
+  const recent7d = recentResolvedTrades(resolvedBuyTrades, nowMs, 7);
+  const recent14d = recentResolvedTrades(resolvedBuyTrades, nowMs, 14);
+
+  return {
+    roiPct: deployedCapital > 0 ? (totalPnl / deployedCapital) * 100 : null,
+    profitFactor: grossWin > 0 && grossLoss > 0 ? grossWin / grossLoss : null,
+    profitFactorDisplayCapHit: grossWin > 0 && grossLoss === 0,
+    maxDrawdownUsd: resolvedBuyTrades.length ? maxDrawdownUsd(resolvedBuyTrades) : null,
+    medianEntryCents: median(entryTrades.map((trade) => Number(trade.price) * 100)),
+    avgTradeSizeUsd: average(entryTrades.map((trade) => Number(trade.usdSize))),
+    avgWinUsd: average(wins),
+    avgLossUsd: average(losses),
+    recent7dTradeCount: recent7d.length,
+    recent7dWinRatePct: winRate(recent7d),
+    recent14dTradeCount: recent14d.length,
+    recent14dWinRatePct: winRate(recent14d),
+    topWinSharePct: grossWin > 0 ? Math.max(...wins) / grossWin * 100 : null,
+  };
 }
 
 function compareLeaderboardRows(a, b) {
@@ -105,4 +160,53 @@ function latestDistinctMarketTrades(trades) {
     byMarket.set(key, trade);
   }
   return [...byMarket.values()];
+}
+
+function recentResolvedTrades(trades, nowMs, days) {
+  const cutoff = nowMs - days * 24 * 60 * 60 * 1000;
+  return trades.filter((trade) => {
+    const resolvedTime = Date.parse(trade.resolvedAt || '');
+    return Number.isFinite(resolvedTime) && resolvedTime >= cutoff;
+  });
+}
+
+function maxDrawdownUsd(trades) {
+  let cumulative = 0;
+  let peak = 0;
+  let worst = 0;
+  const sorted = trades.slice().sort((a, b) => {
+    const aTime = Date.parse(a.resolvedAt || a.tradeTimestamp || 0);
+    const bTime = Date.parse(b.resolvedAt || b.tradeTimestamp || 0);
+    if (aTime !== bTime) return aTime - bTime;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+  for (const trade of sorted) {
+    cumulative += Number(trade.pnlUsd || 0);
+    peak = Math.max(peak, cumulative);
+    worst = Math.min(worst, cumulative - peak);
+  }
+  return worst;
+}
+
+function winRate(trades) {
+  if (!trades.length) return null;
+  const wins = trades.filter((trade) => String(trade.status || '').toLowerCase() === 'resolved_win').length;
+  return wins / trades.length * 100;
+}
+
+function median(values) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2) return sorted[middle];
+  return (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function average(values) {
+  const finite = values.filter(Number.isFinite);
+  return finite.length ? sum(finite) / finite.length : null;
+}
+
+function sum(values) {
+  return values.reduce((total, value) => total + (Number.isFinite(value) ? value : 0), 0);
 }
