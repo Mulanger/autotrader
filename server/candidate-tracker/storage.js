@@ -274,14 +274,16 @@ export async function seedActiveCopyPoolBackfill(pool, baselineWallets = [], { h
         backfill_status = 'queued',
         backfill_error = null,
         updated_at = now()
-      where candidate_traders.backfill_status in ('done', 'partial', 'error')
-        and (
-          candidate_traders.backfilled_since is null
-          or candidate_traders.backfilled_since > now() - ($2::integer * interval '1 day')
-          or (
-            candidate_traders.backfill_status = 'partial'
-            and candidate_traders.backfill_error like '%configured max is 3000%'
+      where (
+          candidate_traders.backfill_status in ('done', 'error')
+          and (
+            candidate_traders.backfilled_since is null
+            or candidate_traders.backfilled_since > now() - ($2::integer * interval '1 day')
           )
+        )
+        or (
+          candidate_traders.backfill_status = 'partial'
+          and candidate_traders.backfill_error like '%configured max is 3000%'
         )
       returning wallet
     `,
