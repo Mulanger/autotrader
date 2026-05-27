@@ -52,7 +52,7 @@ app.get('/api/state', requireDashboardAuth, (_request, response) => {
 });
 
 app.use('/api/candidates', requireDashboardAuth, createCandidateRoutes(candidateTracker));
-app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService));
+app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService, candidateTracker));
 
 if (existsSync(indexPath)) {
   app.use(express.static(distPath, {

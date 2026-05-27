@@ -51,6 +51,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let backfillRunning = false;
   let resolutionRunning = false;
   let copyPoolRunning = false;
+  let realCopyQualityRunning = false;
   let pollBootstrapped = false;
 
   state.service.candidates = {
@@ -87,6 +88,19 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     shadowTraderLastCopiedCount: 0,
     lastError: null,
   };
+  state.service.realCopyQuality = {
+    enabled,
+    status: enabled ? 'starting' : 'disabled',
+    lastBackfillAt: null,
+    lastScoredAt: null,
+    queuedWalletCount: 0,
+    scoredWalletCount: 0,
+    eligibleWalletCount: 0,
+    coreWalletCount: 0,
+    candidateWalletCount: 0,
+    watchlistWalletCount: 0,
+    lastError: null,
+  };
 
   async function start() {
     if (started) return;
@@ -101,6 +115,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       });
       state.service.candidates.storageStatus = 'ready';
       state.service.candidates.status = 'ready';
+      state.service.realCopyQuality.status = 'ready';
       state.service.candidates.recoveredStaleBackfillCount = recoveredBackfills?.length || 0;
       state.service.candidates.seededActiveCopyPoolBackfillCount = seededBackfills?.length || 0;
       await runCopyPoolEvaluation();
@@ -108,6 +123,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     } catch (error) {
       state.service.candidates.storageStatus = 'error';
       state.service.candidates.status = 'error';
+      state.service.realCopyQuality.status = 'error';
+      state.service.realCopyQuality.lastError = error.message;
       state.service.candidates.lastError = error.message;
       broadcast();
       return;
@@ -386,6 +403,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         state.service.candidates.shadowTraderLastRunAt = shadowSnapshot.lastEvaluatedAt;
         state.service.candidates.shadowTraderSelectedWalletCount = shadowSnapshot.selectedWalletCount;
       }
+      await runRealCopyQualityScoring({ scope: 'active_copy_pool' });
       state.service.candidates.copyPoolStatus = 'ready';
       state.service.candidates.copyPoolLastRunAt = new Date().toISOString();
       state.service.candidates.copyPoolLastChangedCount = result.changed.length;
@@ -398,6 +416,33 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       broadcast();
     } finally {
       copyPoolRunning = false;
+    }
+  }
+
+  async function runRealCopyQualityScoring({ scope = 'active_copy_pool', wallet = null } = {}) {
+    if (!storage || realCopyQualityRunning) return state.service.realCopyQuality;
+    realCopyQualityRunning = true;
+    try {
+      state.service.realCopyQuality.status = 'scoring';
+      broadcast();
+      const result = await storage.recalculateRealCopyQuality?.({
+        scope: wallet ? 'wallet' : scope,
+        wallet,
+        baselineWallets: WATCHED_WALLETS,
+      });
+      applyRealCopyQualitySummary(result?.summary, result?.summary?.total || result?.scored || 0);
+      state.service.realCopyQuality.status = 'ready';
+      state.service.realCopyQuality.lastScoredAt = new Date().toISOString();
+      state.service.realCopyQuality.lastError = null;
+      broadcast();
+      return result;
+    } catch (error) {
+      state.service.realCopyQuality.status = 'error';
+      state.service.realCopyQuality.lastError = error.message;
+      broadcast();
+      return { ok: false, error: error.message };
+    } finally {
+      realCopyQualityRunning = false;
     }
   }
 
@@ -434,6 +479,41 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     return storage.getTrader(wallet, params);
   }
 
+  async function getRealCopyQualityLeaderboard(params = {}) {
+    if (!enabled) return inactiveRealCopyQualityPayload('disabled');
+    if (!storage) return inactiveRealCopyQualityPayload(state.service.realCopyQuality?.status || 'starting');
+    const payload = await storage.getRealCopyQualityLeaderboard(params);
+    applyRealCopyQualitySummary(payload.summary, payload.summary?.total || 0);
+    return {
+      ...payload,
+      enabled: true,
+      status: state.service.realCopyQuality.status,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  async function getRealCopyQualityScore(wallet) {
+    if (!enabled || !storage) return null;
+    return storage.getRealCopyQualityScore(wallet);
+  }
+
+  async function recalculateRealCopyQuality(params = {}) {
+    if (!enabled || !storage) return inactiveRealCopyQualityPayload('disabled');
+    return runRealCopyQualityScoring(params);
+  }
+
+  function applyRealCopyQualitySummary(summary = {}, queuedWalletCount = 0) {
+    const service = state.service.realCopyQuality || {};
+    service.queuedWalletCount = queuedWalletCount;
+    service.scoredWalletCount = Number(summary.scored || 0);
+    service.eligibleWalletCount = Number(summary.eligible || 0);
+    service.coreWalletCount = Number(summary.core || 0);
+    service.candidateWalletCount = Number(summary.candidate || 0);
+    service.watchlistWalletCount = Number(summary.watchlist || 0);
+    service.lastScoredAt = summary.lastScoredAt || service.lastScoredAt || null;
+    state.service.realCopyQuality = service;
+  }
+
   return {
     start,
     close,
@@ -443,6 +523,10 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runBackfill,
     runResolution,
     runCopyPoolEvaluation,
+    runRealCopyQualityScoring,
+    getRealCopyQualityLeaderboard,
+    getRealCopyQualityScore,
+    recalculateRealCopyQuality,
   };
 }
 
@@ -459,6 +543,27 @@ function inactivePayload(status) {
       resolvedTradeCount: 0,
       queuedBackfillCount: 0,
       runningBackfillCount: 0,
+    },
+    rows: [],
+  };
+}
+
+function inactiveRealCopyQualityPayload(status) {
+  return {
+    ok: true,
+    enabled: false,
+    status,
+    updatedAt: new Date().toISOString(),
+    summary: {
+      total: 0,
+      scored: 0,
+      eligible: 0,
+      core: 0,
+      candidate: 0,
+      watchlist: 0,
+      manualReview: 0,
+      ignore: 0,
+      lastScoredAt: null,
     },
     rows: [],
   };

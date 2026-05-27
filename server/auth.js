@@ -53,6 +53,12 @@ export function redactServiceForPublicHealth(service) {
           lastError: service.real.lastError ? 'redacted' : null,
         }
       : service.real,
+    realCopyQuality: service.realCopyQuality
+      ? {
+          ...service.realCopyQuality,
+          lastError: service.realCopyQuality.lastError ? 'redacted' : null,
+        }
+      : service.realCopyQuality,
   };
 }
 

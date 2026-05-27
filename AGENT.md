@@ -221,6 +221,10 @@ Local/backend endpoints:
 - `GET /api/candidates/leaderboard`: independent `$1k-$10k` candidate trader leaderboard.
 - `GET /api/candidates/traders/:wallet`: independent candidate trader profile and recent tracked trades.
 - `GET /api/real/state`: Real dashboard state. Requires configured dashboard auth.
+- `GET /api/real/copy-quality`: cached Real Copy Quality leaderboard for active copy-pool/baseline wallets.
+- `GET /api/real/copy-quality/:wallet`: one wallet's cached Real Copy Quality score.
+- `POST /api/real/copy-quality/recalculate`: PIN-gated Real Copy Quality rescore.
+- `POST /api/real/copy-quality/:wallet/recalculate`: PIN-gated single-wallet Real Copy Quality rescore.
 - `POST /api/real/follow`: PIN-gated manual Real follow add.
 - `POST /api/real/unfollow`: PIN-gated manual Real follow removal.
 - `GET /api/real/orders`: recent Real order audit rows.
@@ -282,7 +286,7 @@ Implemented in `src/main.jsx`.
 - `Profit`: total P/L, realized/unrealized split, closed-trade history.
 - `Positions`: full current open copied-trades list.
 - `Traders`: watched-wallet cards with profit leaderboard metadata and recent watched trades.
-- `Real`: separate control room for manual follows, quote-audited fixed-stake FOK attempts, and dry-run or live position performance depending on `REAL_TRADING_MODE`.
+- `Real`: separate control room for manual follows, scored Real copy candidates, quote-audited fixed-stake FOK attempts, and dry-run or live position performance depending on `REAL_TRADING_MODE`.
 
 Main tape behavior:
 

@@ -59,7 +59,7 @@ function App() {
   const [tab, setTab] = React.useState('overview');
 
   React.useEffect(() => {
-    if (mode === 'real' && !['overview', 'following', 'positions', 'orders'].includes(tab)) setTab('overview');
+    if (mode === 'real' && !['overview', 'following', 'real-traders', 'positions', 'orders'].includes(tab)) setTab('overview');
   }, [mode, tab]);
 
   const data = state || emptyState();
@@ -227,7 +227,7 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service }) {
-  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'positions', 'orders'];
+  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'real-traders', 'positions', 'orders'];
   const lastPollAt = mode === 'real' ? service?.real?.lastPollAt : service?.pollLastRunAt;
   const realLiveRequested = service?.real?.mode === 'live' && service?.real?.liveExecutionEnabled;
   const realLiveReady = realLiveRequested && service?.real?.liveExecutionReady;
@@ -240,7 +240,7 @@ function Topbar({ mode, tab, setTab, refresh, service }) {
       <nav className="tabs" aria-label="Dashboard views">
         {tabs.map((item) => (
           <button key={item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>
-            {item}
+            {tabLabel(item)}
           </button>
         ))}
       </nav>
@@ -306,9 +306,15 @@ function RealWorkspace({ tab }) {
   }
 
   if (tab === 'following') return <RealFollowingView real={real} realState={realState} />;
+  if (tab === 'real-traders') return <RealScoredTradersView realState={realState} />;
   if (tab === 'positions') return <RealPositionsView real={real} />;
   if (tab === 'orders') return <RealOrdersView real={real} />;
   return <RealOverview real={real} />;
+}
+
+function tabLabel(tab) {
+  if (tab === 'real-traders') return 'scored traders';
+  return tab;
 }
 
 function RealOverview({ real }) {
@@ -381,6 +387,280 @@ function RealMetricStrip({ summary, real }) {
         </div>
       ))}
     </section>
+  );
+}
+
+function RealScoredTradersView({ realState }) {
+  const [tier, setTier] = React.useState('all');
+  const [eligibleOnly, setEligibleOnly] = React.useState(true);
+  const [sort, setSort] = React.useState('score');
+  const [query, setQuery] = React.useState('');
+  const [pinRequest, setPinRequest] = React.useState(null);
+  const [actionError, setActionError] = React.useState(null);
+  const [pendingWallet, setPendingWallet] = React.useState(null);
+  const quality = useRealCopyQuality({ tier, eligibleOnly, sort, query });
+  const rows = quality.payload?.rows || [];
+  const summary = quality.payload?.summary || {};
+
+  const requestRealAdd = React.useCallback((row) => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Add real follow',
+      description: `${row.displayName || row.pseudonym || shortWallet(row.wallet)} will be tracked by the Real engine from now on.`,
+      confirmLabel: 'Add',
+      onSubmit: async (pin) => {
+        setPendingWallet(row.wallet);
+        try {
+          const response = await fetch(`${API_BASE}/api/real/follow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({
+              pin,
+              wallet: row.wallet,
+              displayName: row.displayName,
+              pseudonym: row.pseudonym,
+              profileImage: row.profileImage,
+            }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Real follow failed');
+          realState.setReal(payload.real);
+          await quality.refresh();
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setPendingWallet(null);
+        }
+      },
+    });
+  }, [quality, realState]);
+
+  const requestRealRemove = React.useCallback((row) => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Remove real follow',
+      description: `${row.displayName || row.pseudonym || shortWallet(row.wallet)} will stop being tracked for new real entries.`,
+      confirmLabel: 'Remove',
+      onSubmit: async (pin) => {
+        setPendingWallet(row.wallet);
+        try {
+          const response = await fetch(`${API_BASE}/api/real/unfollow`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ pin, wallet: row.wallet }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Real remove failed');
+          realState.setReal(payload.real);
+          await quality.refresh();
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setPendingWallet(null);
+        }
+      },
+    });
+  }, [quality, realState]);
+
+  const requestRecalculate = React.useCallback(() => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Recalculate copy quality',
+      description: 'Scores will refresh from the latest resolved candidate history and active copy-pool wallets.',
+      confirmLabel: 'Recalculate',
+      onSubmit: async (pin) => {
+        setPendingWallet('__recalculate__');
+        try {
+          const response = await fetch(`${API_BASE}/api/real/copy-quality/recalculate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ pin, scope: 'active_copy_pool' }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Recalculate failed');
+          await quality.refresh();
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setPendingWallet(null);
+        }
+      },
+    });
+  }, [quality]);
+
+  return (
+    <section className="panel fullPanel realScoredPanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Copy quality</p>
+          <h2>Scored real candidates</h2>
+        </div>
+        <div className="sectionActions">
+          <button className="textButton" onClick={requestRecalculate} disabled={pendingWallet === '__recalculate__'}>
+            <RefreshCcw size={14} /> {pendingWallet === '__recalculate__' ? 'Scoring' : 'Recalculate'}
+          </button>
+          <button className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
+        </div>
+      </div>
+
+      <p className="panelCopy">
+        Copy Quality ranks wallets by how suitable they are for this copier, not by raw trader leaderboard performance.
+      </p>
+
+      <div className="candidateSummary">
+        <CopyQualityStat icon={Users} label="Scored" value={summary.scored || 0} />
+        <CopyQualityStat icon={ShieldCheck} label="Eligible" value={summary.eligible || 0} />
+        <CopyQualityStat icon={Trophy} label="Core" value={summary.core || 0} />
+        <CopyQualityStat icon={Eye} label="Watchlist" value={summary.watchlist || 0} />
+        <CopyQualityStat icon={Clock3} label="Last scored" value={formatTimeAgo(summary.lastScoredAt)} />
+      </div>
+
+      <div className="candidateToolbar realQualityToolbar">
+        <label>
+          <span>Tier</span>
+          <select value={tier} onChange={(event) => setTier(event.target.value)}>
+            <option value="all">all</option>
+            <option value="core">core</option>
+            <option value="candidate">candidate</option>
+            <option value="watchlist">watchlist</option>
+            <option value="manual_review">manual review</option>
+            <option value="ignore">ignore</option>
+          </select>
+        </label>
+        <label>
+          <span>Sort</span>
+          <select value={sort} onChange={(event) => setSort(event.target.value)}>
+            <option value="score">score</option>
+            <option value="edge">copy edge</option>
+            <option value="entry">entry</option>
+            <option value="profit">profit</option>
+            <option value="drawdown">drawdown</option>
+            <option value="updated">updated</option>
+          </select>
+        </label>
+        <label className="toggleLine">
+          <input type="checkbox" checked={eligibleOnly} onChange={(event) => setEligibleOnly(event.target.checked)} />
+          <span>Eligible only</span>
+        </label>
+        <input
+          className="searchInput"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search wallet or name"
+          aria-label="Search scored traders"
+        />
+        {actionError && <span className="negative">{actionError}</span>}
+      </div>
+
+      {quality.error ? (
+        <EmptyState title="Copy quality unavailable" text={quality.error} />
+      ) : (
+        <div className="candidateList realQualityList">
+          {rows.map((row) => (
+            <RealScoredTraderRow
+              key={row.wallet}
+              row={row}
+              onAdd={() => requestRealAdd(row)}
+              onRemove={() => requestRealRemove(row)}
+              pending={pendingWallet === row.wallet}
+            />
+          ))}
+          {!rows.length && (
+            <EmptyState
+              title={quality.loading ? 'Loading scored traders' : 'No scored traders'}
+              text={quality.loading ? 'Fetching copy quality scores.' : 'Run scoring after candidate backfill has resolved trade history.'}
+            />
+          )}
+        </div>
+      )}
+
+      <PinPromptModal
+        request={pinRequest}
+        error={actionError}
+        pending={Boolean(pendingWallet)}
+        onCancel={() => {
+          setPinRequest(null);
+          setActionError(null);
+        }}
+      />
+    </section>
+  );
+}
+
+function CopyQualityStat({ icon: Icon, label, value }) {
+  return (
+    <div className="candidateStat">
+      <Icon size={17} />
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
+  const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
+  const active = row.realFollowStatus === 'active';
+  return (
+    <article className={`candidateRow realQualityRow ${row.eligible ? 'eligible' : 'ineligible'}`}>
+      <div className="candidateRank scoreRank">
+        <span>{Math.round(row.score || 0)}</span>
+      </div>
+      <div className="avatar">
+        {row.profileImage ? <img src={row.profileImage} alt="" /> : <Cpu size={17} />}
+      </div>
+      <div className="candidateIdentity">
+        <div className="candidateNameLine">
+          <strong>{display}</strong>
+          <small className={`copyPoolBadge ${copyQualityTierTone(row.tier)}`} title={row.reason || row.explanation}>
+            {copyQualityTierLabel(row.tier)}
+          </small>
+        </div>
+        <span>{shortWallet(row.wallet)}</span>
+        <small className="qualityExplanation">{row.explanation || row.reason}</small>
+      </div>
+      <div className="candidateMetric">
+        <span>Edge / Med</span>
+        <strong className={pnlTone(row.conservativeCopyEdgePct)}>
+          {formatNullableSignedPct(row.conservativeCopyEdgePct)} / {formatNullableCents(row.medianEntryCents30d)}
+        </strong>
+      </div>
+      <div className="candidateMetric">
+        <span>PF / ROI</span>
+        <strong>{formatPlainProfitFactor(row.profitFactor30d)} / {formatNullableSignedPct(row.roiPct30d)}</strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Markets / Trades</span>
+        <strong>{row.distinctResolvedMarkets30d || 0} / {row.pnlTradeCount30d || 0}</strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Win / Top win</span>
+        <strong>{formatNullablePct(row.winRatePct30d)} / {formatNullablePct(row.topWinSharePct30d)}</strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Profit / DD</span>
+        <strong className={pnlTone(row.profitUsd30d)}>
+          {formatNullableSignedCompactUsd(row.profitUsd30d)} / {formatDrawdownUsd(row.maxDrawdownUsd30d)}
+        </strong>
+      </div>
+      <div className="qualityFlags">
+        {(row.flags || []).slice(0, 3).map((flag) => <span key={flag}>{flagLabel(flag)}</span>)}
+        {!(row.flags || []).length && <span>clean</span>}
+      </div>
+      <div className="candidateRealAction">
+        {active ? (
+          <button className="textButton realRemoveButton" onClick={onRemove} disabled={pending}>
+            <UserMinus size={14} /> {pending ? 'Removing' : 'Remove'}
+          </button>
+        ) : (
+          <button className="textButton realAddButton" onClick={onAdd} disabled={pending}>
+            <UserPlus size={14} /> {pending ? 'Adding' : 'Add'}
+          </button>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -1056,6 +1336,42 @@ function useRealState() {
   }, [refresh]);
 
   return { real, loading, error, refresh, setReal };
+}
+
+function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'score', query = '' } = {}) {
+  const [payload, setPayload] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  const refresh = React.useCallback(async () => {
+    const params = new URLSearchParams();
+    params.set('limit', '100');
+    params.set('tier', tier || 'all');
+    params.set('eligible', eligibleOnly ? 'true' : 'all');
+    params.set('sort', sort || 'score');
+    params.set('order', ['entry', 'drawdown'].includes(sort) ? 'asc' : 'desc');
+    if (query.trim()) params.set('q', query.trim());
+    try {
+      const response = await fetch(`${API_BASE}/api/real/copy-quality?${params.toString()}`, { headers: authHeaders() });
+      const nextPayload = await response.json();
+      if (!response.ok) throw new Error(nextPayload.error || 'Copy quality request failed');
+      setPayload(nextPayload);
+      setError(null);
+    } catch (fetchError) {
+      setError(fetchError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [eligibleOnly, query, sort, tier]);
+
+  React.useEffect(() => {
+    setLoading(true);
+    refresh();
+    const timer = window.setInterval(refresh, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  return { payload, loading, error, refresh };
 }
 
 function CandidatesView({ service, copyPoolState }) {
@@ -1825,6 +2141,12 @@ function formatProfitFactor(metrics = {}) {
   return `${number.toFixed(number >= 10 ? 1 : 2)}x`;
 }
 
+function formatPlainProfitFactor(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return `${number.toFixed(number >= 10 ? 1 : 2)}x`;
+}
+
 function formatNullablePct(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
@@ -1925,6 +2247,25 @@ function copyPoolBadge(entry) {
   if (!entry || entry.status !== 'active') return null;
   if (entry.protected) return { label: 'Following', tone: 'protected', title: 'Protected baseline wallet is being copied' };
   return { label: 'Following', tone: 'following', title: 'Auto-added trader is being copied' };
+}
+
+function copyQualityTierLabel(tier) {
+  const value = String(tier || 'ignore');
+  if (value === 'manual_review') return 'manual review';
+  return value;
+}
+
+function copyQualityTierTone(tier) {
+  const value = String(tier || 'ignore');
+  if (value === 'core') return 'protected';
+  if (value === 'candidate') return 'following';
+  if (value === 'watchlist') return 'neutral';
+  if (value === 'manual_review') return 'neutral';
+  return 'removed';
+}
+
+function flagLabel(flag) {
+  return String(flag || '').replace(/_/g, ' ');
 }
 
 function candidateEligibility(row, entry, thresholds = {}) {

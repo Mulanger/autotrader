@@ -40,6 +40,8 @@ For durable demo state, add Railway Postgres to the service so Railway injects `
 
 The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_ENABLED=true`. When enabled with `DATABASE_URL`, it polls Polymarket Data API directly, stores qualifying trades in `candidate_*` tables, backfills newly seen wallets for 30 days, keeps active copied wallets queued for 90 days of card history, resolves markets through Gamma, and serves the dashboard Candidates tab from `/api/candidates/leaderboard`.
 
+The Real dashboard has a scored traders tab backed by cached `real_copy_quality_scores`. It ranks active copy-pool and baseline wallets by copier-specific Copy Quality Score using median entry, conservative copy edge, profit factor, drawdown/profit ratio, sample size, and top-win concentration. This is decision support only; it does not auto-add wallets to Real follows.
+
 ## Environment
 
 Optional:

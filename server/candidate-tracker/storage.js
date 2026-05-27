@@ -8,9 +8,10 @@ import {
   makeCopyPoolWallet,
   normalizeWallet,
 } from '../copy-pool.js';
+import { scoreCopyTrader } from '../copy-quality-score.js';
 import { SHADOW_TRADER_CRITERIA, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export async function createCandidateStorage() {
   if (!process.env.DATABASE_URL) {
@@ -50,6 +51,9 @@ export async function createCandidateStorage() {
     evaluateCopyPool: (params) => evaluateCopyPool(pool, params),
     evaluateShadowTrader: (params) => evaluateShadowTrader(pool, params),
     getCopyPoolSnapshot: (params) => getCopyPoolSnapshot(pool, params),
+    recalculateRealCopyQuality: (params) => recalculateRealCopyQuality(pool, params),
+    getRealCopyQualityLeaderboard: (params) => getRealCopyQualityLeaderboard(pool, params),
+    getRealCopyQualityScore: (wallet) => getRealCopyQualityScore(pool, wallet),
     close: () => pool.end(),
   };
 }
@@ -171,6 +175,39 @@ async function migrate(pool) {
     create index if not exists copy_pool_traders_status_idx on copy_pool_traders (source, status);
     create index if not exists copy_pool_events_created_idx on copy_pool_events (created_at desc);
     create index if not exists copy_pool_events_wallet_idx on copy_pool_events (wallet, created_at desc);
+
+    create table if not exists real_copy_quality_scores (
+      wallet text primary key,
+      score numeric not null default 0,
+      eligible boolean not null default false,
+      tier text not null default 'ignore',
+      reason text,
+      explanation text,
+      flags jsonb not null default '[]'::jsonb,
+      conservative_copy_edge_pct numeric,
+      conservative_win_rate_pct numeric,
+      drawdown_to_profit_ratio numeric,
+      profit_usd_30d numeric,
+      roi_pct_30d numeric,
+      profit_factor_30d numeric,
+      max_drawdown_usd_30d numeric,
+      median_entry_cents_30d numeric,
+      avg_entry_price_cents_30d numeric,
+      distinct_resolved_markets_30d integer,
+      pnl_trade_count_30d integer,
+      win_count_30d integer,
+      win_rate_pct_30d numeric,
+      top_win_share_pct_30d numeric,
+      payload jsonb not null default '{}'::jsonb,
+      scored_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create index if not exists real_copy_quality_scores_score_idx
+      on real_copy_quality_scores (eligible, score desc);
+    create index if not exists real_copy_quality_scores_tier_idx
+      on real_copy_quality_scores (tier, score desc);
 
     insert into candidate_schema_migrations (version)
     values (${SCHEMA_VERSION})
@@ -899,6 +936,370 @@ async function getSummary(pool) {
   return camelizeSummary(result.rows[0] || {});
 }
 
+async function recalculateRealCopyQuality(pool, {
+  scope = 'active_copy_pool',
+  wallet = null,
+  baselineWallets = [],
+} = {}) {
+  const rows = await getRealCopyQualityMetricRows(pool, { scope, wallet, baselineWallets });
+  let scored = 0;
+  for (const row of rows) {
+    const score = scoreCopyTrader(row);
+    await saveRealCopyQualityScore(pool, row, score);
+    scored += 1;
+  }
+  const summary = await getRealCopyQualitySummary(pool);
+  return {
+    ok: true,
+    scope,
+    wallet: wallet ? normalizeWallet(wallet) : null,
+    scored,
+    summary,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+async function getRealCopyQualityMetricRows(pool, {
+  scope = 'active_copy_pool',
+  wallet = null,
+  baselineWallets = [],
+} = {}) {
+  const normalizedWallet = normalizeWallet(wallet);
+  const normalizedBaseline = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
+  const result = await pool.query(
+    `
+      with scope_wallets as (
+        select lower($2::text) as wallet
+        where $1::text = 'wallet' and coalesce($2::text, '') <> ''
+        union
+        select wallet from candidate_traders where $1::text = 'all_candidates'
+        union
+        select wallet from copy_pool_traders where $1::text <> 'wallet' and status = 'active'
+        union
+        select lower(baseline_wallet.wallet)::text as wallet
+        from unnest($3::text[]) as baseline_wallet(wallet)
+        where $1::text <> 'wallet'
+      ),
+      buy_30d as (
+        select ct.*
+        from candidate_trades ct
+        join scope_wallets sw on sw.wallet = ct.wallet
+        where ct.side = 'BUY'
+          and ct.trade_timestamp >= now() - interval '30 days'
+      ),
+      entry_stats as (
+        select
+          wallet,
+          (percentile_cont(0.5) within group (order by price * 100))::numeric as median_entry_cents_30d,
+          (sum(usd_size) / nullif(sum(shares), 0) * 100)::numeric as avg_entry_price_cents_30d,
+          avg(usd_size)::numeric as avg_trade_size_usd_30d
+        from buy_30d
+        where price is not null
+          and shares is not null
+          and shares > 0
+          and usd_size is not null
+        group by wallet
+      ),
+      resolved_30d as (
+        select *
+        from buy_30d
+        where status in ('resolved_win', 'resolved_loss')
+          and pnl_usd is not null
+      ),
+      resolved_ranked as (
+        select
+          *,
+          row_number() over (
+            partition by wallet, coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id)
+            order by resolved_at desc nulls last, trade_timestamp desc, id desc
+          ) as rn
+        from resolved_30d
+      ),
+      distinct_resolved as (
+        select *
+        from resolved_ranked
+        where rn = 1
+      ),
+      distinct_stats as (
+        select
+          wallet,
+          count(*)::integer as distinct_resolved_markets_30d,
+          count(*) filter (where status = 'resolved_win')::integer as win_count_30d,
+          case when count(*) > 0
+            then count(*) filter (where status = 'resolved_win')::numeric / count(*) * 100
+            else null
+          end as win_rate_pct_30d
+        from distinct_resolved
+        group by wallet
+      ),
+      pnl_stats_raw as (
+        select
+          wallet,
+          count(*)::integer as pnl_trade_count_30d,
+          coalesce(sum(pnl_usd), 0)::numeric as profit_usd_30d,
+          coalesce(sum(usd_size), 0)::numeric as deployed_capital_usd_30d,
+          coalesce(sum(pnl_usd) filter (where pnl_usd > 0), 0)::numeric as gross_winning_pnl_usd_30d,
+          abs(coalesce(sum(pnl_usd) filter (where pnl_usd < 0), 0))::numeric as gross_losing_pnl_usd_30d,
+          (max(pnl_usd) filter (where pnl_usd > 0))::numeric as largest_win_usd_30d
+        from resolved_30d
+        group by wallet
+      ),
+      pnl_stats as (
+        select
+          wallet,
+          pnl_trade_count_30d,
+          profit_usd_30d,
+          case when deployed_capital_usd_30d > 0
+            then profit_usd_30d / deployed_capital_usd_30d * 100
+            else null
+          end as roi_pct_30d,
+          case
+            when gross_winning_pnl_usd_30d > 0 and gross_losing_pnl_usd_30d > 0
+              then gross_winning_pnl_usd_30d / gross_losing_pnl_usd_30d
+            when gross_winning_pnl_usd_30d > 0 and gross_losing_pnl_usd_30d = 0
+              then 5::numeric
+            else null
+          end as profit_factor_30d,
+          case when gross_winning_pnl_usd_30d > 0
+            then largest_win_usd_30d / gross_winning_pnl_usd_30d * 100
+            else null
+          end as top_win_share_pct_30d
+        from pnl_stats_raw
+      ),
+      drawdown_curve as (
+        select
+          wallet,
+          coalesce(resolved_at, trade_timestamp) as close_ts,
+          id,
+          (sum(pnl_usd) over (
+            partition by wallet
+            order by coalesce(resolved_at, trade_timestamp), id
+            rows between unbounded preceding and current row
+          ))::numeric as cumulative_pnl_usd
+        from resolved_30d
+      ),
+      drawdown_points as (
+        select
+          wallet,
+          cumulative_pnl_usd - greatest(
+            0::numeric,
+            max(cumulative_pnl_usd) over (
+              partition by wallet
+              order by close_ts, id
+              rows between unbounded preceding and current row
+            )
+          ) as drawdown_usd
+        from drawdown_curve
+      ),
+      drawdown_stats as (
+        select wallet, min(drawdown_usd)::numeric as max_drawdown_usd_30d
+        from drawdown_points
+        group by wallet
+      )
+      select
+        sw.wallet,
+        t.display_name,
+        t.pseudonym,
+        t.profile_image,
+        coalesce(ps.profit_usd_30d, 0)::numeric as profit_usd_30d,
+        ps.roi_pct_30d,
+        ps.profit_factor_30d,
+        coalesce(ds.max_drawdown_usd_30d, 0)::numeric as max_drawdown_usd_30d,
+        es.median_entry_cents_30d,
+        es.avg_entry_price_cents_30d,
+        coalesce(drs.distinct_resolved_markets_30d, 0)::integer as distinct_resolved_markets_30d,
+        coalesce(ps.pnl_trade_count_30d, 0)::integer as pnl_trade_count_30d,
+        coalesce(drs.win_count_30d, 0)::integer as win_count_30d,
+        drs.win_rate_pct_30d,
+        ps.top_win_share_pct_30d,
+        es.avg_trade_size_usd_30d
+      from scope_wallets sw
+      left join candidate_traders t on t.wallet = sw.wallet
+      left join entry_stats es on es.wallet = sw.wallet
+      left join distinct_stats drs on drs.wallet = sw.wallet
+      left join pnl_stats ps on ps.wallet = sw.wallet
+      left join drawdown_stats ds on ds.wallet = sw.wallet
+      where sw.wallet is not null
+      order by coalesce(ps.profit_usd_30d, 0) desc, sw.wallet asc
+    `,
+    [scope, normalizedWallet || '', normalizedBaseline]
+  );
+  return result.rows;
+}
+
+async function saveRealCopyQualityScore(pool, row, score) {
+  await pool.query(
+    `
+      insert into real_copy_quality_scores (
+        wallet, score, eligible, tier, reason, explanation, flags,
+        conservative_copy_edge_pct, conservative_win_rate_pct, drawdown_to_profit_ratio,
+        profit_usd_30d, roi_pct_30d, profit_factor_30d, max_drawdown_usd_30d,
+        median_entry_cents_30d, avg_entry_price_cents_30d, distinct_resolved_markets_30d,
+        pnl_trade_count_30d, win_count_30d, win_rate_pct_30d, top_win_share_pct_30d,
+        payload, scored_at, updated_at
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7::jsonb,
+        $8, $9, $10,
+        $11, $12, $13, $14,
+        $15, $16, $17,
+        $18, $19, $20, $21,
+        $22::jsonb, now(), now()
+      )
+      on conflict (wallet)
+      do update set
+        score = excluded.score,
+        eligible = excluded.eligible,
+        tier = excluded.tier,
+        reason = excluded.reason,
+        explanation = excluded.explanation,
+        flags = excluded.flags,
+        conservative_copy_edge_pct = excluded.conservative_copy_edge_pct,
+        conservative_win_rate_pct = excluded.conservative_win_rate_pct,
+        drawdown_to_profit_ratio = excluded.drawdown_to_profit_ratio,
+        profit_usd_30d = excluded.profit_usd_30d,
+        roi_pct_30d = excluded.roi_pct_30d,
+        profit_factor_30d = excluded.profit_factor_30d,
+        max_drawdown_usd_30d = excluded.max_drawdown_usd_30d,
+        median_entry_cents_30d = excluded.median_entry_cents_30d,
+        avg_entry_price_cents_30d = excluded.avg_entry_price_cents_30d,
+        distinct_resolved_markets_30d = excluded.distinct_resolved_markets_30d,
+        pnl_trade_count_30d = excluded.pnl_trade_count_30d,
+        win_count_30d = excluded.win_count_30d,
+        win_rate_pct_30d = excluded.win_rate_pct_30d,
+        top_win_share_pct_30d = excluded.top_win_share_pct_30d,
+        payload = excluded.payload,
+        scored_at = excluded.scored_at,
+        updated_at = now()
+    `,
+    [
+      row.wallet,
+      numberOrNull(score.copyQualityScore),
+      Boolean(score.eligible),
+      score.tier || 'ignore',
+      score.reason || null,
+      score.explanation || null,
+      JSON.stringify(score.flags || []),
+      numberOrNull(score.conservativeCopyEdgePct),
+      numberOrNull(score.conservativeWinRatePct),
+      numberOrNull(score.drawdownToProfitRatio),
+      nullableNumber(row.profit_usd_30d),
+      nullableNumber(row.roi_pct_30d),
+      nullableNumber(row.profit_factor_30d),
+      nullableNumber(row.max_drawdown_usd_30d),
+      nullableNumber(row.median_entry_cents_30d),
+      nullableNumber(row.avg_entry_price_cents_30d),
+      Number(row.distinct_resolved_markets_30d || 0),
+      Number(row.pnl_trade_count_30d || 0),
+      Number(row.win_count_30d || 0),
+      nullableNumber(row.win_rate_pct_30d),
+      nullableNumber(row.top_win_share_pct_30d),
+      JSON.stringify({ input: row, score }),
+    ]
+  );
+}
+
+async function getRealCopyQualityLeaderboard(pool, params = {}) {
+  const limit = boundedInteger(params.limit, 100, 1, 250);
+  const offset = boundedInteger(params.offset, 0, 0, 100_000);
+  const sort = copyQualitySortColumn(params.sort);
+  const direction = String(params.order || 'desc').toLowerCase() === 'asc' ? 'asc' : 'desc';
+  const values = [];
+  const where = [];
+
+  if (params.tier && params.tier !== 'all') {
+    values.push(String(params.tier));
+    where.push(`s.tier = $${values.length}`);
+  }
+  if (params.eligible === true || params.eligible === false) {
+    values.push(Boolean(params.eligible));
+    where.push(`s.eligible = $${values.length}`);
+  }
+  if (params.q) {
+    values.push(`%${String(params.q).trim().toLowerCase()}%`);
+    where.push(`(
+      lower(s.wallet) like $${values.length}
+      or lower(coalesce(t.display_name, '')) like $${values.length}
+      or lower(coalesce(t.pseudonym, '')) like $${values.length}
+    )`);
+  }
+
+  values.push(limit, offset);
+  const limitParam = values.length - 1;
+  const offsetParam = values.length;
+  const whereSql = where.length ? `where ${where.join(' and ')}` : '';
+  const result = await pool.query(
+    `
+      select
+        s.*,
+        t.display_name,
+        t.pseudonym,
+        t.profile_image
+      from real_copy_quality_scores s
+      left join candidate_traders t on t.wallet = s.wallet
+      ${whereSql}
+      order by ${sort} ${direction}, s.wallet asc
+      limit $${limitParam} offset $${offsetParam}
+    `,
+    values
+  );
+  const summary = await getRealCopyQualitySummary(pool);
+  return {
+    ok: true,
+    summary,
+    rows: result.rows.map(mapRealCopyQualityRow),
+    limit,
+    offset,
+  };
+}
+
+async function getRealCopyQualityScore(pool, wallet) {
+  const normalized = normalizeWallet(wallet);
+  if (!normalized) return null;
+  const result = await pool.query(
+    `
+      select
+        s.*,
+        t.display_name,
+        t.pseudonym,
+        t.profile_image
+      from real_copy_quality_scores s
+      left join candidate_traders t on t.wallet = s.wallet
+      where s.wallet = $1
+    `,
+    [normalized]
+  );
+  return result.rowCount ? mapRealCopyQualityRow(result.rows[0]) : null;
+}
+
+async function getRealCopyQualitySummary(pool) {
+  const result = await pool.query(`
+    select
+      count(*)::integer as total,
+      count(*)::integer as scored,
+      count(*) filter (where eligible)::integer as eligible,
+      count(*) filter (where tier = 'core')::integer as core,
+      count(*) filter (where tier = 'candidate')::integer as candidate,
+      count(*) filter (where tier = 'watchlist')::integer as watchlist,
+      count(*) filter (where tier = 'manual_review')::integer as manual_review,
+      count(*) filter (where tier = 'ignore')::integer as ignore,
+      max(scored_at) as last_scored_at
+    from real_copy_quality_scores
+  `);
+  const row = result.rows[0] || {};
+  return {
+    total: Number(row.total || 0),
+    scored: Number(row.scored || 0),
+    eligible: Number(row.eligible || 0),
+    core: Number(row.core || 0),
+    candidate: Number(row.candidate || 0),
+    watchlist: Number(row.watchlist || 0),
+    manualReview: Number(row.manual_review || 0),
+    ignore: Number(row.ignore || 0),
+    lastScoredAt: isoOrNull(row.last_scored_at),
+  };
+}
+
 async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresholdOverrides = {} } = {}) {
   const thresholds = defaultCopyPoolThresholds(thresholdOverrides);
   const client = await pool.connect();
@@ -1528,6 +1929,36 @@ function mapLeaderboardRow(row) {
   };
 }
 
+function mapRealCopyQualityRow(row) {
+  return {
+    wallet: row.wallet,
+    displayName: row.display_name,
+    pseudonym: row.pseudonym,
+    profileImage: row.profile_image,
+    score: numberFromPg(row.score),
+    eligible: Boolean(row.eligible),
+    tier: row.tier || 'ignore',
+    reason: row.reason,
+    explanation: row.explanation,
+    flags: Array.isArray(row.flags) ? row.flags : [],
+    conservativeCopyEdgePct: nullableNumberFromPg(row.conservative_copy_edge_pct),
+    conservativeWinRatePct: nullableNumberFromPg(row.conservative_win_rate_pct),
+    drawdownToProfitRatio: nullableNumberFromPg(row.drawdown_to_profit_ratio),
+    profitUsd30d: numberFromPg(row.profit_usd_30d),
+    roiPct30d: nullableNumberFromPg(row.roi_pct_30d),
+    profitFactor30d: nullableNumberFromPg(row.profit_factor_30d),
+    maxDrawdownUsd30d: nullableNumberFromPg(row.max_drawdown_usd_30d),
+    medianEntryCents30d: nullableNumberFromPg(row.median_entry_cents_30d),
+    avgEntryPriceCents30d: nullableNumberFromPg(row.avg_entry_price_cents_30d),
+    distinctResolvedMarkets30d: Number(row.distinct_resolved_markets_30d || 0),
+    pnlTradeCount30d: Number(row.pnl_trade_count_30d || 0),
+    winCount30d: Number(row.win_count_30d || 0),
+    winRatePct30d: nullableNumberFromPg(row.win_rate_pct_30d),
+    topWinSharePct30d: nullableNumberFromPg(row.top_win_share_pct_30d),
+    scoredAt: isoOrNull(row.scored_at),
+  };
+}
+
 function mapMonthlyPerformance(value) {
   const items = Array.isArray(value) ? value : [];
   return items
@@ -1610,6 +2041,22 @@ function shouldUseSsl(databaseUrl) {
   if (process.env.PGSSLMODE === 'disable') return false;
   if (process.env.PGSSLMODE === 'require') return true;
   return /sslmode=require/i.test(databaseUrl);
+}
+
+function copyQualitySortColumn(sort) {
+  const key = String(sort || 'score').toLowerCase();
+  if (key === 'profit') return 's.profit_usd_30d';
+  if (key === 'edge') return 's.conservative_copy_edge_pct';
+  if (key === 'entry') return 's.median_entry_cents_30d';
+  if (key === 'drawdown') return 's.drawdown_to_profit_ratio';
+  if (key === 'updated') return 's.scored_at';
+  return 's.score';
+}
+
+function boundedInteger(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isInteger(number)) return fallback;
+  return Math.min(max, Math.max(min, number));
 }
 
 function numberOrNull(value) {
