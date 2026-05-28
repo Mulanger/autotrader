@@ -323,6 +323,8 @@ function RealOverview({ real }) {
   const liveReady = Boolean(real.service?.liveExecutionReady);
   const stakeLabel = usd(real.service?.stakeUsd || 10);
   const maxEntryLabel = formatCents(real.service?.maxEntryPriceCents || 75);
+  const guardLabel = `source +${Number(real.service?.priceGuardCents || 4).toFixed(1)}c max ask`;
+  const maxAgeLabel = `${Number(real.service?.maxSourceTradeAgeSeconds || 45)}s max source age`;
   const missingLiveConfig = real.service?.liveExecutionConfig?.missing || [];
   return (
     <div className="dashboardGrid">
@@ -334,15 +336,16 @@ function RealOverview({ real }) {
           <h2>{live ? 'Live FOK execution' : 'Dry-run FOK audit'}</h2>
           <p>
             {live
-              ? 'Real follows are manual. BUY entries are submitted as fixed-stake FOK orders after the source-price guard passes.'
-              : 'Real follows are manual. BUY entries are simulated as fixed-stake FOK orders with a strict source-price +/-4c precheck and no live CLOB submission.'}
+              ? 'Real follows are manual. Fresh BUY entries are submitted as fixed-stake FOK orders after the upper price guard passes.'
+              : 'Real follows are manual. Fresh BUY entries are simulated as fixed-stake FOK orders with an upper price guard and no live CLOB submission.'}
           </p>
           <div className="adapterList">
             <StatusLine active label="Manual follow list active" />
             <StatusLine active label={`${stakeLabel} fixed stake`} />
             <StatusLine active label={`${maxEntryLabel} max entry`} />
+            <StatusLine active label={maxAgeLabel} />
             <StatusLine active label="One position per market" />
-            <StatusLine active label="Source price +/-4c guard" />
+            <StatusLine active label={guardLabel} />
             <StatusLine active={live && liveReady} label={live ? (liveReady ? 'Live wallet signing enabled' : 'Live wallet signing blocked') : 'Live wallet signing disabled'} />
             {live && !liveReady && missingLiveConfig.length > 0 && (
               <StatusLine active={false} label={`Missing ${missingLiveConfig.join(', ')}`} />
@@ -804,8 +807,8 @@ function RealPositionsView({ real }) {
         expanded
         emptyTitle={live ? 'No live positions' : 'No real dry-run positions'}
         emptyText={live
-          ? 'New BUY trades from manually followed wallets will submit fixed-stake FOK orders if the price guard passes.'
-          : 'New BUY trades from manually followed wallets will create dry-run positions if the FOK quote guard passes.'}
+          ? 'Fresh BUY trades from manually followed wallets will submit fixed-stake FOK orders if the upper price guard passes.'
+          : 'Fresh BUY trades from manually followed wallets will create dry-run positions if the FOK quote guard passes.'}
       />
     </section>
   );
@@ -850,14 +853,14 @@ function RealOrderRow({ order, compact }) {
       {!compact && (
         <>
           <RealMiniStat label="Source" value={formatCents(order.sourcePriceCents)} />
-          <RealMiniStat label="Guard" value={`${formatCents(order.minGuardCents)}-${formatCents(order.maxGuardCents)}`} />
-          <RealMiniStat label="Quote" value={filled ? formatCents(order.vwapCents) : formatCents(order.bestAskCents)} />
-          <RealMiniStat label="Stake" value={usd(order.stakeUsd || 10)} />
+          <RealMiniStat label="Max ask" value={formatCents(order.maxGuardCents)} />
+          <RealMiniStat label="Best ask" value={formatCents(order.bestAskCents)} />
+          <RealMiniStat label="VWAP" value={formatCents(order.vwapCents)} />
         </>
       )}
       <div className="realOrderStatus">
         <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? (live ? 'filled' : 'would fill') : 'rejected'}</span>
-        <small title={order.reason}>{order.reasonCode || order.reason || 'ok'}</small>
+        <small title={order.reason}>{order.reason || order.reasonCode || 'ok'}</small>
       </div>
     </article>
   );

@@ -4,6 +4,7 @@ import {
   REAL_FOLLOW_POLL_INTERVAL_MS,
   REAL_LIVE_TRADING_ENABLED,
   REAL_MAX_ENTRY_PRICE_CENTS,
+  REAL_MAX_SOURCE_TRADE_AGE_SECONDS,
   REAL_PRICE_GUARD_CENTS,
   REAL_STAKE_USD,
   REAL_TRADING_MODE,
@@ -32,6 +33,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   const stakeUsd = options.stakeUsd ?? (tradingMode === 'live' ? REAL_STAKE_USD : REAL_DRY_RUN_STAKE_USD);
   const guardCents = options.guardCents ?? REAL_PRICE_GUARD_CENTS;
   const maxEntryPriceCents = options.maxEntryPriceCents ?? REAL_MAX_ENTRY_PRICE_CENTS;
+  const maxSourceTradeAgeSeconds = options.maxSourceTradeAgeSeconds ?? REAL_MAX_SOURCE_TRADE_AGE_SECONDS;
   const setTimer = options.setInterval || setInterval;
   const clearTimer = options.clearInterval || clearInterval;
   const autoRun = options.autoRun !== false;
@@ -53,6 +55,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       stakeUsd,
       priceGuardCents: guardCents,
       maxEntryPriceCents,
+      maxSourceTradeAgeSeconds,
     };
     broadcast();
     storage = await storageFactory();
@@ -100,10 +103,11 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   }
 
   async function runPoll() {
-    if (!storage || pollRunning) return { checked: 0, inserted: 0 };
+    if (!storage || pollRunning) return { checked: 0, inserted: 0, skippedStale: 0 };
     pollRunning = true;
     let checked = 0;
     let inserted = 0;
+    let skippedStale = 0;
     try {
       const readiness = liveReadiness();
       state.service.real.mode = tradingMode;
@@ -113,6 +117,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.stakeUsd = stakeUsd;
       state.service.real.priceGuardCents = guardCents;
       state.service.real.maxEntryPriceCents = maxEntryPriceCents;
+      state.service.real.maxSourceTradeAgeSeconds = maxSourceTradeAgeSeconds;
       if (isLiveExecutionRequested() && !readiness.ready) {
         throw new Error(`Live trading mode is enabled but not ready: missing ${readiness.missing.join(', ')}`);
       }
@@ -125,6 +130,10 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
           const trade = normalizeRealTrade(raw);
           if (!trade || trade.wallet !== follow.wallet) continue;
           if (!isAfterAdded(trade, follow)) continue;
+          if (!isFreshSourceTrade(trade)) {
+            skippedStale += 1;
+            continue;
+          }
           checked += 1;
           if (await storage.hasOrderAttempt(makeOrderAttemptId(trade.id))) continue;
           const attempt = await buildExecutionAttempt({ trade, follow });
@@ -137,15 +146,16 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.lastPollAt = new Date().toISOString();
       state.service.real.lastPollChecked = checked;
       state.service.real.lastPollInserted = inserted;
+      state.service.real.lastPollSkippedStale = skippedStale;
       state.service.real.lastError = null;
       await refreshState();
       broadcast();
-      return { checked, inserted };
+      return { checked, inserted, skippedStale };
     } catch (error) {
       state.service.real.status = 'error';
       state.service.real.lastError = error.message;
       broadcast();
-      return { checked, inserted, error };
+      return { checked, inserted, skippedStale, error };
     } finally {
       pollRunning = false;
     }
@@ -345,6 +355,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     state.service.real.stakeUsd = stakeUsd;
     state.service.real.priceGuardCents = guardCents;
     state.service.real.maxEntryPriceCents = maxEntryPriceCents;
+    state.service.real.maxSourceTradeAgeSeconds = maxSourceTradeAgeSeconds;
     return state.real;
   }
 
@@ -383,7 +394,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   function realModeNotes({ readiness }) {
     if (isLiveExecutionRequested()) {
       return readiness.ready
-        ? ['Live mode is enabled. Approved followed-wallet BUY entries are submitted as fixed-stake FOK orders after the price guard passes.']
+        ? ['Live mode is enabled. Fresh approved followed-wallet BUY entries are submitted as fixed-stake FOK orders after the price guard passes.']
         : [`Live mode is requested but blocked until required Railway variables are set: ${readiness.missing.join(', ')}.`];
     }
     return [
@@ -399,6 +410,14 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       dryRun: false,
       liveExecution: true,
     };
+  }
+
+  function isFreshSourceTrade(trade, nowMs = Date.now()) {
+    const maxAge = Number(maxSourceTradeAgeSeconds);
+    if (!Number.isFinite(maxAge) || maxAge <= 0) return true;
+    const tradeTime = Date.parse(trade?.tradeTimestamp);
+    if (!Number.isFinite(tradeTime)) return false;
+    return nowMs - tradeTime <= maxAge * 1000;
   }
 }
 

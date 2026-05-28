@@ -31,17 +31,6 @@ export function evaluateDryRunFokBuy({
 
   const bestAsk = asks[0];
   const bestAskCents = bestAsk.price * 100;
-  if (bestAskCents < minGuardCents) {
-    return rejected('below_price_guard', `Best ask ${formatCents(bestAskCents)} is below ${formatCents(minGuardCents)} lower guard`, {
-      checkedAt,
-      sourcePriceCents,
-      minGuardCents,
-      maxGuardCents,
-      stakeUsd: stake,
-      bestAskCents,
-      bookHash: orderBook?.hash || null,
-    });
-  }
   if (bestAskCents > maxGuardCents) {
     return rejected('above_price_guard', `Best ask ${formatCents(bestAskCents)} is above ${formatCents(maxGuardCents)} upper guard`, {
       checkedAt,

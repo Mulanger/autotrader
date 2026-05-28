@@ -95,6 +95,8 @@ export const REAL_MAX_ENTRY_PRICE_CENTS = Number(
   process.env.REAL_MAX_ENTRY_PRICE_CENTS || process.env.DEMO_MAX_ENTRY_PRICE_CENTS || 75
 );
 
+export const REAL_MAX_SOURCE_TRADE_AGE_SECONDS = Number(process.env.REAL_MAX_SOURCE_TRADE_AGE_SECONDS || 45);
+
 export const REAL_FOLLOW_POLL_INTERVAL_MS = Number(process.env.REAL_FOLLOW_POLL_INTERVAL_MS || 30_000);
 
 export const REAL_FOLLOW_POLL_LIMIT = Number(process.env.REAL_FOLLOW_POLL_LIMIT || 100);

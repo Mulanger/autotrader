@@ -37,7 +37,7 @@ describe('real dry-run quote engine', () => {
     expect(result.reasonCode).toBe('above_price_guard');
   });
 
-  it('rejects when the best ask is below source minus guard precheck', () => {
+  it('allows cheaper asks below the source minus guard for BUY entries', () => {
     const result = evaluateDryRunFokBuy({
       trade,
       stakeUsd: 10,
@@ -45,8 +45,10 @@ describe('real dry-run quote engine', () => {
       orderBook: { asks: [{ price: '0.45', size: '100' }] },
     });
 
-    expect(result.status).toBe('rejected');
-    expect(result.reasonCode).toBe('below_price_guard');
+    expect(result.status).toBe('would_fill');
+    expect(result.bestAskCents).toBe(45);
+    expect(result.worstAskCents).toBe(45);
+    expect(result.vwapCents).toBe(45);
   });
 
   it('rejects when liquidity inside the guard cannot fill the full stake', () => {

@@ -1823,11 +1823,7 @@ button {
   }
 
   .realOrderRow {
-    grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(80px, 0.35fr)) minmax(110px, auto);
-  }
-
-  .realOrderRow .realMiniStat:nth-of-type(n + 3) {
-    display: none;
+    grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(80px, 0.35fr)) minmax(110px, auto);
   }
 }
 

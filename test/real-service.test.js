@@ -64,6 +64,42 @@ describe('real trader service', () => {
     await service.close();
   });
 
+  it('skips stale source trades before quote or order execution', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    const followResult = await storage.followTrader({ wallet });
+    const oldTradeSeconds = Math.floor(Date.now() / 1000) - 120;
+    const freshTradeSeconds = Math.floor(Date.now() / 1000) - 10;
+    followResult.entry.addedAt = new Date((oldTradeSeconds - 60) * 1000).toISOString();
+    let quoteCalls = 0;
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      maxSourceTradeAgeSeconds: 45,
+      storageFactory: async () => storage,
+      fetchRealFollowTrades: async () => [
+        rawTrade({ timestamp: oldTradeSeconds, tx: '0xstale' }),
+        rawTrade({ timestamp: freshTradeSeconds, tx: '0xfresh' }),
+      ],
+      fetchOrderBook: async () => {
+        quoteCalls += 1;
+        return { asks: [{ price: '0.51', size: '100' }] };
+      },
+      fetchGammaResolution: async () => null,
+    });
+
+    await service.start();
+    const result = await service.runPoll();
+    const real = await service.getState();
+
+    expect(result.checked).toBe(1);
+    expect(result.skippedStale).toBe(1);
+    expect(quoteCalls).toBe(1);
+    expect(real.orders).toHaveLength(1);
+    expect(real.orders[0].sourceTradeId).toContain('real-src-');
+    expect(state.service.real.lastPollSkippedStale).toBe(1);
+    await service.close();
+  });
+
   it('records missing_token rejects when no token can be resolved', async () => {
     const state = createAppState();
     const storage = createMemoryRealStorage();
