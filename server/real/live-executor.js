@@ -1,4 +1,4 @@
-import { ClobClient, OrderType, Side, SignatureTypeV2 } from '@polymarket/clob-client-v2';
+import { AssetType, ClobClient, OrderType, Side, SignatureTypeV2 } from '@polymarket/clob-client-v2';
 import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { POLYGON_RPC_URL, POLYMARKET_CLOB_URL } from '../config.js';
@@ -8,6 +8,7 @@ const DEFAULT_CHAIN_ID = 137;
 export function createPolymarketLiveExecutor(options = {}) {
   const config = readLiveConfig(options);
   let clientPromise = null;
+  let balanceAllowanceSynced = false;
 
   return {
     getReadiness: () => publicReadiness(config),
@@ -19,6 +20,7 @@ export function createPolymarketLiveExecutor(options = {}) {
       if (!attempt?.asset) throw new Error('Cannot submit live order without a token id');
 
       const client = await getClient();
+      await ensureBalanceAllowanceSynced(client);
       const tickSize = tickSizeString(attempt.tickSize);
       const priceLimit = liveBuyPriceLimit(attempt, tickSize);
       const order = {
@@ -74,6 +76,12 @@ export function createPolymarketLiveExecutor(options = {}) {
     }
     return clientPromise;
   }
+
+  async function ensureBalanceAllowanceSynced(client) {
+    if (balanceAllowanceSynced || typeof client.updateBalanceAllowance !== 'function') return;
+    await client.updateBalanceAllowance({ asset_type: AssetType.COLLATERAL });
+    balanceAllowanceSynced = true;
+  }
 }
 
 function readLiveConfig(options) {
@@ -118,11 +126,11 @@ async function createClient(config) {
 }
 
 export async function createOrDeriveApiCredentials(authClient) {
-  const created = await attemptApiCredentialStep('create', () => authClient.createApiKey());
-  if (created.creds?.key) return created.creds;
-
   const derived = await attemptApiCredentialStep('derive', () => authClient.deriveApiKey());
   if (derived.creds?.key) return derived.creds;
+
+  const created = await attemptApiCredentialStep('create', () => authClient.createApiKey());
+  if (created.creds?.key) return created.creds;
 
   const reasons = [created, derived]
     .filter((result) => result.error)

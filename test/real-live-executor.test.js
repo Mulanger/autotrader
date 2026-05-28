@@ -17,12 +17,12 @@ describe('real live executor diagnostics', () => {
     expect(diagnostics.missing).not.toContain('POLYGON_RPC_URL');
   });
 
-  it('derives existing Polymarket API credentials when create fails', async () => {
+  it('derives existing Polymarket API credentials before creating a new key', async () => {
     const calls = [];
     const creds = await createOrDeriveApiCredentials({
       createApiKey: async () => {
         calls.push('create');
-        throw new Error('Could not create api key');
+        return { key: 'created', secret: 'created-secret', passphrase: 'created-passphrase' };
       },
       deriveApiKey: async () => {
         calls.push('derive');
@@ -30,7 +30,24 @@ describe('real live executor diagnostics', () => {
       },
     });
 
-    expect(calls).toEqual(['create', 'derive']);
+    expect(calls).toEqual(['derive']);
+    expect(creds).toEqual({ key: 'key', secret: 'secret', passphrase: 'passphrase' });
+  });
+
+  it('creates Polymarket API credentials only when derive fails', async () => {
+    const calls = [];
+    const creds = await createOrDeriveApiCredentials({
+      createApiKey: async () => {
+        calls.push('create');
+        return { key: 'key', secret: 'secret', passphrase: 'passphrase' };
+      },
+      deriveApiKey: async () => {
+        calls.push('derive');
+        throw new Error('Could not derive api key');
+      },
+    });
+
+    expect(calls).toEqual(['derive', 'create']);
     expect(creds).toEqual({ key: 'key', secret: 'secret', passphrase: 'passphrase' });
   });
 
