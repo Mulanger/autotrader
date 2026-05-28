@@ -24,5 +24,19 @@ $Settings = New-ScheduledTaskSettingsSet `
   -RestartCount 3 `
   -RestartInterval (New-TimeSpan -Minutes 1)
 
-Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Force | Out-Null
-Write-Host "Installed scheduled task '$TaskName'. It will start the local real worker when you log in."
+try {
+  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Settings $Settings -Force -ErrorAction Stop | Out-Null
+  Write-Host "Installed scheduled task '$TaskName'. It will start the local real worker when you log in."
+} catch {
+  $StartupFolder = [Environment]::GetFolderPath("Startup")
+  $ShortcutPath = Join-Path $StartupFolder "$TaskName.lnk"
+  $Shell = New-Object -ComObject WScript.Shell
+  $Shortcut = $Shell.CreateShortcut($ShortcutPath)
+  $Shortcut.TargetPath = $PowerShell
+  $Shortcut.Arguments = $Arguments
+  $Shortcut.WorkingDirectory = $Root
+  $Shortcut.WindowStyle = 7
+  $Shortcut.Save()
+  Write-Host "Could not register a scheduled task: $($_.Exception.Message)"
+  Write-Host "Created Startup shortcut instead: $ShortcutPath"
+}
