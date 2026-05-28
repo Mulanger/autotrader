@@ -66,7 +66,12 @@ export function createPolymarketLiveExecutor(options = {}) {
   };
 
   async function getClient() {
-    if (!clientPromise) clientPromise = createClient(config);
+    if (!clientPromise) {
+      clientPromise = createClient(config).catch((error) => {
+        clientPromise = null;
+        throw error;
+      });
+    }
     return clientPromise;
   }
 }
@@ -108,8 +113,39 @@ async function createClient(config) {
     throwOnError: true,
     retryOnError: true,
   };
-  const creds = config.creds || await new ClobClient(base).createOrDeriveApiKey();
+  const creds = config.creds || await createOrDeriveApiCredentials(new ClobClient(base));
   return new ClobClient({ ...base, creds });
+}
+
+export async function createOrDeriveApiCredentials(authClient) {
+  const created = await attemptApiCredentialStep('create', () => authClient.createApiKey());
+  if (created.creds?.key) return created.creds;
+
+  const derived = await attemptApiCredentialStep('derive', () => authClient.deriveApiKey());
+  if (derived.creds?.key) return derived.creds;
+
+  const reasons = [created, derived]
+    .filter((result) => result.error)
+    .map((result) => `${result.step}: ${result.error}`)
+    .join('; ');
+  throw new Error(`Could not create or derive Polymarket API key${reasons ? ` (${reasons})` : ''}`);
+}
+
+async function attemptApiCredentialStep(step, fn) {
+  try {
+    const creds = await fn();
+    if (creds?.key && creds?.secret && creds?.passphrase) return { step, creds };
+    return { step, error: 'response did not include key, secret, and passphrase' };
+  } catch (error) {
+    return { step, error: formatCredentialError(error) };
+  }
+}
+
+function formatCredentialError(error) {
+  const data = error?.data?.error || error?.data;
+  if (typeof data === 'string') return data;
+  if (data) return JSON.stringify(data);
+  return String(error?.message || error || 'unknown error');
 }
 
 function publicReadiness(config) {

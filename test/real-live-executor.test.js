@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { redactedLiveConfigForDiagnostics } from '../server/real/live-executor.js';
+import { createOrDeriveApiCredentials, redactedLiveConfigForDiagnostics } from '../server/real/live-executor.js';
 
 const privateKey = `0x${'1'.repeat(64)}`;
 const funderAddress = `0x${'2'.repeat(40)}`;
@@ -15,5 +15,33 @@ describe('real live executor diagnostics', () => {
     expect(diagnostics.ready).toBe(true);
     expect(diagnostics.rpcUrlConfigured).toBe(true);
     expect(diagnostics.missing).not.toContain('POLYGON_RPC_URL');
+  });
+
+  it('derives existing Polymarket API credentials when create fails', async () => {
+    const calls = [];
+    const creds = await createOrDeriveApiCredentials({
+      createApiKey: async () => {
+        calls.push('create');
+        throw new Error('Could not create api key');
+      },
+      deriveApiKey: async () => {
+        calls.push('derive');
+        return { key: 'key', secret: 'secret', passphrase: 'passphrase' };
+      },
+    });
+
+    expect(calls).toEqual(['create', 'derive']);
+    expect(creds).toEqual({ key: 'key', secret: 'secret', passphrase: 'passphrase' });
+  });
+
+  it('surfaces both Polymarket API credential failures when create and derive fail', async () => {
+    await expect(createOrDeriveApiCredentials({
+      createApiKey: async () => {
+        throw new Error('Could not create api key');
+      },
+      deriveApiKey: async () => {
+        throw new Error('Could not derive api key');
+      },
+    })).rejects.toThrow('create: Could not create api key; derive: Could not derive api key');
   });
 });
