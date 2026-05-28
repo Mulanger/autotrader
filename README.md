@@ -72,6 +72,7 @@ Optional:
 - `AUTO_COPY_MAX_AEP_CENTS`: legacy/display AEP reference, defaults to `75`; auto promotion no longer rejects traders by AEP.
 - `FETCH_TIMEOUT_MS`: defaults to `15000`.
 - `FETCH_RETRY_COUNT`: defaults to `2`.
+- `POLYGON_RPC_URL`: Polygon RPC endpoint for live Polymarket signing/SDK calls, defaults to `https://polygon-rpc.com`. `POLYMARKET_RPC_URL` and `RPC_URL` are accepted aliases.
 - `DASHBOARD_AUTH_TOKEN`: optional token for dashboard APIs and websocket updates.
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions, defaults to `1993`.
 - `REAL_TRADING_MODE`: `dry_run` by default. Set to `live` only when the live credential variables below are configured.

@@ -1,7 +1,7 @@
 import { ClobClient, OrderType, Side, SignatureTypeV2 } from '@polymarket/clob-client-v2';
 import { createWalletClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { POLYMARKET_CLOB_URL } from '../config.js';
+import { POLYGON_RPC_URL, POLYMARKET_CLOB_URL } from '../config.js';
 
 const DEFAULT_CHAIN_ID = 137;
 
@@ -87,6 +87,7 @@ function readLiveConfig(options) {
   return {
     host: options.host || POLYMARKET_CLOB_URL,
     chainId: Number(options.chainId || process.env.POLYMARKET_CHAIN_ID || DEFAULT_CHAIN_ID),
+    rpcUrl: options.rpcUrl || POLYGON_RPC_URL,
     privateKey,
     funderAddress,
     signatureType: normalizeSignatureType(options.signatureType || process.env.POLYMARKET_SIGNATURE_TYPE || '3'),
@@ -97,7 +98,7 @@ function readLiveConfig(options) {
 
 async function createClient(config) {
   const account = privateKeyToAccount(normalizePrivateKey(config.privateKey));
-  const signer = createWalletClient({ account, transport: http() });
+  const signer = createWalletClient({ account, transport: http(config.rpcUrl) });
   const base = {
     host: config.host,
     chain: config.chainId,
@@ -116,11 +117,13 @@ function publicReadiness(config) {
   if (!config.privateKey) missing.push('POLYMARKET_PRIVATE_KEY');
   if (!config.funderAddress) missing.push('POLYMARKET_FUNDER_ADDRESS');
   if (!Number.isFinite(config.chainId)) missing.push('POLYMARKET_CHAIN_ID');
+  if (!config.rpcUrl) missing.push('POLYGON_RPC_URL');
   return {
     ready: missing.length === 0,
     missing,
     host: config.host,
     chainId: config.chainId,
+    rpcUrlConfigured: Boolean(config.rpcUrl),
     signatureType: config.signatureType,
     funderAddressConfigured: Boolean(config.funderAddress),
     apiCredentialsConfigured: Boolean(config.creds),

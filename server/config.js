@@ -12,6 +12,9 @@ export const POLYMARKET_DATA_API_URL =
 export const POLYMARKET_CLOB_URL =
   process.env.POLYMARKET_CLOB_URL || 'https://clob.polymarket.com';
 
+export const POLYGON_RPC_URL =
+  process.env.POLYGON_RPC_URL || process.env.POLYMARKET_RPC_URL || process.env.RPC_URL || 'https://polygon-rpc.com';
+
 export const POLYWHALE_WS_URL =
   POLYWHALE_API_BASE_URL.replace(/^https:/i, 'wss:').replace(/^http:/i, 'ws:') + '/v1/whales/stream';
 

@@ -139,6 +139,7 @@ Production/Railway:
 - `AUTO_COPY_MAX_AEP_CENTS`: legacy/display trailing 30-day BUY AEP reference. Defaults to `75`; auto promotion and retention do not reject traders by AEP.
 - `FETCH_TIMEOUT_MS`: timeout for upstream Polywhale, Gamma, and Data API requests. Defaults to `15000`.
 - `FETCH_RETRY_COUNT`: retry count for transient upstream 429/5xx/network failures. Defaults to `2`.
+- `POLYGON_RPC_URL`: Polygon RPC endpoint for live Polymarket signing/SDK calls. Defaults to `https://polygon-rpc.com`; aliases: `POLYMARKET_RPC_URL`, `RPC_URL`.
 - `DASHBOARD_AUTH_TOKEN`: optional bearer/query token for `/api/state`, `/api/candidates/*`, and `/events`. Empty disables dashboard auth.
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions. Defaults to `1993`. Real routes are unavailable unless `DASHBOARD_AUTH_TOKEN` is configured.
 - `REAL_TRADING_MODE`: Real execution mode. Defaults to `dry_run`; set to `live` only with live credentials configured.
