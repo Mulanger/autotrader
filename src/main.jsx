@@ -67,14 +67,15 @@ function App() {
 
   return (
     <main className="shell">
-      <Sidebar
-        mode={mode}
-        setMode={setMode}
-        connected={connected}
-        service={data.service}
-        metrics={metrics}
-        watchedWalletCount={data.watchedWallets.length}
-      />
+        <Sidebar
+          mode={mode}
+          setMode={setMode}
+          connected={connected}
+          service={data.service}
+          real={data.real}
+          metrics={metrics}
+          watchedWalletCount={data.watchedWallets.length}
+        />
       <section className="workspace">
         <Topbar
           mode={mode}
@@ -82,6 +83,7 @@ function App() {
           setTab={setTab}
           refresh={refresh}
           service={data.service}
+          real={data.real}
         />
 
         {mode === 'demo' ? (
@@ -159,7 +161,11 @@ function useAutotraderState() {
   return { state, connected, refresh };
 }
 
-function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCount }) {
+function Sidebar({ mode, setMode, connected, service, real, metrics, watchedWalletCount }) {
+  const realRuntime = real?.runtime || null;
+  const realWorkerOnline = isRuntimeOnline(realRuntime);
+  const realStatus = realRuntime?.status || service?.real?.status || 'disabled';
+  const realMode = realRuntime?.mode || service?.real?.mode || 'dry_run';
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -203,8 +209,10 @@ function Sidebar({ mode, setMode, connected, service, metrics, watchedWalletCoun
           label={`Candidate tracker ${service?.candidates?.status || 'disabled'}`}
         />
         <StatusLine
-          active={['ready', 'polling'].includes(service?.real?.status)}
-          label={`Real ${service?.real?.mode === 'live' ? 'live' : 'dry-run'} ${service?.real?.status || 'disabled'}`}
+          active={realWorkerOnline && ['ready', 'polling'].includes(realStatus)}
+          label={realRuntime?.role === 'worker'
+            ? `Real worker ${realMode === 'live' ? 'live' : 'dry-run'} ${realStatus}`
+            : `Real dashboard ${realStatus}`}
         />
       </div>
 
@@ -226,15 +234,25 @@ function storageLabel(storage) {
   return `Storage ${storage.status || 'unknown'}`;
 }
 
-function Topbar({ mode, tab, setTab, refresh, service }) {
+function Topbar({ mode, tab, setTab, refresh, service, real }) {
   const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'real-traders', 'positions', 'orders'];
-  const lastPollAt = mode === 'real' ? service?.real?.lastPollAt : service?.pollLastRunAt;
-  const realLiveRequested = service?.real?.mode === 'live' && service?.real?.liveExecutionEnabled;
-  const realLiveReady = realLiveRequested && service?.real?.liveExecutionReady;
+  const runtime = mode === 'real' ? real?.runtime || null : null;
+  const lastPollAt = mode === 'real' ? runtime?.lastPollAt || service?.real?.lastPollAt : service?.pollLastRunAt;
+  const realLiveRequested = runtime
+    ? String(runtime.mode || '').toLowerCase() === 'live' && Boolean(runtime.liveExecutionEnabled)
+    : service?.real?.mode === 'live' && service?.real?.liveExecutionEnabled;
+  const realLiveReady = realLiveRequested && (runtime?.liveExecutionReady ?? service?.real?.liveExecutionReady);
+  const realEyebrow = realLiveReady
+    ? 'Live execution enabled'
+    : realLiveRequested
+      ? 'Live execution blocked'
+      : isRealDryRunMode(real)
+        ? 'Dry-run execution'
+        : 'Worker snapshot unavailable';
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">{mode === 'demo' ? 'Simulated execution' : realLiveReady ? 'Live execution enabled' : realLiveRequested ? 'Live execution blocked' : 'Live execution disabled'}</p>
+        <p className="eyebrow">{mode === 'demo' ? 'Simulated execution' : realEyebrow}</p>
         <h1>{mode === 'demo' ? 'Demo copy trading dashboard' : 'Real trading control room'}</h1>
       </div>
       <nav className="tabs" aria-label="Dashboard views">
@@ -363,7 +381,12 @@ function RealAccountSurface({ real }) {
   const readiness = runtime.liveExecutionReady ?? service.liveExecutionReady;
   const lastError = runtime.lastError || account.lastError || service.lastError;
   const allowance = accountAllowanceHealth(account);
-  const balance = account?.collateral?.balanceUsd;
+  const balance = account?.collateral?.walletBalanceUsd ?? account?.collateral?.balanceUsd;
+  const balanceMeta = account?.collateral?.walletBalanceUsd !== null && account?.collateral?.walletBalanceUsd !== undefined
+    ? `pUSD wallet, synced ${formatTimeAgo(account.checkedAt)}`
+    : account.checkedAt
+      ? `CLOB cache, synced ${formatTimeAgo(account.checkedAt)}`
+      : 'not synced yet';
   const workerLabel = runtime.heartbeatAt
     ? `${formatTimeAgo(runtime.heartbeatAt)} heartbeat`
     : 'no worker heartbeat';
@@ -384,7 +407,7 @@ function RealAccountSurface({ real }) {
         <RealStatusPill active={account.ok !== false && Boolean(account.signerAddress)} label={account.signerAddress ? 'Signer loaded' : 'Signer unknown'} icon={Lock} />
       </div>
       <div className="realAccountGrid">
-        <RealAccountField label="Available balance" value={formatAccountUsd(balance)} meta={account.checkedAt ? `synced ${formatTimeAgo(account.checkedAt)}` : 'not synced yet'} />
+        <RealAccountField label="Available balance" value={formatAccountUsd(balance)} meta={balanceMeta} />
         <RealAccountField label="Funder wallet" value={shortWallet(account.funderAddress)} meta="deposit wallet" />
         <RealAccountField label="Signer wallet" value={shortWallet(account.signerAddress)} meta="order signer" />
         <RealAccountField label="Allowance" value={allowance.label} meta={allowance.meta} tone={allowance.tone} />
@@ -2521,11 +2544,17 @@ function isRuntimeOnline(runtime) {
 
 function accountAllowanceHealth(account = {}) {
   const collateral = account.collateral || {};
+  if (collateral.onchainAllAllowancesPositive === true) {
+    return { label: 'Healthy', meta: `${collateral.onchainPositiveAllowanceCount || 0} pUSD approvals`, tone: 'positive' };
+  }
+  if (collateral.onchainAllAllowancesPositive === false) {
+    return { label: 'Needs approval', meta: `${collateral.onchainPositiveAllowanceCount || 0} pUSD approvals`, tone: 'negative' };
+  }
   if (collateral.allAllowancesPositive === true) {
-    return { label: 'Healthy', meta: `${collateral.positiveAllowanceCount || 0} allowances`, tone: 'positive' };
+    return { label: 'Healthy', meta: `${collateral.positiveAllowanceCount || 0} CLOB allowances`, tone: 'positive' };
   }
   if (collateral.allAllowancesPositive === false) {
-    return { label: 'Needs sync', meta: `${collateral.positiveAllowanceCount || 0} allowances`, tone: 'negative' };
+    return { label: 'Needs sync', meta: `${collateral.positiveAllowanceCount || 0} CLOB allowances`, tone: 'negative' };
   }
   if (account.ok) {
     return { label: 'Synced', meta: 'no allowance detail', tone: 'neutral' };

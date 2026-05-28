@@ -1,9 +1,20 @@
 import { AssetType, ClobClient, OrderType, Side, SignatureTypeV2 } from '@polymarket/clob-client-v2';
-import { createWalletClient, http } from 'viem';
+import { createPublicClient, createWalletClient, erc20Abi, formatUnits, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { POLYGON_RPC_URL, POLYMARKET_CLOB_URL } from '../config.js';
 
 const DEFAULT_CHAIN_ID = 137;
+const PUSD_COLLATERAL_ADDRESS = '0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB';
+const PUBLIC_POLYGON_RPC_URLS = [
+  'https://polygon-bor-rpc.publicnode.com',
+  'https://polygon.llamarpc.com',
+  'https://1rpc.io/matic',
+];
+const COLLATERAL_ALLOWANCE_SPENDERS = [
+  ['ctfExchange', '0xE111180000d2663C0091e4f400237545B87B996B'],
+  ['negRiskAdapter', '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296'],
+  ['negRiskExchange', '0xe2222d279d744050d28e00520010520000310F59'],
+];
 
 export function createPolymarketLiveExecutor(options = {}) {
   const config = readLiveConfig(options);
@@ -88,6 +99,7 @@ export function createPolymarketLiveExecutor(options = {}) {
     const checkedAt = new Date().toISOString();
     const readiness = publicReadiness(config);
     const safeConfig = safeAccountConfig(config);
+    const onchainCollateral = await config.collateralReader(config);
     if (!readiness.ready) {
       return {
         ok: false,
@@ -95,7 +107,7 @@ export function createPolymarketLiveExecutor(options = {}) {
         checkedAt,
         ...safeConfig,
         missing: readiness.missing,
-        collateral: null,
+        collateral: mergeCollateralSnapshots(null, onchainCollateral),
         lastError: null,
       };
     }
@@ -112,7 +124,7 @@ export function createPolymarketLiveExecutor(options = {}) {
         checkedAt,
         ...safeConfig,
         missing: [],
-        collateral: normalizeBalanceAllowance(collateral),
+        collateral: mergeCollateralSnapshots(normalizeBalanceAllowance(collateral), onchainCollateral),
         lastError: null,
       };
     } catch (error) {
@@ -122,7 +134,7 @@ export function createPolymarketLiveExecutor(options = {}) {
         checkedAt,
         ...safeConfig,
         missing: [],
-        collateral: null,
+        collateral: mergeCollateralSnapshots(null, onchainCollateral),
         lastError: formatCredentialError(error),
       };
     }
@@ -152,6 +164,7 @@ function readLiveConfig(options) {
     creds,
     builderCode: normalizeBytes32(options.builderCode || process.env.POLYMARKET_BUILDER_CODE || ''),
     clientFactory: options.clientFactory || ((clientOptions) => new ClobClient(clientOptions)),
+    collateralReader: options.collateralReader || readOnchainCollateral,
   };
 }
 
@@ -270,10 +283,107 @@ export function normalizeBalanceAllowance(balanceAllowance) {
   return {
     rawBalance: balance === null || balance === undefined ? null : String(balance),
     balanceUsd: parseClobUsd(balance),
+    source: 'clob_balance_allowance',
     allowances,
     positiveAllowanceCount: allowanceValues.filter((value) => value > 0).length,
     allAllowancesPositive: allowanceValues.length ? allowanceValues.every((value) => value > 0) : null,
   };
+}
+
+function mergeCollateralSnapshots(clobCollateral, onchainCollateral) {
+  const base = clobCollateral || normalizeBalanceAllowance(null);
+  return {
+    ...base,
+    asset: 'pUSD',
+    tokenAddress: PUSD_COLLATERAL_ADDRESS,
+    walletAddress: onchainCollateral?.walletAddress || null,
+    walletBalanceRaw: onchainCollateral?.rawBalance ?? null,
+    walletBalanceUsd: onchainCollateral?.balanceUsd ?? null,
+    walletBalanceSource: onchainCollateral?.source || 'polygon_pusd_onchain',
+    walletBalanceError: onchainCollateral?.error || null,
+    onchainAllowances: onchainCollateral?.allowances || {},
+    onchainPositiveAllowanceCount: onchainCollateral?.positiveAllowanceCount ?? 0,
+    onchainAllAllowancesPositive: onchainCollateral?.allAllowancesPositive ?? null,
+  };
+}
+
+async function readOnchainCollateral(config) {
+  const walletAddress = config.funderAddress || null;
+  const base = {
+    source: 'polygon_pusd_onchain',
+    asset: 'pUSD',
+    tokenAddress: PUSD_COLLATERAL_ADDRESS,
+    walletAddress,
+    checkedAt: new Date().toISOString(),
+  };
+  if (!walletAddress) {
+    return {
+      ...base,
+      rawBalance: null,
+      balanceUsd: null,
+      allowances: {},
+      positiveAllowanceCount: 0,
+      allAllowancesPositive: null,
+      error: 'Missing funder wallet',
+    };
+  }
+
+  const errors = [];
+  for (const rpcUrl of rpcCandidates(config.rpcUrl)) {
+    try {
+      const publicClient = createPublicClient({ transport: http(rpcUrl) });
+      const rawBalance = await publicClient.readContract({
+        address: PUSD_COLLATERAL_ADDRESS,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [walletAddress],
+      });
+      const allowanceEntries = await Promise.all(COLLATERAL_ALLOWANCE_SPENDERS.map(async ([name, spender]) => {
+        const rawAllowance = await publicClient.readContract({
+          address: PUSD_COLLATERAL_ADDRESS,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [walletAddress, spender],
+        });
+        return [
+          name,
+          {
+            spender,
+            raw: rawAllowance.toString(),
+            valueUsd: Number(formatUnits(rawAllowance, 6)),
+            healthy: rawAllowance > 0n,
+          },
+        ];
+      }));
+      const allowances = Object.fromEntries(allowanceEntries);
+      const allowanceValues = Object.values(allowances);
+      return {
+        ...base,
+        rawBalance: rawBalance.toString(),
+        balanceUsd: Number(formatUnits(rawBalance, 6)),
+        allowances,
+        positiveAllowanceCount: allowanceValues.filter((entry) => entry.healthy).length,
+        allAllowancesPositive: allowanceValues.length ? allowanceValues.every((entry) => entry.healthy) : null,
+        error: null,
+      };
+    } catch (error) {
+      errors.push(formatCredentialError(error));
+    }
+  }
+
+  return {
+    ...base,
+    rawBalance: null,
+    balanceUsd: null,
+    allowances: {},
+    positiveAllowanceCount: 0,
+    allAllowancesPositive: null,
+    error: errors[0] || 'Could not read pUSD balance on Polygon',
+  };
+}
+
+function rpcCandidates(primary) {
+  return [...new Set([primary, ...PUBLIC_POLYGON_RPC_URLS].filter(Boolean))];
 }
 
 function parseClobUsd(value) {

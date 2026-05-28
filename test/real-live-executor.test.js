@@ -72,6 +72,18 @@ describe('real live executor diagnostics', () => {
       funderAddress,
       rpcUrl: 'https://polygon.example',
       creds: { key: 'api-key', secret: 'api-secret', passphrase: 'api-passphrase' },
+      collateralReader: async () => ({
+        rawBalance: '103130000',
+        balanceUsd: 103.13,
+        allowances: {
+          ctfExchange: { healthy: true },
+          negRiskAdapter: { healthy: true },
+          negRiskExchange: { healthy: true },
+        },
+        positiveAllowanceCount: 3,
+        allAllowancesPositive: true,
+        source: 'polygon_pusd_onchain',
+      }),
       clientFactory: () => ({
         updateBalanceAllowance: async () => {},
         getBalanceAllowance: async () => ({
@@ -92,7 +104,9 @@ describe('real live executor diagnostics', () => {
     expect(snapshot.funderAddress).toBe(funderAddress);
     expect(snapshot.chainId).toBe(137);
     expect(snapshot.collateral.balanceUsd).toBeCloseTo(12.34);
+    expect(snapshot.collateral.walletBalanceUsd).toBeCloseTo(103.13);
     expect(snapshot.collateral.positiveAllowanceCount).toBe(2);
+    expect(snapshot.collateral.onchainAllAllowancesPositive).toBe(true);
     expect(serialized).not.toContain(privateKey.slice(2));
     expect(serialized).not.toContain('api-secret');
     expect(serialized).not.toContain('api-passphrase');
