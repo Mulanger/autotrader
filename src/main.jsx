@@ -55,7 +55,7 @@ function authHeaders() {
 
 function App() {
   const { state, connected, refresh } = useAutotraderState();
-  const [mode, setMode] = React.useState('demo');
+  const [mode, setMode] = React.useState('real');
   const [tab, setTab] = React.useState('overview');
 
   React.useEffect(() => {
