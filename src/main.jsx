@@ -404,6 +404,7 @@ function RealScoredTradersView({ realState }) {
   const quality = useRealCopyQuality({ tier, eligibleOnly, sort, query });
   const rows = quality.payload?.rows || [];
   const summary = quality.payload?.summary || {};
+  const cachedScores = Boolean(quality.payload?.cached);
 
   const requestRealAdd = React.useCallback((row) => {
     setActionError(null);
@@ -502,7 +503,7 @@ function RealScoredTradersView({ realState }) {
           <h2>Scored real candidates</h2>
         </div>
         <div className="sectionActions">
-          <button className="textButton" onClick={requestRecalculate} disabled={pendingWallet === '__recalculate__'}>
+          <button className="textButton" onClick={requestRecalculate} disabled={cachedScores || pendingWallet === '__recalculate__'}>
             <RefreshCcw size={14} /> {pendingWallet === '__recalculate__' ? 'Scoring' : 'Recalculate'}
           </button>
           <button className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
@@ -510,7 +511,9 @@ function RealScoredTradersView({ realState }) {
       </div>
 
       <p className="panelCopy">
-        Copy Quality ranks wallets by how suitable they are for this copier, not by raw trader leaderboard performance.
+        {cachedScores
+          ? 'Candidate tracking is disabled. Showing the last saved Copy Quality scores without running polling, backfill, or resolution workers.'
+          : 'Copy Quality ranks wallets by how suitable they are for this copier, not by raw trader leaderboard performance.'}
       </p>
 
       <div className="candidateSummary">
@@ -555,6 +558,7 @@ function RealScoredTradersView({ realState }) {
           placeholder="Search wallet or name"
           aria-label="Search scored traders"
         />
+        {cachedScores && <span className="statusBadge neutral">cached</span>}
         {actionError && <span className="negative">{actionError}</span>}
       </div>
 
@@ -574,7 +578,7 @@ function RealScoredTradersView({ realState }) {
           {!rows.length && (
             <EmptyState
               title={quality.loading ? 'Loading scored traders' : 'No scored traders'}
-              text={quality.loading ? 'Fetching copy quality scores.' : 'Run scoring after candidate backfill has resolved trade history.'}
+              text={quality.loading ? 'Fetching copy quality scores.' : cachedScores ? 'No cached Copy Quality scores were found in storage.' : 'Run scoring after candidate backfill has resolved trade history.'}
             />
           )}
         </div>

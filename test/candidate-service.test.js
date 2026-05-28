@@ -121,6 +121,55 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.seededActiveCopyPoolBackfillCount).toBe(1);
   });
 
+  it('serves cached real copy quality scores when candidate workers are disabled', async () => {
+    const state = createAppState();
+    const storage = fakeStorage({
+      recoverStaleBackfills: async () => {
+        throw new Error('disabled mode should not recover backfills');
+      },
+      seedActiveCopyPoolBackfill: async () => {
+        throw new Error('disabled mode should not seed backfills');
+      },
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: {
+          total: 2,
+          scored: 2,
+          eligible: 1,
+          core: 1,
+          candidate: 0,
+          watchlist: 0,
+          manualReview: 0,
+          ignore: 1,
+          lastScoredAt: '2026-05-28T00:00:00.000Z',
+        },
+        rows: [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', score: 91 }],
+      }),
+      getRealCopyQualityScore: async () => ({ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', score: 91 }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => {
+        throw new Error('disabled mode should not poll trades');
+      },
+    });
+
+    await tracker.start();
+    const payload = await tracker.getRealCopyQualityLeaderboard();
+    const row = await tracker.getRealCopyQualityScore('0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    await tracker.close();
+
+    expect(state.service.candidates.status).toBe('disabled');
+    expect(state.service.candidates.storageStatus).toBe('ready');
+    expect(state.service.realCopyQuality.status).toBe('cached');
+    expect(payload.enabled).toBe(false);
+    expect(payload.cached).toBe(true);
+    expect(payload.rows).toHaveLength(1);
+    expect(payload.summary.scored).toBe(2);
+    expect(row.score).toBe(91);
+  });
+
   it('scales candidate resolution batches for large due queues', () => {
     expect(resolutionBatchSize({ eligibleOpenTradeCount: 0 })).toBe(250);
     expect(resolutionBatchSize({ eligibleOpenTradeCount: 900 })).toBe(250);

@@ -76,8 +76,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       oldestNextResolutionCheckAt: null,
       oldestEligibleTradeTimestamp: null,
     },
-    copyPoolEnabled,
-    copyPoolStatus: copyPoolEnabled ? 'starting' : 'disabled',
+    copyPoolEnabled: enabled && copyPoolEnabled,
+    copyPoolStatus: enabled && copyPoolEnabled ? 'starting' : 'disabled',
     copyPoolLastRunAt: null,
     copyPoolLastChangedCount: 0,
     copyPoolLastCopiedCount: 0,
@@ -105,7 +105,10 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   async function start() {
     if (started) return;
     started = true;
-    if (!enabled) return;
+    if (!enabled) {
+      await startCachedRealCopyQuality();
+      return;
+    }
 
     try {
       storage = await storageFactory();
@@ -139,6 +142,27 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     backfillTimer = setInterval(runBackfill, Math.max(15_000, CANDIDATE_POLL_INTERVAL_MS));
     resolutionTimer = setInterval(runResolution, CANDIDATE_RESOLUTION_POLL_INTERVAL_MS);
     copyPoolTimer = setInterval(runCopyPoolEvaluation, AUTO_COPY_POOL_INTERVAL_MS);
+  }
+
+  async function startCachedRealCopyQuality() {
+    state.service.candidates.status = 'disabled';
+    state.service.candidates.copyPoolStatus = 'disabled';
+    state.service.candidates.shadowTraderStatus = 'disabled';
+    try {
+      storage = await storageFactory();
+      state.service.candidates.storageStatus = 'ready';
+      state.service.realCopyQuality.status = 'cached';
+      const payload = await storage.getRealCopyQualityLeaderboard?.({ limit: 1, eligible: null });
+      applyRealCopyQualitySummary(payload?.summary, payload?.summary?.total || 0);
+      state.service.realCopyQuality.lastError = null;
+    } catch (error) {
+      storage = null;
+      state.service.candidates.storageStatus = 'unavailable';
+      state.service.candidates.lastError = error.message;
+      state.service.realCopyQuality.status = 'disabled';
+      state.service.realCopyQuality.lastError = error.message;
+    }
+    broadcast();
   }
 
   async function close() {
@@ -480,20 +504,20 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   }
 
   async function getRealCopyQualityLeaderboard(params = {}) {
-    if (!enabled) return inactiveRealCopyQualityPayload('disabled');
     if (!storage) return inactiveRealCopyQualityPayload(state.service.realCopyQuality?.status || 'starting');
     const payload = await storage.getRealCopyQualityLeaderboard(params);
     applyRealCopyQualitySummary(payload.summary, payload.summary?.total || 0);
     return {
       ...payload,
-      enabled: true,
-      status: state.service.realCopyQuality.status,
+      enabled,
+      cached: !enabled,
+      status: enabled ? state.service.realCopyQuality.status : 'cached',
       updatedAt: new Date().toISOString(),
     };
   }
 
   async function getRealCopyQualityScore(wallet) {
-    if (!enabled || !storage) return null;
+    if (!storage) return null;
     return storage.getRealCopyQualityScore(wallet);
   }
 
