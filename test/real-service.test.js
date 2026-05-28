@@ -66,6 +66,41 @@ describe('real trader service', () => {
     await service.close();
   });
 
+  it('writes a live worker runtime and account snapshot when autorun is enabled', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: true,
+      tradingMode: 'live',
+      liveTradingEnabled: true,
+      runtimeId: 'test-worker',
+      runtimeRole: 'worker',
+      storageFactory: async () => storage,
+      setInterval: () => 1,
+      clearInterval: () => {},
+      fetchRealFollowTrades: async () => [],
+      fetchGammaResolution: async () => null,
+      liveExecutor: {
+        getReadiness: () => ({ ready: true, missing: [] }),
+        getAccountSnapshot: async () => ({
+          ok: true,
+          signerAddress: '0x1111111111111111111111111111111111111111',
+          funderAddress: wallet,
+          collateral: { balanceUsd: 33, allAllowancesPositive: true },
+        }),
+      },
+    });
+
+    await service.start();
+    const real = await service.getState();
+
+    expect(real.runtime.id).toBe('test-worker');
+    expect(real.runtime.role).toBe('worker');
+    expect(real.runtime.liveExecutionEnabled).toBe(true);
+    expect(real.account.collateral.balanceUsd).toBe(33);
+    await service.close();
+  });
+
   it('ignores historical trades before added_at and records new dry-run attempts', async () => {
     const state = createAppState();
     const storage = createMemoryRealStorage();

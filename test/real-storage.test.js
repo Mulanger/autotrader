@@ -63,4 +63,41 @@ describe('real memory storage', () => {
     expect(state.summary.wouldFillCount).toBe(1);
     expect(state.follows[0].metrics.attemptedCount).toBe(1);
   });
+
+  it('upserts and reads the latest worker and account snapshot', async () => {
+    const storage = createMemoryRealStorage();
+    await storage.upsertRuntimeSnapshot({
+      id: 'local-pc-worker',
+      role: 'worker',
+      status: 'ready',
+      mode: 'live',
+      pollingEnabled: true,
+      liveExecutionEnabled: true,
+      liveExecutionReady: true,
+      heartbeatAt: '2026-05-28T09:00:00.000Z',
+      lastPollAt: '2026-05-28T08:59:55.000Z',
+      account: {
+        ok: true,
+        signerAddress: '0x1111111111111111111111111111111111111111',
+        funderAddress: wallet,
+        collateral: { balanceUsd: 25.5, allAllowancesPositive: true },
+      },
+    });
+
+    const first = await storage.getState();
+    await storage.upsertRuntimeSnapshot({
+      id: 'local-pc-worker',
+      role: 'worker',
+      status: 'polling',
+      mode: 'live',
+      heartbeatAt: '2026-05-28T09:00:05.000Z',
+    });
+    const second = await storage.getState();
+
+    expect(first.runtime.role).toBe('worker');
+    expect(first.runtime.liveExecutionReady).toBe(true);
+    expect(first.account.collateral.balanceUsd).toBe(25.5);
+    expect(second.runtime.status).toBe('polling');
+    expect(second.account.signerAddress).toBe('0x1111111111111111111111111111111111111111');
+  });
 });

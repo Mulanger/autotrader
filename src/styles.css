@@ -1498,6 +1498,142 @@ button {
   line-height: 1.55;
 }
 
+.realControlRoom {
+  display: grid;
+  gap: 16px;
+}
+
+.realAccountSurface {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(250px, auto);
+  gap: 18px;
+  align-items: start;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.realAccountLead {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.realAccountLead h2,
+.realAccountLead p {
+  margin: 0;
+}
+
+.realAccountLead p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.realStatusCluster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.realStatusPill {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.78rem;
+  font-weight: 800;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--soft);
+}
+
+.realStatusPill.positive {
+  border-color: #b7dcc8;
+  color: var(--green);
+  background: var(--green-soft);
+}
+
+.realStatusPill.negative {
+  border-color: #efc5cc;
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.realAccountGrid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.realAccountField {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+}
+
+.realAccountField span,
+.realAccountField small {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.realAccountField strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.98rem;
+}
+
+.realAccountAlert {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--amber);
+  border-radius: 8px;
+  color: var(--amber);
+  background: var(--amber-soft);
+  font-size: 0.84rem;
+  overflow-wrap: anywhere;
+}
+
+.realOverviewGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.realOverviewOrders {
+  grid-row: span 2;
+}
+
+.realRiskPanel,
+.realPositionsPreview {
+  display: grid;
+  gap: 12px;
+}
+
+.realRiskGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compactRules {
+  gap: 6px;
+}
+
 .realAuthPanel {
   min-height: 340px;
   align-content: center;
@@ -1540,11 +1676,11 @@ button {
 }
 
 .realOrderRow {
-  grid-template-columns: minmax(220px, 1.2fr) repeat(4, minmax(80px, 0.35fr)) minmax(110px, auto);
+  grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 0.9fr) minmax(170px, 0.55fr);
 }
 
 .realOrderList.compact .realOrderRow {
-  grid-template-columns: minmax(0, 1fr) minmax(110px, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.45fr) minmax(170px, 0.55fr);
 }
 
 .realOrderRow.wouldFill {
@@ -1557,6 +1693,7 @@ button {
 
 .realFollowIdentity,
 .realOrderMarket,
+.realOrderStats,
 .realMiniStat,
 .realOrderStatus {
   min-width: 0;
@@ -1568,7 +1705,9 @@ button {
 .realOrderMarket strong {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .realFollowIdentity span,
@@ -1582,12 +1721,29 @@ button {
   white-space: nowrap;
 }
 
+.realOrderStats {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.realOrderList.compact .realOrderStats {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .realMiniStat strong {
   font-size: 0.92rem;
 }
 
 .realOrderStatus {
   justify-items: end;
+}
+
+.realOrderStatus small {
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .lockPlate {
@@ -1814,6 +1970,18 @@ button {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
   }
 
+  .realAccountGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .realOverviewGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .realOverviewOrders {
+    grid-row: auto;
+  }
+
   .realFollowRow {
     grid-template-columns: 34px minmax(180px, 1fr) repeat(2, minmax(86px, 0.35fr)) minmax(100px, auto);
   }
@@ -1823,7 +1991,7 @@ button {
   }
 
   .realOrderRow {
-    grid-template-columns: minmax(220px, 1fr) repeat(4, minmax(80px, 0.35fr)) minmax(110px, auto);
+    grid-template-columns: minmax(220px, 1fr) minmax(220px, 0.8fr) minmax(150px, 0.45fr);
   }
 }
 
@@ -1850,6 +2018,20 @@ button {
   .metricStrip,
   .traderList,
   .profitBreakdown {
+    grid-template-columns: 1fr;
+  }
+
+  .realAccountSurface {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .realStatusCluster {
+    justify-content: flex-start;
+  }
+
+  .realAccountGrid,
+  .realRiskGrid {
     grid-template-columns: 1fr;
   }
 
@@ -1970,6 +2152,7 @@ button {
 
   .realFollowIdentity,
   .realOrderMarket,
+  .realOrderStats,
   .realMiniStat,
   .realOrderStatus,
   .realRemoveButton,
@@ -1981,6 +2164,21 @@ button {
 
   .realOrderStatus .statusBadge {
     justify-self: start;
+  }
+
+  .realOrderStats,
+  .realOrderList.compact .realOrderStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .realOrderStats .realMiniStat,
+  .realRiskGrid .realMiniStat {
+    grid-column: auto;
+  }
+
+  .realOrderStatus small {
+    text-align: left;
   }
 
   .candidateTradeHead {

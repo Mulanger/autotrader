@@ -320,61 +320,163 @@ function tabLabel(tab) {
 function RealOverview({ real }) {
   const summary = real.summary || {};
   const live = isLiveRealMode(real);
-  const liveReady = Boolean(real.service?.liveExecutionReady);
-  const stakeLabel = usd(real.service?.stakeUsd || 10);
-  const maxEntryLabel = formatCents(real.service?.maxEntryPriceCents || 75);
-  const guardLabel = `source +${Number(real.service?.priceGuardCents || 4).toFixed(1)}c max ask`;
-  const maxAgeLabel = `${Number(real.service?.maxSourceTradeAgeSeconds || 45)}s max source age`;
-  const missingLiveConfig = real.service?.liveExecutionConfig?.missing || [];
+  const activeFollows = (real.follows || []).filter((follow) => follow.status === 'active');
+  const openPositions = (real.positions || []).filter((position) => isOpenPosition(position));
   return (
-    <div className="dashboardGrid">
-      <section className="mainColumn">
-        <RealMetricStrip summary={summary} real={real} />
-        <section className="panel realPanel">
-          <div className="lockPlate"><Lock size={22} /></div>
-          <p className="eyebrow">Execution mode</p>
-          <h2>{live ? 'Live FOK execution' : 'Dry-run FOK audit'}</h2>
-          <p>
-            {live
-              ? 'Real follows are manual. Fresh BUY entries are submitted as fixed-stake FOK orders after the upper price guard passes.'
-              : 'Real follows are manual. Fresh BUY entries are simulated as fixed-stake FOK orders with an upper price guard and no live CLOB submission.'}
-          </p>
-          <div className="adapterList">
-            <StatusLine active label="Manual follow list active" />
-            <StatusLine active label={`${stakeLabel} fixed stake`} />
-            <StatusLine active label={`${maxEntryLabel} max entry`} />
-            <StatusLine active label={maxAgeLabel} />
-            <StatusLine active label="One position per market" />
-            <StatusLine active label={guardLabel} />
-            <StatusLine active={live && liveReady} label={live ? (liveReady ? 'Live wallet signing enabled' : 'Live wallet signing blocked') : 'Live wallet signing disabled'} />
-            {live && !liveReady && missingLiveConfig.length > 0 && (
-              <StatusLine active={false} label={`Missing ${missingLiveConfig.join(', ')}`} />
-            )}
+    <div className="realControlRoom">
+      <RealAccountSurface real={real} />
+      <RealMetricStrip summary={summary} real={real} />
+      <div className="realOverviewGrid">
+        <RealRiskPanel real={real} />
+        <section className="panel realOrdersPanel realOverviewOrders">
+          <div className="sectionHead">
+            <div>
+              <p className="eyebrow">Order audit</p>
+              <h2>{live ? 'Live order stream' : isRealDryRunMode(real) ? 'Dry-run order stream' : 'Real order stream'}</h2>
+            </div>
+            <ListFilter size={18} />
           </div>
+          <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact live={live} dryRun={isRealDryRunMode(real)} />
         </section>
-        <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact live={live} />
-      </section>
-      <section className="sideColumn">
-        <section className="panel">
+        <section className="panel realFollowPanel">
           <div className="sectionHead">
             <div>
               <p className="eyebrow">Following</p>
-              <h2>Real follow list</h2>
+              <h2>Active copy list</h2>
             </div>
             <Users size={18} />
           </div>
-          <RealFollowList follows={(real.follows || []).filter((follow) => follow.status === 'active').slice(0, 6)} compact />
+          <RealFollowList follows={activeFollows.slice(0, 6)} compact />
         </section>
-        <OpenPositionsCard positions={(real.positions || []).filter((position) => isOpenPosition(position))} />
-      </section>
+        <RealPositionsPreview real={real} positions={openPositions} />
+      </div>
     </div>
+  );
+}
+
+function RealAccountSurface({ real }) {
+  const runtime = real.runtime || {};
+  const account = real.account || {};
+  const service = real.service || {};
+  const live = isLiveRealMode(real);
+  const workerOnline = isRuntimeOnline(runtime);
+  const readiness = runtime.liveExecutionReady ?? service.liveExecutionReady;
+  const lastError = runtime.lastError || account.lastError || service.lastError;
+  const allowance = accountAllowanceHealth(account);
+  const balance = account?.collateral?.balanceUsd;
+  const workerLabel = runtime.heartbeatAt
+    ? `${formatTimeAgo(runtime.heartbeatAt)} heartbeat`
+    : 'no worker heartbeat';
+  return (
+    <section className="realAccountSurface">
+      <div className="realAccountLead">
+        <p className="eyebrow">Polymarket account</p>
+        <h2>{live ? 'Live trading control room' : isRealDryRunMode(real) ? 'Real dry-run control room' : 'Real trading control room'}</h2>
+        <p>
+          {runtime.role === 'worker'
+            ? `Snapshot from the local PC worker, ${workerLabel}.`
+            : 'Waiting for the local PC worker snapshot.'}
+        </p>
+      </div>
+      <div className="realStatusCluster">
+        <RealStatusPill active={workerOnline} label={workerOnline ? 'PC worker online' : 'PC worker offline'} icon={Activity} />
+        <RealStatusPill active={Boolean(readiness)} label={readiness ? 'Ready for live orders' : 'Live orders blocked'} icon={ShieldCheck} />
+        <RealStatusPill active={account.ok !== false && Boolean(account.signerAddress)} label={account.signerAddress ? 'Signer loaded' : 'Signer unknown'} icon={Lock} />
+      </div>
+      <div className="realAccountGrid">
+        <RealAccountField label="Available balance" value={formatAccountUsd(balance)} meta={account.checkedAt ? `synced ${formatTimeAgo(account.checkedAt)}` : 'not synced yet'} />
+        <RealAccountField label="Funder wallet" value={shortWallet(account.funderAddress)} meta="deposit wallet" />
+        <RealAccountField label="Signer wallet" value={shortWallet(account.signerAddress)} meta="order signer" />
+        <RealAccountField label="Allowance" value={allowance.label} meta={allowance.meta} tone={allowance.tone} />
+        <RealAccountField label="Chain" value={account.chainId ? `Polygon ${account.chainId}` : 'unknown'} meta={account.clobHost || 'CLOB host unknown'} />
+        <RealAccountField label="Signature" value={account.signatureType === null || account.signatureType === undefined ? 'unknown' : `type ${account.signatureType}`} meta={account.builderCodeConfigured ? 'builder code enabled' : 'no builder code'} />
+      </div>
+      {lastError && (
+        <div className="realAccountAlert">
+          <AlertTriangle size={16} />
+          <span>{lastError}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function RealStatusPill({ active, label, icon: Icon }) {
+  return (
+    <span className={`realStatusPill ${active ? 'positive' : 'negative'}`}>
+      <Icon size={14} />
+      {label}
+    </span>
+  );
+}
+
+function RealAccountField({ label, value, meta, tone }) {
+  return (
+    <div className="realAccountField">
+      <span>{label}</span>
+      <strong className={tone || ''}>{value || 'unknown'}</strong>
+      <small>{meta || EMPTY_METRIC}</small>
+    </div>
+  );
+}
+
+function RealRiskPanel({ real }) {
+  const runtimePayload = real.runtime?.payload || {};
+  const service = real.service || {};
+  const stakeUsd = runtimePayload.stakeUsd ?? service.stakeUsd ?? 10;
+  const maxEntry = runtimePayload.maxEntryPriceCents ?? service.maxEntryPriceCents ?? 75;
+  const guard = runtimePayload.priceGuardCents ?? service.priceGuardCents ?? 4;
+  const maxAge = runtimePayload.maxSourceTradeAgeSeconds ?? service.maxSourceTradeAgeSeconds ?? 30;
+  return (
+    <section className="panel realRiskPanel">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Risk rules</p>
+          <h2>Copy guardrails</h2>
+        </div>
+        <ShieldCheck size={18} />
+      </div>
+      <div className="realRiskGrid">
+        <RealMiniStat label="Stake" value={usd(stakeUsd)} />
+        <RealMiniStat label="Max entry" value={formatCents(maxEntry)} />
+        <RealMiniStat label="Price guard" value={`+${Number(guard).toFixed(1)}c`} />
+        <RealMiniStat label="Source age" value={`${Number(maxAge)}s`} />
+      </div>
+      <div className="adapterList compactRules">
+        <StatusLine active label="Manual real follow list only" />
+        <StatusLine active label="One copied position per market" />
+        <StatusLine active label="Duplicate source trades ignored" />
+        <StatusLine active label="FOK order must fully fill" />
+      </div>
+    </section>
+  );
+}
+
+function RealPositionsPreview({ real, positions }) {
+  const live = isLiveRealMode(real);
+  return (
+    <section className="panel realPositionsPreview">
+      <div className="sectionHead">
+        <div>
+          <p className="eyebrow">Positions</p>
+          <h2>{live ? 'Open live exposure' : 'Open real exposure'}</h2>
+        </div>
+        <Layers3 size={18} />
+      </div>
+      <PositionList
+        positions={positions.slice(0, 6)}
+        emptyTitle={live ? 'No open live positions' : 'No open real positions'}
+        emptyText="Approved copied entries will appear here after a FOK fill is recorded."
+      />
+    </section>
   );
 }
 
 function RealMetricStrip({ summary, real }) {
   const live = isLiveRealMode(real);
+  const dryRun = isRealDryRunMode(real);
   const items = [
-    { label: live ? 'Live P/L' : 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), icon: LineChart, tone: pnlTone(summary.totalPnlUsd) },
+    { label: live ? 'Live P/L' : dryRun ? 'Dry-run P/L' : 'Real P/L', value: signedUsd(summary.totalPnlUsd || 0), icon: LineChart, tone: pnlTone(summary.totalPnlUsd) },
     { label: 'Open value', value: usd(summary.openValueUsd || 0), icon: Wallet },
     { label: 'Attempts', value: summary.attemptedCount || 0, icon: Activity },
     { label: live ? 'Filled' : 'Would fill', value: summary.wouldFillCount || 0, icon: CheckCircle2, tone: 'positive' },
@@ -791,12 +893,13 @@ function RealPositionsView({ real }) {
   const open = positions.filter((position) => isOpenPosition(position));
   const closed = positions.filter((position) => !isOpenPosition(position));
   const live = isLiveRealMode(real);
+  const dryRun = isRealDryRunMode(real);
   return (
     <section className="panel fullPanel positionsWorkspace">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">{live ? 'Live positions' : 'Real dry-run positions'}</p>
-          <h2>{live ? 'Since-added live fills' : 'Since-added simulated fills'}</h2>
+          <p className="eyebrow">{live ? 'Live positions' : dryRun ? 'Real dry-run positions' : 'Real positions'}</p>
+          <h2>{live ? 'Since-added live fills' : dryRun ? 'Since-added simulated fills' : 'Since-added fills'}</h2>
         </div>
         <Layers3 size={18} />
       </div>
@@ -809,10 +912,12 @@ function RealPositionsView({ real }) {
       <PositionList
         positions={positions}
         expanded
-        emptyTitle={live ? 'No live positions' : 'No real dry-run positions'}
+        emptyTitle={live ? 'No live positions' : dryRun ? 'No real dry-run positions' : 'No real positions'}
         emptyText={live
           ? 'Fresh BUY trades from manually followed wallets will submit fixed-stake FOK orders if the upper price guard passes.'
-          : 'Fresh BUY trades from manually followed wallets will create dry-run positions if the FOK quote guard passes.'}
+          : dryRun
+            ? 'Fresh BUY trades from manually followed wallets will create dry-run positions if the FOK quote guard passes.'
+            : 'Fresh BUY trades from manually followed wallets will appear here after a guarded fill is recorded.'}
       />
     </section>
   );
@@ -820,23 +925,24 @@ function RealPositionsView({ real }) {
 
 function RealOrdersView({ real }) {
   const live = isLiveRealMode(real);
+  const dryRun = isRealDryRunMode(real);
   return (
     <section className="panel fullPanel realOrdersPanel">
       <div className="sectionHead">
         <div>
           <p className="eyebrow">FOK audit</p>
-          <h2>{live ? 'Live orders' : 'Dry-run orders'}</h2>
+          <h2>{live ? 'Live orders' : dryRun ? 'Dry-run orders' : 'Real orders'}</h2>
         </div>
         <ListFilter size={18} />
       </div>
-      <RealOrdersList orders={real.orders || []} live={live} />
+      <RealOrdersList orders={real.orders || []} live={live} dryRun={dryRun} />
     </section>
   );
 }
 
-function RealOrdersList({ orders, compact = false, live = false }) {
+function RealOrdersList({ orders, compact = false, live = false, dryRun = false }) {
   if (!orders.length) {
-    return <EmptyState title={live ? 'No live orders yet' : 'No dry-run orders yet'} text="The real follow poller will log filled/would-fill and rejected entries after a followed trader buys." />;
+    return <EmptyState title={live ? 'No live orders yet' : dryRun ? 'No dry-run orders yet' : 'No real orders yet'} text="The real follow poller will log filled/would-fill and rejected entries after a followed trader buys." />;
   }
   return (
     <div className={compact ? 'realOrderList compact' : 'realOrderList'}>
@@ -854,14 +960,12 @@ function RealOrderRow({ order, compact }) {
         <strong>{order.marketTitle || 'Unknown market'}</strong>
         <span>{order.outcome} - {shortWallet(order.traderWallet)} - {formatTimeAgo(order.checkedAt)}</span>
       </div>
-      {!compact && (
-        <>
-          <RealMiniStat label="Source" value={formatCents(order.sourcePriceCents)} />
-          <RealMiniStat label="Max ask" value={formatCents(order.maxGuardCents)} />
-          <RealMiniStat label="Best ask" value={formatCents(order.bestAskCents)} />
-          <RealMiniStat label="VWAP" value={formatCents(order.vwapCents)} />
-        </>
-      )}
+      <div className="realOrderStats">
+        <RealMiniStat label="Source" value={formatCents(order.sourcePriceCents)} />
+        <RealMiniStat label={compact ? 'Ask' : 'Best ask'} value={formatCents(order.bestAskCents)} />
+        {!compact && <RealMiniStat label="Max ask" value={formatCents(order.maxGuardCents)} />}
+        {!compact && <RealMiniStat label="VWAP" value={formatCents(order.vwapCents)} />}
+      </div>
       <div className="realOrderStatus">
         <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? (live ? 'filled' : 'would fill') : 'rejected'}</span>
         <small title={order.reason}>{order.reason || order.reasonCode || 'ok'}</small>
@@ -2398,7 +2502,41 @@ function isOpenPosition(position) {
 }
 
 function isLiveRealMode(real) {
+  if (real?.runtime) {
+    return String(real.runtime.mode || '').toLowerCase() === 'live' && Boolean(real.runtime.liveExecutionEnabled);
+  }
   return real?.mode === 'live' && Boolean(real?.service?.liveExecutionEnabled);
+}
+
+function isRealDryRunMode(real) {
+  const mode = real?.runtime?.mode || real?.mode;
+  return !isLiveRealMode(real) && String(mode || '').toLowerCase() === 'dry_run';
+}
+
+function isRuntimeOnline(runtime) {
+  const heartbeat = Date.parse(runtime?.heartbeatAt || runtime?.updatedAt || 0);
+  if (!Number.isFinite(heartbeat)) return false;
+  return Date.now() - heartbeat < 150_000;
+}
+
+function accountAllowanceHealth(account = {}) {
+  const collateral = account.collateral || {};
+  if (collateral.allAllowancesPositive === true) {
+    return { label: 'Healthy', meta: `${collateral.positiveAllowanceCount || 0} allowances`, tone: 'positive' };
+  }
+  if (collateral.allAllowancesPositive === false) {
+    return { label: 'Needs sync', meta: `${collateral.positiveAllowanceCount || 0} allowances`, tone: 'negative' };
+  }
+  if (account.ok) {
+    return { label: 'Synced', meta: 'no allowance detail', tone: 'neutral' };
+  }
+  return { label: 'Unknown', meta: account.lastError || 'not reported', tone: 'neutral' };
+}
+
+function formatAccountUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'not reported';
+  return usd(number);
 }
 
 function isFilledRealOrder(order) {

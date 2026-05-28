@@ -12,6 +12,7 @@ export function createPolymarketLiveExecutor(options = {}) {
 
   return {
     getReadiness: () => publicReadiness(config),
+    getAccountSnapshot,
     async executeFokBuy({ attempt }) {
       const readiness = publicReadiness(config);
       if (!readiness.ready) {
@@ -82,6 +83,50 @@ export function createPolymarketLiveExecutor(options = {}) {
     await client.updateBalanceAllowance({ asset_type: AssetType.COLLATERAL });
     balanceAllowanceSynced = true;
   }
+
+  async function getAccountSnapshot() {
+    const checkedAt = new Date().toISOString();
+    const readiness = publicReadiness(config);
+    const safeConfig = safeAccountConfig(config);
+    if (!readiness.ready) {
+      return {
+        ok: false,
+        status: 'not_configured',
+        checkedAt,
+        ...safeConfig,
+        missing: readiness.missing,
+        collateral: null,
+        lastError: null,
+      };
+    }
+
+    try {
+      const client = await getClient();
+      await ensureBalanceAllowanceSynced(client);
+      const collateral = typeof client.getBalanceAllowance === 'function'
+        ? await client.getBalanceAllowance({ asset_type: AssetType.COLLATERAL })
+        : null;
+      return {
+        ok: true,
+        status: 'ready',
+        checkedAt,
+        ...safeConfig,
+        missing: [],
+        collateral: normalizeBalanceAllowance(collateral),
+        lastError: null,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        status: 'error',
+        checkedAt,
+        ...safeConfig,
+        missing: [],
+        collateral: null,
+        lastError: formatCredentialError(error),
+      };
+    }
+  }
 }
 
 function readLiveConfig(options) {
@@ -106,6 +151,7 @@ function readLiveConfig(options) {
     signatureType: normalizeSignatureType(options.signatureType || process.env.POLYMARKET_SIGNATURE_TYPE || '3'),
     creds,
     builderCode: normalizeBytes32(options.builderCode || process.env.POLYMARKET_BUILDER_CODE || ''),
+    clientFactory: options.clientFactory || ((clientOptions) => new ClobClient(clientOptions)),
   };
 }
 
@@ -121,8 +167,8 @@ async function createClient(config) {
     throwOnError: true,
     retryOnError: true,
   };
-  const creds = config.creds || await createOrDeriveApiCredentials(new ClobClient(base));
-  return new ClobClient({ ...base, creds });
+  const creds = config.creds || await createOrDeriveApiCredentials(config.clientFactory(base));
+  return config.clientFactory({ ...base, creds });
 }
 
 export async function createOrDeriveApiCredentials(authClient) {
@@ -174,6 +220,68 @@ function publicReadiness(config) {
     apiCredentialsWillDerive: !config.creds,
     builderCodeConfigured: Boolean(config.builderCode),
   };
+}
+
+function safeAccountConfig(config) {
+  let signerAddress = null;
+  try {
+    signerAddress = config.privateKey ? privateKeyToAccount(normalizePrivateKey(config.privateKey)).address : null;
+  } catch {
+    signerAddress = null;
+  }
+  return {
+    signerAddress,
+    funderAddress: config.funderAddress || null,
+    signatureType: config.signatureType,
+    chainId: config.chainId,
+    clobHost: config.host,
+    rpcUrlConfigured: Boolean(config.rpcUrl),
+    apiCredentialsConfigured: Boolean(config.creds),
+    apiCredentialsWillDerive: !config.creds,
+    builderCodeConfigured: Boolean(config.builderCode),
+  };
+}
+
+export function normalizeBalanceAllowance(balanceAllowance) {
+  if (!balanceAllowance || typeof balanceAllowance !== 'object') {
+    return {
+      rawBalance: null,
+      balanceUsd: null,
+      allowances: {},
+      positiveAllowanceCount: 0,
+      allAllowancesPositive: null,
+    };
+  }
+
+  const allowanceSource = balanceAllowance.allowances || balanceAllowance.allowance || {};
+  const allowances = Object.fromEntries(
+    Object.entries(allowanceSource || {}).map(([key, value]) => [
+      key,
+      {
+        raw: value === null || value === undefined ? null : String(value),
+        valueUsd: parseClobUsd(value),
+      },
+    ])
+  );
+  const allowanceValues = Object.values(allowances)
+    .map((entry) => entry.valueUsd)
+    .filter(Number.isFinite);
+  const balance = balanceAllowance.balance ?? balanceAllowance.collateralBalance ?? balanceAllowance.usdcBalance;
+  return {
+    rawBalance: balance === null || balance === undefined ? null : String(balance),
+    balanceUsd: parseClobUsd(balance),
+    allowances,
+    positiveAllowanceCount: allowanceValues.filter((value) => value > 0).length,
+    allAllowancesPositive: allowanceValues.length ? allowanceValues.every((value) => value > 0) : null,
+  };
+}
+
+function parseClobUsd(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  if (Number.isInteger(number) && Math.abs(number) >= 100_000) return number / 1_000_000;
+  return number;
 }
 
 function normalizeCreds(creds) {

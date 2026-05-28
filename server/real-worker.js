@@ -6,7 +6,7 @@ const GEOBLOCK_URL = 'https://polymarket.com/api/geoblock';
 const HEARTBEAT_MS = 60_000;
 
 const state = createAppState();
-const service = createRealTraderService(state, () => {});
+let service = null;
 let stopping = false;
 
 main().catch((error) => {
@@ -31,6 +31,14 @@ async function main() {
     );
   }
 
+  service = createRealTraderService(state, () => {}, {
+    runtimeId: 'local-pc-worker',
+    runtimeRole: 'worker',
+    geoblockSnapshot: {
+      ...geo,
+      checkedAt: new Date().toISOString(),
+    },
+  });
   await service.start();
   console.log(`[real-worker] started ${summary()}`);
 
@@ -47,7 +55,7 @@ async function shutdown(signal, heartbeat) {
   stopping = true;
   clearInterval(heartbeat);
   console.log(`[real-worker] shutting down from ${signal}`);
-  await service.close();
+  await service?.close();
   process.exit(0);
 }
 

@@ -24,7 +24,7 @@ function startApp(realService) {
   });
 }
 
-function fakeService() {
+function fakeService(snapshot = null) {
   return {
     getState: async () => ({
       ok: true,
@@ -32,6 +32,8 @@ function fakeService() {
       follows: [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', status: 'active' }],
       orders: [],
       positions: [],
+      runtime: snapshot?.runtime || null,
+      account: snapshot?.account || null,
     }),
     followTrader: async () => ({ ok: true }),
     unfollowTrader: async () => ({ ok: true }),
@@ -52,7 +54,7 @@ describe('real routes', () => {
     expect(response.status).toBe(403);
   });
 
-  it('requires configured dashboard auth and maps real state', async () => {
+  it('requires configured dashboard auth and maps real state with no worker snapshot', async () => {
     process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
     const base = await startApp(fakeService());
 
@@ -65,5 +67,34 @@ describe('real routes', () => {
     expect(denied.status).toBe(401);
     expect(allowed.status).toBe(200);
     expect(payload.summary.activeFollowCount).toBe(1);
+    expect(payload.runtime).toBeNull();
+    expect(payload.account).toBeNull();
+  });
+
+  it('includes the latest real worker runtime and account snapshot when present', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    const base = await startApp(fakeService({
+      runtime: {
+        role: 'worker',
+        status: 'ready',
+        heartbeatAt: '2026-05-28T09:00:00.000Z',
+        liveExecutionReady: true,
+      },
+      account: {
+        ok: true,
+        signerAddress: '0x1111111111111111111111111111111111111111',
+        collateral: { balanceUsd: 12.5 },
+      },
+    }));
+
+    const response = await fetch(`${base}/api/real/state`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.runtime.role).toBe('worker');
+    expect(payload.runtime.liveExecutionReady).toBe(true);
+    expect(payload.account.collateral.balanceUsd).toBe(12.5);
   });
 });

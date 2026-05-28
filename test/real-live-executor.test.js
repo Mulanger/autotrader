@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createOrDeriveApiCredentials, redactedLiveConfigForDiagnostics } from '../server/real/live-executor.js';
+import {
+  createOrDeriveApiCredentials,
+  createPolymarketLiveExecutor,
+  redactedLiveConfigForDiagnostics,
+} from '../server/real/live-executor.js';
 
 const privateKey = `0x${'1'.repeat(64)}`;
 const funderAddress = `0x${'2'.repeat(40)}`;
@@ -60,5 +64,37 @@ describe('real live executor diagnostics', () => {
         throw new Error('Could not derive api key');
       },
     })).rejects.toThrow('create: Could not create api key; derive: Could not derive api key');
+  });
+
+  it('returns account metadata and CLOB balance details without credential secrets', async () => {
+    const executor = createPolymarketLiveExecutor({
+      privateKey,
+      funderAddress,
+      rpcUrl: 'https://polygon.example',
+      creds: { key: 'api-key', secret: 'api-secret', passphrase: 'api-passphrase' },
+      clientFactory: () => ({
+        updateBalanceAllowance: async () => {},
+        getBalanceAllowance: async () => ({
+          balance: '12340000',
+          allowances: {
+            collateral: '1000000',
+            conditional: '2000000',
+          },
+        }),
+      }),
+    });
+
+    const snapshot = await executor.getAccountSnapshot();
+    const serialized = JSON.stringify(snapshot);
+
+    expect(snapshot.ok).toBe(true);
+    expect(snapshot.signerAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(snapshot.funderAddress).toBe(funderAddress);
+    expect(snapshot.chainId).toBe(137);
+    expect(snapshot.collateral.balanceUsd).toBeCloseTo(12.34);
+    expect(snapshot.collateral.positiveAllowanceCount).toBe(2);
+    expect(serialized).not.toContain(privateKey.slice(2));
+    expect(serialized).not.toContain('api-secret');
+    expect(serialized).not.toContain('api-passphrase');
   });
 });

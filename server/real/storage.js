@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 export async function createRealStorage() {
   if (!process.env.DATABASE_URL) return createMemoryRealStorage('memory_only');
@@ -31,6 +31,7 @@ export async function createRealStorage() {
     recordOrderAttempt: (attempt) => recordOrderAttempt(pool, attempt),
     getOpenPositions: (limit) => getOpenPositions(pool, limit),
     updatePosition: (id, patch) => updatePosition(pool, id, patch),
+    upsertRuntimeSnapshot: (snapshot) => upsertRuntimeSnapshot(pool, snapshot),
     getState: (params) => getRealState(pool, params),
     close: () => pool.end(),
   };
@@ -40,6 +41,7 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
   const follows = new Map();
   const orders = new Map();
   const positions = new Map();
+  const runtimeSnapshots = new Map();
   const events = [];
 
   function addEvent(event) {
@@ -133,7 +135,24 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
       positions.set(id, updated);
       return updated;
     },
+    async upsertRuntimeSnapshot(snapshot) {
+      const id = String(snapshot?.id || 'real-worker');
+      const existing = runtimeSnapshots.get(id) || {};
+      const now = new Date().toISOString();
+      const next = {
+        ...existing,
+        ...snapshot,
+        id,
+        account: snapshot?.account === undefined ? existing.account || null : snapshot.account,
+        createdAt: existing.createdAt || now,
+        updatedAt: now,
+      };
+      runtimeSnapshots.set(id, next);
+      return next;
+    },
     async getState(params = {}) {
+      const latestRuntime = [...runtimeSnapshots.values()]
+        .sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0))[0] || null;
       return buildState({
         mode,
         durable: false,
@@ -142,6 +161,7 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
         orders: [...orders.values()],
         positions: [...positions.values()],
         events,
+        runtimeSnapshot: latestRuntime,
         limit: params.limit,
       });
     },
@@ -251,6 +271,27 @@ async function migrate(pool) {
 
     create index if not exists real_events_created_idx on real_events (created_at desc);
     create index if not exists real_events_wallet_idx on real_events (wallet, created_at desc);
+
+    create table if not exists real_runtime_snapshots (
+      id text primary key,
+      role text not null default 'worker',
+      status text,
+      mode text,
+      polling_enabled boolean,
+      live_execution_enabled boolean,
+      live_execution_ready boolean,
+      heartbeat_at timestamptz,
+      started_at timestamptz,
+      last_poll_at timestamptz,
+      last_error text,
+      geoblock jsonb not null default '{}'::jsonb,
+      account jsonb,
+      payload jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+
+    create index if not exists real_runtime_snapshots_updated_idx on real_runtime_snapshots (updated_at desc);
 
     insert into real_schema_migrations (version)
     values (${SCHEMA_VERSION})
@@ -498,11 +539,12 @@ async function updatePosition(pool, id, patch) {
 
 async function getRealState(pool, params = {}) {
   const limit = boundedLimit(params.limit, 250);
-  const [followResult, orderResult, positionResult, eventResult] = await Promise.all([
+  const [followResult, orderResult, positionResult, eventResult, runtimeResult] = await Promise.all([
     pool.query('select * from real_followed_traders order by status asc, added_at desc nulls last'),
     pool.query('select * from real_orders order by checked_at desc limit $1', [Math.max(limit, 1000)]),
     pool.query('select * from real_positions order by opened_at desc nulls last limit $1', [Math.max(limit, 1000)]),
     pool.query('select * from real_events order by created_at desc limit $1', [limit]),
+    pool.query('select * from real_runtime_snapshots order by updated_at desc limit 1'),
   ]);
   return buildState({
     mode: 'postgres',
@@ -511,8 +553,59 @@ async function getRealState(pool, params = {}) {
     orders: orderResult.rows.map(mapOrderRow),
     positions: positionResult.rows.map(mapPositionRow),
     events: eventResult.rows.map(mapEventRow),
+    runtimeSnapshot: runtimeResult.rows[0] ? mapRuntimeSnapshotRow(runtimeResult.rows[0]) : null,
     limit,
   });
+}
+
+async function upsertRuntimeSnapshot(pool, snapshot = {}) {
+  const id = String(snapshot.id || 'real-worker');
+  const result = await pool.query(
+    `
+      insert into real_runtime_snapshots (
+        id, role, status, mode, polling_enabled, live_execution_enabled, live_execution_ready,
+        heartbeat_at, started_at, last_poll_at, last_error, geoblock, account, payload, updated_at
+      )
+      values (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb, now()
+      )
+      on conflict (id)
+      do update set
+        role = excluded.role,
+        status = excluded.status,
+        mode = excluded.mode,
+        polling_enabled = excluded.polling_enabled,
+        live_execution_enabled = excluded.live_execution_enabled,
+        live_execution_ready = excluded.live_execution_ready,
+        heartbeat_at = excluded.heartbeat_at,
+        started_at = coalesce(excluded.started_at, real_runtime_snapshots.started_at),
+        last_poll_at = excluded.last_poll_at,
+        last_error = excluded.last_error,
+        geoblock = excluded.geoblock,
+        account = coalesce(excluded.account, real_runtime_snapshots.account),
+        payload = excluded.payload,
+        updated_at = now()
+      returning *
+    `,
+    [
+      id,
+      snapshot.role || 'worker',
+      snapshot.status || null,
+      snapshot.mode || null,
+      boolOrNull(snapshot.pollingEnabled),
+      boolOrNull(snapshot.liveExecutionEnabled),
+      boolOrNull(snapshot.liveExecutionReady),
+      dateOrNull(snapshot.heartbeatAt),
+      dateOrNull(snapshot.startedAt),
+      dateOrNull(snapshot.lastPollAt),
+      snapshot.lastError || null,
+      JSON.stringify(snapshot.geoblock || {}),
+      snapshot.account === undefined ? null : JSON.stringify(snapshot.account || null),
+      JSON.stringify(snapshot.payload || {}),
+    ]
+  );
+  return mapRuntimeSnapshotRow(result.rows[0]);
 }
 
 async function upsertPosition(client, position) {
@@ -631,7 +724,7 @@ export function buildPositionFromAttempt(attempt) {
   };
 }
 
-function buildState({ mode, durable, migrateError = null, follows, orders, positions, events, limit = 250 }) {
+function buildState({ mode, durable, migrateError = null, follows, orders, positions, events, runtimeSnapshot = null, limit = 250 }) {
   const sortedOrders = [...orders].sort((a, b) => Date.parse(b.checkedAt || 0) - Date.parse(a.checkedAt || 0));
   const sortedPositions = [...positions].sort((a, b) => Date.parse(b.openedAt || 0) - Date.parse(a.openedAt || 0));
   const followsWithMetrics = follows.map((follow) => ({
@@ -649,6 +742,8 @@ function buildState({ mode, durable, migrateError = null, follows, orders, posit
     orders: sortedOrders.slice(0, limit),
     positions: sortedPositions.slice(0, limit),
     events: [...events].slice(0, limit),
+    runtime: runtimeSnapshot ? runtimeFromSnapshot(runtimeSnapshot) : null,
+    account: runtimeSnapshot?.account || null,
   };
 }
 
@@ -807,6 +902,47 @@ function mapEventRow(row) {
   };
 }
 
+function mapRuntimeSnapshotRow(row) {
+  return {
+    id: row.id,
+    role: row.role,
+    status: row.status,
+    mode: row.mode,
+    pollingEnabled: row.polling_enabled,
+    liveExecutionEnabled: row.live_execution_enabled,
+    liveExecutionReady: row.live_execution_ready,
+    heartbeatAt: iso(row.heartbeat_at),
+    startedAt: iso(row.started_at),
+    lastPollAt: iso(row.last_poll_at),
+    lastError: row.last_error,
+    geoblock: row.geoblock || {},
+    account: row.account || null,
+    payload: row.payload || {},
+    createdAt: iso(row.created_at),
+    updatedAt: iso(row.updated_at),
+  };
+}
+
+function runtimeFromSnapshot(snapshot) {
+  return {
+    id: snapshot.id,
+    role: snapshot.role,
+    status: snapshot.status,
+    mode: snapshot.mode,
+    pollingEnabled: snapshot.pollingEnabled,
+    liveExecutionEnabled: snapshot.liveExecutionEnabled,
+    liveExecutionReady: snapshot.liveExecutionReady,
+    heartbeatAt: snapshot.heartbeatAt,
+    startedAt: snapshot.startedAt,
+    lastPollAt: snapshot.lastPollAt,
+    lastError: snapshot.lastError,
+    geoblock: snapshot.geoblock || {},
+    payload: snapshot.payload || {},
+    createdAt: snapshot.createdAt,
+    updatedAt: snapshot.updatedAt,
+  };
+}
+
 function normalizeWallet(wallet) {
   const text = String(wallet || '').trim().toLowerCase();
   return /^0x[a-f0-9]{40}$/.test(text) ? text : null;
@@ -855,6 +991,12 @@ function numberFromPg(value) {
   if (value === null || value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function boolOrNull(value) {
+  if (value === true || value === false) return value;
+  if (value === null || value === undefined) return null;
+  return Boolean(value);
 }
 
 function dateOrNull(value) {

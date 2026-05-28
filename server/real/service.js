@@ -38,10 +38,16 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   const setTimer = options.setInterval || setInterval;
   const clearTimer = options.clearInterval || clearInterval;
   const autoRun = options.autoRun ?? REAL_POLLING_ENABLED;
+  const runtimeId = options.runtimeId || (autoRun ? 'local-worker' : 'dashboard');
+  const runtimeRole = options.runtimeRole || (autoRun ? 'worker' : 'dashboard');
+  const geoblockSnapshot = options.geoblockSnapshot || null;
+  const runtimeSnapshotIntervalMs = options.runtimeSnapshotIntervalMs ?? 60_000;
+  const startedAt = new Date().toISOString();
 
   let storage = null;
   let pollTimer = null;
   let resolutionTimer = null;
+  let runtimeTimer = null;
   let pollRunning = false;
   let resolutionRunning = false;
 
@@ -69,8 +75,10 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     await refreshState();
 
     if (autoRun) {
+      await writeRuntimeSnapshot({ includeAccount: true });
       pollTimer = setTimer(runPoll, pollIntervalMs);
       resolutionTimer = setTimer(runReconciliation, resolutionIntervalMs);
+      runtimeTimer = setTimer(() => writeRuntimeSnapshot({ includeAccount: true }), runtimeSnapshotIntervalMs);
       runPoll();
       runReconciliation();
     }
@@ -79,6 +87,8 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   async function close() {
     if (pollTimer) clearTimer(pollTimer);
     if (resolutionTimer) clearTimer(resolutionTimer);
+    if (runtimeTimer) clearTimer(runtimeTimer);
+    if (autoRun) await writeRuntimeSnapshot({ includeAccount: false, status: 'stopped' }).catch(() => {});
     await storage?.close();
   }
 
@@ -152,12 +162,14 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.lastPollInserted = inserted;
       state.service.real.lastPollSkippedStale = skippedStale;
       state.service.real.lastError = null;
+      await writeRuntimeSnapshot({ includeAccount: false });
       await refreshState();
       broadcast();
       return { checked, inserted, skippedStale };
     } catch (error) {
       state.service.real.status = 'error';
       state.service.real.lastError = error.message;
+      await writeRuntimeSnapshot({ includeAccount: false }).catch(() => {});
       broadcast();
       return { checked, inserted, skippedStale, error };
     } finally {
@@ -191,12 +203,14 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.lastResolutionChecked = checked;
       state.service.real.lastResolutionSettled = settled;
       state.service.real.lastError = null;
+      await writeRuntimeSnapshot({ includeAccount: false });
       await refreshState();
       if (checked || settled) broadcast();
       return { checked, settled };
     } catch (error) {
       state.service.real.status = 'error';
       state.service.real.lastError = error.message;
+      await writeRuntimeSnapshot({ includeAccount: false }).catch(() => {});
       broadcast();
       return { checked, settled, error };
     } finally {
@@ -362,6 +376,39 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     state.service.real.maxEntryPriceCents = maxEntryPriceCents;
     state.service.real.maxSourceTradeAgeSeconds = maxSourceTradeAgeSeconds;
     return state.real;
+  }
+
+  async function writeRuntimeSnapshot({ includeAccount = false, status = null } = {}) {
+    if (!autoRun || !storage?.upsertRuntimeSnapshot) return null;
+    const readiness = liveReadiness();
+    const account = includeAccount && typeof liveExecutor.getAccountSnapshot === 'function'
+      ? await liveExecutor.getAccountSnapshot()
+      : undefined;
+    const snapshot = {
+      id: runtimeId,
+      role: runtimeRole,
+      status: status || state.service.real?.status || 'ready',
+      mode: tradingMode,
+      pollingEnabled: Boolean(autoRun),
+      liveExecutionEnabled: isLiveExecutionRequested(),
+      liveExecutionReady: readiness.ready,
+      heartbeatAt: new Date().toISOString(),
+      startedAt,
+      lastPollAt: state.service.real?.lastPollAt || null,
+      lastError: state.service.real?.lastError || null,
+      geoblock: geoblockSnapshot || {},
+      account,
+      payload: {
+        stakeUsd,
+        priceGuardCents: guardCents,
+        maxEntryPriceCents,
+        maxSourceTradeAgeSeconds,
+        pollIntervalMs,
+        resolutionIntervalMs,
+      },
+    };
+    await storage.upsertRuntimeSnapshot(snapshot);
+    return snapshot;
   }
 
   return {
