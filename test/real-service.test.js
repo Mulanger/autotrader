@@ -36,6 +36,36 @@ describe('real trader service', () => {
     expect(() => assertPin('0000')).toThrow('Invalid real action PIN');
   });
 
+  it('can start in dashboard-only mode without polling followed wallets', async () => {
+    const state = createAppState();
+    const storage = createMemoryRealStorage();
+    let fetchCalls = 0;
+    let timerCalls = 0;
+    const service = createRealTraderService(state, () => {}, {
+      autoRun: false,
+      storageFactory: async () => storage,
+      setInterval: () => {
+        timerCalls += 1;
+        return 1;
+      },
+      fetchRealFollowTrades: async () => {
+        fetchCalls += 1;
+        return [];
+      },
+    });
+
+    await service.start();
+    await service.followTrader({ wallet, pin: '1993' });
+    const real = await service.getState();
+
+    expect(state.service.real.pollingEnabled).toBe(false);
+    expect(real.notes[0]).toContain('Real polling is disabled');
+    expect(real.follows).toHaveLength(1);
+    expect(fetchCalls).toBe(0);
+    expect(timerCalls).toBe(0);
+    await service.close();
+  });
+
   it('ignores historical trades before added_at and records new dry-run attempts', async () => {
     const state = createAppState();
     const storage = createMemoryRealStorage();

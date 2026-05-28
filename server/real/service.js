@@ -5,6 +5,7 @@ import {
   REAL_LIVE_TRADING_ENABLED,
   REAL_MAX_ENTRY_PRICE_CENTS,
   REAL_MAX_SOURCE_TRADE_AGE_SECONDS,
+  REAL_POLLING_ENABLED,
   REAL_PRICE_GUARD_CENTS,
   REAL_STAKE_USD,
   REAL_TRADING_MODE,
@@ -36,7 +37,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   const maxSourceTradeAgeSeconds = options.maxSourceTradeAgeSeconds ?? REAL_MAX_SOURCE_TRADE_AGE_SECONDS;
   const setTimer = options.setInterval || setInterval;
   const clearTimer = options.clearInterval || clearInterval;
-  const autoRun = options.autoRun !== false;
+  const autoRun = options.autoRun ?? REAL_POLLING_ENABLED;
 
   let storage = null;
   let pollTimer = null;
@@ -52,6 +53,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       liveExecutionEnabled: isLiveExecutionRequested(),
       liveExecutionReady: liveReadiness().ready,
       liveExecutionConfig: liveReadiness(),
+      pollingEnabled: Boolean(autoRun),
       stakeUsd,
       priceGuardCents: guardCents,
       maxEntryPriceCents,
@@ -60,6 +62,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     broadcast();
     storage = await storageFactory();
     state.service.real.status = 'ready';
+    state.service.real.pollingEnabled = Boolean(autoRun);
     state.service.real.storageMode = storage.mode;
     state.service.real.durable = Boolean(storage.durable);
     state.service.real.migrateError = storage.migrateError || null;
@@ -114,6 +117,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
       state.service.real.liveExecutionEnabled = isLiveExecutionRequested();
       state.service.real.liveExecutionReady = readiness.ready;
       state.service.real.liveExecutionConfig = readiness;
+      state.service.real.pollingEnabled = Boolean(autoRun);
       state.service.real.stakeUsd = stakeUsd;
       state.service.real.priceGuardCents = guardCents;
       state.service.real.maxEntryPriceCents = maxEntryPriceCents;
@@ -352,6 +356,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     state.service.real.liveExecutionEnabled = isLiveExecutionRequested();
     state.service.real.liveExecutionReady = readiness.ready;
     state.service.real.liveExecutionConfig = readiness;
+    state.service.real.pollingEnabled = Boolean(autoRun);
     state.service.real.stakeUsd = stakeUsd;
     state.service.real.priceGuardCents = guardCents;
     state.service.real.maxEntryPriceCents = maxEntryPriceCents;
@@ -392,6 +397,11 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
   }
 
   function realModeNotes({ readiness }) {
+    if (!autoRun) {
+      return [
+        'Real polling is disabled on this process. This instance can read the shared database and manage follows, but another worker must run REAL_POLLING_ENABLED=true to place orders and reconcile positions.',
+      ];
+    }
     if (isLiveExecutionRequested()) {
       return readiness.ready
         ? ['Live mode is enabled. Fresh approved followed-wallet BUY entries are submitted as fixed-stake FOK orders after the price guard passes.']

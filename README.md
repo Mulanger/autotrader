@@ -36,6 +36,29 @@ Healthcheck: /api/health
 
 For durable demo state, add Railway Postgres to the service so Railway injects `DATABASE_URL`. Without `DATABASE_URL`, the app still runs but clearly reports `Storage memory only`, and demo history resets when the process restarts. With Postgres connected, the app writes normalized audit tables for observed trades, copy decisions, demo positions, trader profiles, and the demo account.
 
+Railway can be used as a dashboard-only service while a separate allowed-region/local worker performs Real polling and live execution. Set `REAL_POLLING_ENABLED=false` on the dashboard service so it can read the shared database and manage follows without writing dry-run/live order attempts. Run the worker with `REAL_POLLING_ENABLED=true`.
+
+## Local Real Worker
+
+For a temporary local worker on Windows, copy `scripts\local-real-worker.env.example` to `.env.local.worker`, fill in the same Railway Postgres URL and live Polymarket variables, then run:
+
+```powershell
+.\scripts\start-local-real-worker.ps1
+```
+
+Status and stop helpers:
+
+```powershell
+.\scripts\status-local-real-worker.ps1
+.\scripts\stop-local-real-worker.ps1
+```
+
+The worker process only runs while the PC is on and online. To start it automatically after login, run:
+
+```powershell
+.\scripts\install-local-real-worker-task.ps1
+```
+
 ## Candidate Tracker
 
 The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_ENABLED=true`. When enabled with `DATABASE_URL`, it polls Polymarket Data API directly, stores qualifying trades in `candidate_*` tables, backfills newly seen wallets for 30 days, keeps active copied wallets queued for 90 days of card history, resolves markets through Gamma, and serves the dashboard Candidates tab from `/api/candidates/leaderboard`.
@@ -77,6 +100,7 @@ Optional:
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions, defaults to `1993`.
 - `REAL_TRADING_MODE`: `dry_run` by default. Set to `live` only when the live credential variables below are configured.
 - `REAL_LIVE_TRADING_ENABLED`: second live-execution gate, defaults to `false`; must be `true` with `REAL_TRADING_MODE=live`.
+- `REAL_POLLING_ENABLED`: controls whether this process polls followed Real traders and reconciles positions, defaults to `true`. Set `false` for dashboard-only deployments that share a database with a separate live worker.
 - `REAL_STAKE_USD`: fixed live/dry-run Real stake, defaults to `10`. `REAL_DRY_RUN_STAKE_USD` is still accepted for old dry-run setups.
 - `REAL_PRICE_GUARD_CENTS`: maximum cents above the source BUY price allowed for Real quote checks and live order price limits, defaults to `4`.
 - `REAL_MAX_ENTRY_PRICE_CENTS`: maximum source BUY price Real will copy, defaults to `75`.

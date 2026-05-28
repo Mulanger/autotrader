@@ -92,6 +92,8 @@ export const REAL_TRADING_MODE = normalizeRealTradingMode(
 
 export const REAL_LIVE_TRADING_ENABLED = parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false);
 
+export const REAL_POLLING_ENABLED = parseBoolean(process.env.REAL_POLLING_ENABLED, true);
+
 export const REAL_PRICE_GUARD_CENTS = Number(process.env.REAL_PRICE_GUARD_CENTS || 4);
 
 export const REAL_MAX_ENTRY_PRICE_CENTS = Number(

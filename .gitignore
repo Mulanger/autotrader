@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.log
 backtests/
+runtime/
 .env
 .env.*
 !.env.example

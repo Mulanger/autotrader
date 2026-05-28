@@ -144,6 +144,7 @@ Production/Railway:
 - `REAL_ACTION_PIN`: PIN required for Real add/remove actions. Defaults to `1993`. Real routes are unavailable unless `DASHBOARD_AUTH_TOKEN` is configured.
 - `REAL_TRADING_MODE`: Real execution mode. Defaults to `dry_run`; set to `live` only with live credentials configured.
 - `REAL_LIVE_TRADING_ENABLED`: second live-execution gate. Defaults to `false`; must be `true` with `REAL_TRADING_MODE=live`.
+- `REAL_POLLING_ENABLED`: controls whether this process polls followed Real traders and reconciles Real positions. Defaults to `true`; set to `false` for dashboard-only deployments that share the database with a separate worker.
 - `REAL_STAKE_USD`: fixed Real live/dry-run stake. Defaults to `REAL_DRY_RUN_STAKE_USD` or `10`.
 - `REAL_DRY_RUN_STAKE_USD`: legacy fixed Real dry-run quote size. Defaults to `10`.
 - `REAL_PRICE_GUARD_CENTS`: maximum cents above the source BUY price allowed for Real quote checks and live order price limits. Defaults to `4`.
@@ -356,6 +357,15 @@ Without Postgres, all of the above is only in process memory and will be lost on
 The Real dashboard defaults to dry-run. In dry-run, it stores manual follows in `real_followed_traders`, polls Polymarket Data API for fresh post-add BUY trades, applies the max-entry and one-position-per-market gates, checks public CLOB order books, and records would-fill/rejected fixed-stake FOK attempts. Add/remove controls require configured `DASHBOARD_AUTH_TOKEN` plus `REAL_ACTION_PIN`.
 
 Live order submission now uses a separate Polymarket CLOB v2 adapter in `server/real/live-executor.js`. It only arms when both `REAL_TRADING_MODE=live` and `REAL_LIVE_TRADING_ENABLED=true` are set and the required Polymarket signing/funder variables are present. Do not bypass these gates or call order endpoints from the demo path.
+
+If the dashboard and live execution are split across hosts, set `REAL_POLLING_ENABLED=false` on the dashboard host and `REAL_POLLING_ENABLED=true` on exactly one worker host. The dashboard can still add/remove follows and read the shared database, but it will not create Real order attempts or reconcile Real positions. The local Windows worker helpers are:
+
+```powershell
+.\scripts\start-local-real-worker.ps1
+.\scripts\status-local-real-worker.ps1
+.\scripts\stop-local-real-worker.ps1
+.\scripts\install-local-real-worker-task.ps1
+```
 
 Preserve these live execution controls:
 
