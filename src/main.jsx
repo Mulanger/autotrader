@@ -56,6 +56,27 @@ function authHeaders() {
 }
 
 function App() {
+  const mobileReal = useMobileRealSurface();
+  if (mobileReal) return <MobileRealApp />;
+
+  return <DesktopApp />;
+}
+
+function MobileRealApp() {
+  const realState = useRealState();
+  return (
+    <main className="shell realMode mobileOnlyShell">
+      <AutotraderMobile
+        real={realState.real}
+        loading={realState.loading}
+        error={realState.error}
+        onRefresh={realState.refresh}
+      />
+    </main>
+  );
+}
+
+function DesktopApp() {
   const { state, connected, refresh } = useAutotraderState();
   const [mode, setMode] = React.useState('real');
   const [tab, setTab] = React.useState('overview');
@@ -96,6 +117,24 @@ function App() {
       </section>
     </main>
   );
+}
+
+function useMobileRealSurface() {
+  const [matches, setMatches] = React.useState(() => (
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 780px)').matches &&
+    new URLSearchParams(window.location.search).get('desktop') !== '1'
+  ));
+
+  React.useEffect(() => {
+    const media = window.matchMedia('(max-width: 780px)');
+    const update = () => setMatches(media.matches && new URLSearchParams(window.location.search).get('desktop') !== '1');
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  return matches;
 }
 
 function useAutotraderState() {

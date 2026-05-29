@@ -6,8 +6,8 @@ import {
   CircleDollarSign,
   Clock3,
   Layers3,
-  Menu,
   PauseCircle,
+  RefreshCcw,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
@@ -35,9 +35,8 @@ const SKIPPED_REASON_CODES = new Set([
   'empty_orderbook',
 ]);
 
-export default function AutotraderMobile({ real }) {
+export default function AutotraderMobile({ real, loading = false, error = null, onRefresh = null }) {
   const [filter, setFilter] = React.useState('All');
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const [rulesOpen, setRulesOpen] = React.useState(false);
 
   const orders = Array.isArray(real?.orders) ? real.orders : [];
@@ -53,27 +52,36 @@ export default function AutotraderMobile({ real }) {
   const status = runtime.status || service.status || 'loading';
   const mode = isLiveMode(real) ? 'Live' : 'Dry-run';
   const botActive = isBotActive(real) ? 'Bot Active' : 'Bot Offline';
+  const lastPoll = runtime.lastPollAt || service.lastPollAt;
+
+  if (error && !real) {
+    return (
+      <section className="mobileTrader mobileTraderState" aria-label="Autotrader mobile dashboard">
+        <header className="mobileTraderHeader compact">
+          <div className="mobileTitleBlock">
+            <h1>Autotrader</h1>
+            <p className="negative"><span /> Locked</p>
+          </div>
+        </header>
+        <div className="mobileEmptyFeed error">
+          <AlertTriangle size={22} />
+          <strong>Real dashboard unavailable</strong>
+          <span>{error}</span>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="mobileTrader" aria-label="Autotrader mobile dashboard">
-      <div className="mobileDeviceBar" aria-hidden="true">
-        <span>9:41</span>
-        <span className="mobileSystemIcons">
-          <span className="mobileSignalBars"><i /><i /><i /><i /></span>
-          <span className="mobileWifi" />
-          <span className="mobileBattery" />
-        </span>
-      </div>
-
       <header className="mobileTraderHeader">
         <button
           className="mobileIconButton"
           type="button"
-          aria-label="Open mobile navigation"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((value) => !value)}
+          aria-label="Refresh dashboard"
+          onClick={onRefresh || undefined}
         >
-          <Menu size={28} />
+          <RefreshCcw size={25} />
         </button>
         <div className="mobileTitleBlock">
           <h1>Autotrader</h1>
@@ -93,7 +101,7 @@ export default function AutotraderMobile({ real }) {
         </button>
       </header>
 
-      {menuOpen && <MobileNavPanel real={real} status={status} />}
+      <MobileStatusStrip real={real} status={status} loading={loading} lastPoll={lastPoll} />
       {rulesOpen && <MobileRulesPanel real={real} />}
 
       <section className="mobileSummaryGrid" aria-label="Live account summary">
@@ -159,7 +167,7 @@ function MobileOrderCard({ event }) {
         <div>
           <span className={`mobileStatusBadge ${event.status}`}>{event.badge}</span>
           <span className="mobileDot">·</span>
-          <span>{event.meta}</span>
+          <span className="mobileMetaText">{event.meta}</span>
         </div>
         <ChevronRight size={22} />
       </div>
@@ -190,16 +198,15 @@ function MobileOrderCard({ event }) {
   );
 }
 
-function MobileNavPanel({ real, status }) {
+function MobileStatusStrip({ real, status, loading, lastPoll }) {
   const activeFollows = (real?.follows || []).filter((follow) => follow.status === 'active').length;
   const openPositions = (real?.positions || []).filter((position) => String(position?.status || 'open').toLowerCase() === 'open').length;
-  const lastPoll = real?.runtime?.lastPollAt || real?.service?.lastPollAt;
 
   return (
-    <section className="mobileDropPanel">
+    <section className="mobileStatusStrip" aria-label="Runtime status">
       <div>
         <span>Worker</span>
-        <strong>{status}</strong>
+        <strong>{loading && !real ? 'loading' : status}</strong>
       </div>
       <div>
         <span>Follows</span>
