@@ -31,7 +31,9 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
+import AutotraderMobile from './components/AutotraderMobile.jsx';
 import './styles.css';
+import './styles/autotrader-mobile.css';
 
 const API_BASE = '';
 const CANDIDATE_TRADE_PAGE_SIZE = 80;
@@ -66,7 +68,7 @@ function App() {
   const metrics = data.demo.metrics;
 
   return (
-    <main className="shell">
+    <main className={`shell ${mode === 'real' ? 'realMode' : 'demoMode'}`}>
         <Sidebar
           mode={mode}
           setMode={setMode}
@@ -323,11 +325,18 @@ function RealWorkspace({ tab }) {
     return <section className="panel fullPanel"><EmptyState title="Loading real dashboard" text="Fetching real follow state." /></section>;
   }
 
-  if (tab === 'following') return <RealFollowingView real={real} realState={realState} />;
-  if (tab === 'real-traders') return <RealScoredTradersView realState={realState} />;
-  if (tab === 'positions') return <RealPositionsView real={real} />;
-  if (tab === 'orders') return <RealOrdersView real={real} />;
-  return <RealOverview real={real} />;
+  let desktopView = <RealOverview real={real} />;
+  if (tab === 'following') desktopView = <RealFollowingView real={real} realState={realState} />;
+  if (tab === 'real-traders') desktopView = <RealScoredTradersView realState={realState} />;
+  if (tab === 'positions') desktopView = <RealPositionsView real={real} />;
+  if (tab === 'orders') desktopView = <RealOrdersView real={real} />;
+
+  return (
+    <>
+      <AutotraderMobile real={real} />
+      <div className="realDesktopWorkspace">{desktopView}</div>
+    </>
+  );
 }
 
 function tabLabel(tab) {
