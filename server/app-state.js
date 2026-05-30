@@ -31,8 +31,12 @@ export function createAppState() {
       pseudonym: null,
       profileImage: null,
       allTimeProfitUsd: null,
+      allTimeVolumeUsd: null,
+      allTimeMarketsTraded: null,
       allTimeWinRatePct: null,
       allTimePnlTradeCount: null,
+      profileStatsSource: null,
+      profileStatsUpdatedAt: null,
       recentFormResults: [],
       recentTrades: [],
       observedCount: 0,
@@ -49,6 +53,11 @@ export function createAppState() {
       streamLastMessageAt: null,
       pollStatus: 'idle',
       pollLastRunAt: null,
+      profileStatus: 'idle',
+      profileLastRunAt: null,
+      profileLastWalletCount: 0,
+      profileUpdatedWalletCount: 0,
+      profileLastError: null,
       resolutionStatus: 'idle',
       resolutionLastRunAt: null,
       resolutionLastSettledAt: null,
@@ -263,17 +272,25 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
 
 export function applyLeaderboardRows(state, rows = []) {
   for (const row of rows) {
-    const wallet = String(row.proxyWallet || '').toLowerCase();
-    const trader = state.traders[wallet];
+    const wallet = String(row.proxyWallet || row.wallet || '').toLowerCase();
+    const trader = state.traders[wallet] || ensureTraderProfile(state, wallet, row);
     if (!trader) continue;
-    trader.displayName = row.displayName || trader.displayName;
+    trader.displayName = row.displayName || row.userName || row.name || trader.displayName;
     trader.pseudonym = row.pseudonym || trader.pseudonym;
-    trader.profileImage = row.profileImage || trader.profileImage;
-    trader.rank = row.rank ?? trader.rank;
-    trader.allTimeProfitUsd = numberOrNull(row.allTimeProfitUsd);
-    trader.allTimeWinRatePct = numberOrNull(row.allTimeWinRatePct);
-    trader.allTimePnlTradeCount = numberOrNull(row.allTimePnlTradeCount);
-    trader.recentFormResults = Array.isArray(row.recentFormResults) ? row.recentFormResults : trader.recentFormResults;
+    trader.profileImage = row.profileImage || row.profileImageOptimized || trader.profileImage;
+    if (hasOwn(row, 'rank')) trader.rank = numberOrNull(row.rank);
+    if (hasOwn(row, 'allTimeProfitUsd')) trader.allTimeProfitUsd = numberOrNull(row.allTimeProfitUsd);
+    else if (hasOwn(row, 'pnl')) trader.allTimeProfitUsd = numberOrNull(row.pnl);
+    if (hasOwn(row, 'allTimeVolumeUsd')) trader.allTimeVolumeUsd = numberOrNull(row.allTimeVolumeUsd);
+    else if (hasOwn(row, 'vol')) trader.allTimeVolumeUsd = numberOrNull(row.vol);
+    if (hasOwn(row, 'allTimeMarketsTraded')) trader.allTimeMarketsTraded = numberOrNull(row.allTimeMarketsTraded);
+    else if (hasOwn(row, 'marketsTraded')) trader.allTimeMarketsTraded = numberOrNull(row.marketsTraded);
+    if (hasOwn(row, 'allTimeWinRatePct')) trader.allTimeWinRatePct = numberOrNull(row.allTimeWinRatePct);
+    if (hasOwn(row, 'allTimePnlTradeCount')) trader.allTimePnlTradeCount = numberOrNull(row.allTimePnlTradeCount);
+    if (row.profileStatsSource) trader.profileStatsSource = row.profileStatsSource;
+    if (row.profileStatsUpdatedAt) trader.profileStatsUpdatedAt = row.profileStatsUpdatedAt;
+    if (Array.isArray(row.profileStatsErrors)) trader.profileStatsErrors = row.profileStatsErrors;
+    if (Array.isArray(row.recentFormResults)) trader.recentFormResults = row.recentFormResults;
   }
 }
 
@@ -284,7 +301,7 @@ export function snapshotState(state, options = {}) {
     service: state.service,
     watchedWallets: state.watchedWallets,
     copyPool: state.copyPool,
-    traders: Object.values(state.traders),
+    traders: activeTraderProfiles(state),
     demo: {
       metrics: demoMetrics,
       openPositions: state.demo.openPositions,
@@ -355,9 +372,20 @@ function iterableValues(value) {
   return [];
 }
 
+function activeTraderProfiles(state) {
+  return (state.watchedWallets || [])
+    .map((wallet) => state.traders[String(wallet || '').toLowerCase()])
+    .filter(Boolean);
+}
+
 function numberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object || {}, key);
 }
 
 function reconcileConfiguredDemoCapital(demo, storedStartingCapitalUsd) {

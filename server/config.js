@@ -12,6 +12,14 @@ export const POLYMARKET_DATA_API_URL =
 export const POLYMARKET_CLOB_URL =
   process.env.POLYMARKET_CLOB_URL || 'https://clob.polymarket.com';
 
+export const POLYMARKET_PROFILE_REFRESH_INTERVAL_MS = Number(
+  process.env.POLYMARKET_PROFILE_REFRESH_INTERVAL_MS || 15 * 60_000
+);
+
+export const POLYMARKET_PROFILE_REFRESH_CONCURRENCY = Number(
+  process.env.POLYMARKET_PROFILE_REFRESH_CONCURRENCY || 6
+);
+
 export const POLYGON_RPC_URL =
   process.env.POLYGON_RPC_URL || process.env.POLYMARKET_RPC_URL || process.env.RPC_URL || 'https://polygon-rpc.com';
 

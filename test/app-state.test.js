@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { DEMO_STAKE_USD, DEMO_STARTING_CAPITAL_USD } from '../server/config.js';
-import { createAppState, ingestTrade, restoreDurableState, serializeDurableState } from '../server/app-state.js';
+import {
+  applyLeaderboardRows,
+  createAppState,
+  ingestTrade,
+  restoreDurableState,
+  serializeDurableState,
+  snapshotState,
+} from '../server/app-state.js';
 import { applyCopyPoolSnapshot } from '../server/copy-pool.js';
 import { applyShadowTraderSnapshot } from '../server/shadow-trader.js';
 
@@ -36,6 +43,51 @@ describe('app state', () => {
     expect(state.allTrades).toHaveLength(1);
     expect(state.copiedFeed).toHaveLength(0);
     expect(state.demo.copiedCount).toBe(0);
+  });
+
+  it('replaces stale leaderboard profile stats with Polymarket profile stats', () => {
+    const state = createAppState();
+    const wallet = state.watchedWallets[0];
+    state.traders[wallet].rank = 12;
+    state.traders[wallet].allTimeProfitUsd = 354468.4035;
+    state.traders[wallet].allTimeWinRatePct = 78.57;
+
+    applyLeaderboardRows(state, [{
+      proxyWallet: wallet,
+      displayName: 'dr-esin',
+      pseudonym: 'Corrupt-Closure',
+      rank: '2675266',
+      allTimeProfitUsd: -1388.6384998459325,
+      allTimeVolumeUsd: 1526293.61343,
+      allTimeMarketsTraded: 10,
+      allTimePnlTradeCount: 10,
+      allTimeWinRatePct: null,
+      profileStatsSource: 'polymarket',
+      profileStatsUpdatedAt: '2026-05-30T12:00:00.000Z',
+    }]);
+
+    expect(state.traders[wallet].displayName).toBe('dr-esin');
+    expect(state.traders[wallet].rank).toBe(2675266);
+    expect(state.traders[wallet].allTimeProfitUsd).toBeCloseTo(-1388.6385, 4);
+    expect(state.traders[wallet].allTimeVolumeUsd).toBeCloseTo(1526293.61343, 4);
+    expect(state.traders[wallet].allTimeMarketsTraded).toBe(10);
+    expect(state.traders[wallet].allTimeWinRatePct).toBeNull();
+    expect(state.traders[wallet].profileStatsSource).toBe('polymarket');
+  });
+
+  it('only exposes active copy-list traders in the dashboard snapshot', () => {
+    const state = createAppState();
+    const inactiveWallet = '0x9999999999999999999999999999999999999999';
+    state.traders[inactiveWallet] = {
+      wallet: inactiveWallet,
+      displayName: 'Inactive stored profile',
+      allTimeProfitUsd: 100000,
+    };
+
+    const snapshot = snapshotState(state);
+
+    expect(snapshot.traders.map((trader) => trader.wallet)).toEqual(state.watchedWallets);
+    expect(snapshot.traders.some((trader) => trader.wallet === inactiveWallet)).toBe(false);
   });
 
   it('observes watched bootstrap trades without copying them', () => {

@@ -77,6 +77,8 @@ Optional:
 - `POLYMARKET_DATA_API_URL`: defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: defaults to `https://gamma-api.polymarket.com`.
 - `POLYMARKET_CLOB_URL`: defaults to `https://clob.polymarket.com`.
+- `POLYMARKET_PROFILE_REFRESH_INTERVAL_MS`: dashboard watched-profile stats refresh interval, defaults to `900000`.
+- `POLYMARKET_PROFILE_REFRESH_CONCURRENCY`: concurrent Polymarket profile stat requests, defaults to `6`.
 - `POLL_INTERVAL_MS`: defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: defaults to `60000`.
 - `DEMO_STARTING_CAPITAL_USD`: defaults to `1000`.

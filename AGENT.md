@@ -118,6 +118,8 @@ Production/Railway:
 - `POLYMARKET_DATA_API_URL`: direct Polymarket Data API for the independent `$1k-$10k` candidate tracker. Defaults to `https://data-api.polymarket.com`.
 - `POLYMARKET_GAMMA_URL`: direct Polymarket Gamma fallback for market resolution checks. Defaults to `https://gamma-api.polymarket.com`.
 - `POLYMARKET_CLOB_URL`: Polymarket CLOB API for public order book reads and optional Real live submission. Defaults to `https://clob.polymarket.com`.
+- `POLYMARKET_PROFILE_REFRESH_INTERVAL_MS`: dashboard watched-profile stats refresh interval. Defaults to `900000`.
+- `POLYMARKET_PROFILE_REFRESH_CONCURRENCY`: concurrent Polymarket profile stat requests. Defaults to `6`.
 - `POLL_INTERVAL_MS`: REST fallback poll interval. Defaults to `20000`.
 - `RESOLUTION_POLL_INTERVAL_MS`: open-position resolution reconciliation interval. Defaults to `60000`.
 - `DEMO_STARTING_CAPITAL_USD`: demo portfolio starting cash. Defaults to `1000`.

@@ -1,7 +1,14 @@
 import WebSocket from 'ws';
-import { POLL_INTERVAL_MS, POLYWHALE_WS_URL, RESOLUTION_POLL_INTERVAL_MS } from './config.js';
+import {
+  POLL_INTERVAL_MS,
+  POLYMARKET_PROFILE_REFRESH_CONCURRENCY,
+  POLYMARKET_PROFILE_REFRESH_INTERVAL_MS,
+  POLYWHALE_WS_URL,
+  RESOLUTION_POLL_INTERVAL_MS,
+} from './config.js';
 import { applyLeaderboardRows, ingestTrade } from './app-state.js';
-import { fetchBootstrapTrades, fetchProfitLeaderboard, fetchRecentWhales, fetchWhaleTrade } from './polywhale-client.js';
+import { fetchPolymarketProfileStatsForWallets } from './polymarket-profile-client.js';
+import { fetchBootstrapTrades, fetchRecentWhales, fetchWhaleTrade } from './polywhale-client.js';
 import { fetchGammaResolution } from './polymarket-client.js';
 import { reconcileOpenDemoPositions } from './resolution-engine.js';
 import { normalizeStreamMessage } from './trade-normalizer.js';
@@ -12,18 +19,12 @@ export function startIngestion(state, broadcast, storage) {
   let reconnectTimer = null;
   let pollRunning = false;
   let resolutionRunning = false;
+  let profileRefreshRunning = false;
 
   async function bootstrap() {
     try {
       state.service.pollStatus = 'bootstrapping';
-      const [leaderboardRows, trades] = await Promise.all([
-        fetchProfitLeaderboard(100).catch((error) => {
-          state.service.lastError = error.message;
-          return [];
-        }),
-        fetchBootstrapTrades(),
-      ]);
-      applyLeaderboardRows(state, leaderboardRows);
+      const trades = await fetchBootstrapTrades();
       for (const trade of trades) ingestTrade(state, trade, 'bootstrap', { copyEligible: false });
       state.service.pollStatus = 'ready';
       state.service.pollLastRunAt = nowIso();
@@ -33,6 +34,41 @@ export function startIngestion(state, broadcast, storage) {
       state.service.pollStatus = 'error';
       state.service.lastError = error.message;
       broadcast();
+    }
+  }
+
+  async function refreshPolymarketProfiles() {
+    if (profileRefreshRunning) return;
+    const wallets = [...new Set((state.watchedWallets || []).map((wallet) => String(wallet || '').toLowerCase()))]
+      .filter(Boolean);
+    if (!wallets.length) return;
+    profileRefreshRunning = true;
+    try {
+      state.service.profileStatus = 'refreshing';
+      state.service.profileLastWalletCount = wallets.length;
+      state.service.profileLastError = null;
+      broadcast();
+
+      const rows = await fetchPolymarketProfileStatsForWallets(wallets, {
+        concurrency: POLYMARKET_PROFILE_REFRESH_CONCURRENCY,
+      });
+      const updates = rows.filter((row) => !row.profileStatsError);
+      const errors = rows.filter((row) => row.profileStatsError);
+      applyLeaderboardRows(state, updates);
+      state.service.profileStatus = errors.length && !updates.length ? 'error' : 'ready';
+      state.service.profileLastRunAt = nowIso();
+      state.service.profileUpdatedWalletCount = updates.length;
+      state.service.profileLastError = errors.length
+        ? `Polymarket profile refresh failed for ${errors.length}/${wallets.length} wallets`
+        : null;
+      storage.queueSave(state);
+      broadcast();
+    } catch (error) {
+      state.service.profileStatus = 'error';
+      state.service.profileLastError = error.message;
+      broadcast();
+    } finally {
+      profileRefreshRunning = false;
     }
   }
 
@@ -137,6 +173,10 @@ export function startIngestion(state, broadcast, storage) {
     connect();
     setInterval(poll, POLL_INTERVAL_MS);
     setInterval(reconcileResolutions, RESOLUTION_POLL_INTERVAL_MS);
+    if (POLYMARKET_PROFILE_REFRESH_INTERVAL_MS > 0) {
+      setInterval(refreshPolymarketProfiles, POLYMARKET_PROFILE_REFRESH_INTERVAL_MS);
+      refreshPolymarketProfiles();
+    }
     reconcileResolutions();
   });
 }

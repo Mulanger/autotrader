@@ -1641,9 +1641,9 @@ function TraderCard({ trader, compact }) {
         {trader.rank && <em>#{trader.rank}</em>}
       </div>
       <div className="traderStats">
-        <span><b>{usd(trader.allTimeProfitUsd)}</b> profit</span>
-        <span><b>{pct(trader.allTimeWinRatePct)}</b> winrate</span>
-        <span><b>{trader.copiedCount}</b> copied</span>
+        <span><b className={pnlTone(trader.allTimeProfitUsd)}>{formatNullableSignedCompactUsd(trader.allTimeProfitUsd)}</b> P/L</span>
+        <span><b>{formatNullableCompactUsd(trader.allTimeVolumeUsd)}</b> volume</span>
+        <span><b>{formatNullableInteger(trader.allTimeMarketsTraded)}</b> markets</span>
       </div>
       <RecentForm results={recentForm} className="traderForm" />
       {!compact && (
@@ -2544,6 +2544,12 @@ function formatNullableSignedCompactUsd(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return compactSignedUsd(number);
+}
+
+function formatNullableInteger(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(number);
 }
 
 function formatDrawdownUsd(value) {
