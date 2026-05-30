@@ -90,7 +90,7 @@ export function createRealRoutes(realService, candidateTracker = null) {
         return;
       }
       const result = await candidateTracker.recalculateRealCopyQuality({
-        scope: request.body?.scope === 'all_candidates' ? 'all_candidates' : 'active_copy_pool',
+        scope: normalizeCopyQualityScope(request.body?.scope),
       });
       response.json(result);
     } catch (error) {
@@ -154,6 +154,13 @@ function parseOptionalBoolean(value) {
   if (['1', 'true', 'yes', 'on'].includes(text)) return true;
   if (['0', 'false', 'no', 'off'].includes(text)) return false;
   return null;
+}
+
+function normalizeCopyQualityScope(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'all_candidates') return 'all_candidates';
+  if (text === 'active_copy_pool') return 'active_copy_pool';
+  return 'active_scored';
 }
 
 function statusCode(error) {

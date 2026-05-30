@@ -63,6 +63,8 @@ The worker process only runs while the PC is on and online. To start it automati
 
 The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_ENABLED=true`. When enabled with `DATABASE_URL`, it polls Polymarket Data API directly, stores qualifying trades in `candidate_*` tables, backfills newly seen wallets for 30 days, keeps active copied wallets queued for 90 days of card history, resolves markets through Gamma, and serves the dashboard Candidates tab from `/api/candidates/leaderboard`.
 
+For low-cost ongoing maintenance, keep global discovery disabled and enable `CANDIDATE_MAINTENANCE_ENABLED=true` on the Railway app service. The server then refreshes only active copy-pool, scored, and baseline wallets on a daily interval using wallet-scoped Data API requests with a 48-hour overlap. This updates `candidate_trades`, resolves due markets, and recalculates Real copy-quality scores without scanning the full Polymarket trade feed.
+
 The Real dashboard has a scored traders tab backed by cached `real_copy_quality_scores`. It ranks active copy-pool and baseline wallets by copier-specific Copy Quality Score using median entry, conservative copy edge, profit factor, drawdown/profit ratio, sample size, and top-win concentration. This is decision support only; it does not auto-add wallets to Real follows.
 
 ## Environment
@@ -80,6 +82,13 @@ Optional:
 - `DEMO_STARTING_CAPITAL_USD`: defaults to `1000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: defaults to `75`.
 - `CANDIDATE_TRACKER_ENABLED`: enables the isolated candidate tracker, defaults to `false`.
+- `CANDIDATE_MAINTENANCE_ENABLED`: enables low-cost wallet-scoped candidate maintenance while global discovery stays off, defaults to `false`.
+- `CANDIDATE_MAINTENANCE_INTERVAL_MS`: daily maintenance interval, defaults to `86400000`.
+- `CANDIDATE_MAINTENANCE_LOOKBACK_HOURS`: overlap window for per-wallet refreshes, defaults to `48`.
+- `CANDIDATE_MAINTENANCE_SCOPE`: wallet scope for maintenance and scoring, defaults to `active_scored`.
+- `CANDIDATE_MAINTENANCE_PAGE_LIMIT`: per-wallet Data API page size, defaults to `500`.
+- `CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET`: max pages fetched per wallet per run, defaults to `2`.
+- `CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES`: max due open candidate trades resolved after refresh, defaults to `2000`.
 - `CANDIDATE_MIN_USD`: defaults to `1000`.
 - `CANDIDATE_MAX_USD`: exclusive maximum, defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: defaults to `30`.

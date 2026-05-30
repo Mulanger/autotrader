@@ -12,6 +12,8 @@ import { scoreCopyTrader } from '../copy-quality-score.js';
 import { SHADOW_TRADER_CRITERIA, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 
 const SCHEMA_VERSION = 3;
+const MAINTENANCE_LOCK_CLASS_ID = 250530;
+const MAINTENANCE_LOCK_OBJECT_ID = 1;
 
 export async function createCandidateStorage() {
   if (!process.env.DATABASE_URL) {
@@ -45,6 +47,9 @@ export async function createCandidateStorage() {
     markResolutionChecked: (tradeId, nextCheckAt) => markResolutionChecked(pool, tradeId, nextCheckAt),
     saveResolvedTrade: (tradeId, settlement, resolution) => saveResolvedTrade(pool, tradeId, settlement, resolution),
     saveServiceState: (key, payload) => saveServiceState(pool, key, payload),
+    getServiceState: (key) => getServiceState(pool, key),
+    getMaintenanceWallets: (params) => getMaintenanceWallets(pool, params),
+    withMaintenanceLock: (callback) => withMaintenanceLock(pool, callback),
     getLeaderboard: (params) => getLeaderboard(pool, params),
     getTrader: (wallet, params) => getTrader(pool, wallet, params),
     getSummary: () => getSummary(pool),
@@ -538,6 +543,83 @@ async function saveServiceState(pool, key, payload) {
   );
 }
 
+async function getServiceState(pool, key) {
+  const result = await pool.query(
+    `
+      select key, payload, updated_at
+      from candidate_service_state
+      where key = $1
+    `,
+    [key]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    key: row.key,
+    payload: row.payload || {},
+    updatedAt: isoOrNull(row.updated_at),
+  };
+}
+
+export async function getMaintenanceWallets(pool, {
+  scope = 'active_scored',
+  baselineWallets = [],
+  limit = 10_000,
+} = {}) {
+  const normalizedScope = normalizeMaintenanceScope(scope);
+  const normalizedBaseline = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
+  const boundedLimit = boundedInteger(limit, 10_000, 1, 100_000);
+  const result = await pool.query(
+    `
+      with scope_wallets as (
+        select wallet
+        from candidate_traders
+        where $1::text = 'all_candidates'
+        union
+        select wallet
+        from copy_pool_traders
+        where $1::text in ('active_scored', 'active_copy_pool') and status = 'active'
+        union
+        select wallet
+        from real_copy_quality_scores
+        where $1::text = 'active_scored'
+        union
+        select lower(baseline_wallet.wallet)::text as wallet
+        from unnest($2::text[]) as baseline_wallet(wallet)
+      )
+      select distinct lower(trim(wallet)) as wallet
+      from scope_wallets
+      where wallet is not null and trim(wallet) <> ''
+      order by wallet asc
+      limit $3
+    `,
+    [normalizedScope, normalizedBaseline, boundedLimit]
+  );
+  return result.rows.map((row) => row.wallet);
+}
+
+async function withMaintenanceLock(pool, callback) {
+  const client = await pool.connect();
+  let locked = false;
+  try {
+    const result = await client.query(
+      'select pg_try_advisory_lock($1::integer, $2::integer) as locked',
+      [MAINTENANCE_LOCK_CLASS_ID, MAINTENANCE_LOCK_OBJECT_ID]
+    );
+    locked = Boolean(result.rows[0]?.locked);
+    if (!locked) return { acquired: false };
+    return { acquired: true, result: await callback() };
+  } finally {
+    if (locked) {
+      await client.query(
+        'select pg_advisory_unlock($1::integer, $2::integer)',
+        [MAINTENANCE_LOCK_CLASS_ID, MAINTENANCE_LOCK_OBJECT_ID]
+      ).catch(() => {});
+    }
+    client.release();
+  }
+}
+
 async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
   const result = await pool.query(
     `
@@ -941,7 +1023,8 @@ async function recalculateRealCopyQuality(pool, {
   wallet = null,
   baselineWallets = [],
 } = {}) {
-  const rows = await getRealCopyQualityMetricRows(pool, { scope, wallet, baselineWallets });
+  const normalizedScope = wallet ? 'wallet' : normalizeMaintenanceScope(scope);
+  const rows = await getRealCopyQualityMetricRows(pool, { scope: normalizedScope, wallet, baselineWallets });
   let scored = 0;
   for (const row of rows) {
     const score = scoreCopyTrader(row);
@@ -951,7 +1034,7 @@ async function recalculateRealCopyQuality(pool, {
   const summary = await getRealCopyQualitySummary(pool);
   return {
     ok: true,
-    scope,
+    scope: wallet ? 'wallet' : normalizedScope,
     wallet: wallet ? normalizeWallet(wallet) : null,
     scored,
     summary,
@@ -974,7 +1057,17 @@ async function getRealCopyQualityMetricRows(pool, {
         union
         select wallet from candidate_traders where $1::text = 'all_candidates'
         union
-        select wallet from copy_pool_traders where $1::text <> 'wallet' and status = 'active'
+        select wallet
+        from copy_pool_traders
+        where $1::text in ('active_copy_pool', 'active_scored') and status = 'active'
+        union
+        select wallet
+        from real_copy_quality_scores
+        where $1::text = 'active_scored'
+        union
+        select wallet
+        from copy_pool_traders
+        where $1::text = 'all_candidates' and status = 'active'
         union
         select lower(baseline_wallet.wallet)::text as wallet
         from unnest($3::text[]) as baseline_wallet(wallet)
@@ -2074,6 +2167,13 @@ function copyQualitySortColumn(sort) {
   if (key === 'drawdown') return 's.drawdown_to_profit_ratio';
   if (key === 'updated') return 's.scored_at';
   return 's.score';
+}
+
+function normalizeMaintenanceScope(scope) {
+  const text = String(scope || '').trim().toLowerCase();
+  if (text === 'all_candidates') return 'all_candidates';
+  if (text === 'active_copy_pool') return 'active_copy_pool';
+  return 'active_scored';
 }
 
 function boundedInteger(value, fallback, min, max) {

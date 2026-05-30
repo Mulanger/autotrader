@@ -9,6 +9,13 @@ import {
   CANDIDATE_BACKFILL_MAX_PAGES,
   CANDIDATE_BACKFILL_MAX_OFFSET,
   CANDIDATE_BACKFILL_PAGE_LIMIT,
+  CANDIDATE_MAINTENANCE_ENABLED,
+  CANDIDATE_MAINTENANCE_INTERVAL_MS,
+  CANDIDATE_MAINTENANCE_LOOKBACK_HOURS,
+  CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET,
+  CANDIDATE_MAINTENANCE_PAGE_LIMIT,
+  CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES,
+  CANDIDATE_MAINTENANCE_SCOPE,
   CANDIDATE_MAX_USD,
   CANDIDATE_MIN_USD,
   CANDIDATE_POLL_INTERVAL_MS,
@@ -29,8 +36,23 @@ import { candidateTradeToDemoTrade, normalizeCandidateTrade } from './normalizer
 import { buildCandidateSettlement } from './resolution.js';
 import { createCandidateStorage } from './storage.js';
 
+const MAINTENANCE_STATE_KEY = 'maintenance:last_run';
+
 export function createCandidateTracker(state, broadcast, options = {}) {
   const enabled = options.enabled ?? CANDIDATE_TRACKER_ENABLED;
+  const maintenanceEnabled = options.maintenanceEnabled ?? CANDIDATE_MAINTENANCE_ENABLED;
+  const realCopyQualityActive = enabled || maintenanceEnabled;
+  const maintenanceIntervalMs = Number(options.maintenanceIntervalMs ?? CANDIDATE_MAINTENANCE_INTERVAL_MS);
+  const maintenanceLookbackHours = Number(options.maintenanceLookbackHours ?? CANDIDATE_MAINTENANCE_LOOKBACK_HOURS);
+  const maintenanceScope = normalizeMaintenanceScope(options.maintenanceScope ?? CANDIDATE_MAINTENANCE_SCOPE);
+  const maintenancePageLimit = Number(options.maintenancePageLimit ?? CANDIDATE_MAINTENANCE_PAGE_LIMIT);
+  const maintenanceMaxPagesPerWallet = Number(
+    options.maintenanceMaxPagesPerWallet ?? CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET
+  );
+  const maintenanceResolutionMaxTrades = Number(
+    options.maintenanceResolutionMaxTrades ?? CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES
+  );
+  const maintenanceRunOnStart = options.maintenanceRunOnStart ?? true;
   const onStateChanged = options.onStateChanged || (() => {});
   const copyPoolEnabled = options.copyPoolEnabled ?? AUTO_COPY_POOL_ENABLED;
   const storageFactory = options.storageFactory || createCandidateStorage;
@@ -47,11 +69,13 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let backfillTimer = null;
   let resolutionTimer = null;
   let copyPoolTimer = null;
+  let maintenanceTimer = null;
   let pollRunning = false;
   let backfillRunning = false;
   let resolutionRunning = false;
   let copyPoolRunning = false;
   let realCopyQualityRunning = false;
+  let maintenanceRunning = false;
   let pollBootstrapped = false;
 
   state.service.candidates = {
@@ -76,7 +100,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       oldestNextResolutionCheckAt: null,
       oldestEligibleTradeTimestamp: null,
     },
-    copyPoolEnabled: enabled && copyPoolEnabled,
+    copyPoolEnabled,
     copyPoolStatus: enabled && copyPoolEnabled ? 'starting' : 'disabled',
     copyPoolLastRunAt: null,
     copyPoolLastChangedCount: 0,
@@ -86,11 +110,26 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     shadowTraderLastRunAt: null,
     shadowTraderSelectedWalletCount: 0,
     shadowTraderLastCopiedCount: 0,
+    maintenanceEnabled,
+    maintenanceStatus: maintenanceEnabled ? 'starting' : 'disabled',
+    maintenanceScope,
+    maintenanceIntervalMs,
+    maintenanceLookbackHours,
+    maintenanceLastRunAt: null,
+    maintenanceLastStartedAt: null,
+    maintenanceLastFinishedAt: null,
+    maintenanceLastWalletCount: 0,
+    maintenanceLastRequestCount: 0,
+    maintenanceLastInsertedTradeCount: 0,
+    maintenanceLastResolvedTradeCount: 0,
+    maintenanceLastScoredWalletCount: 0,
+    maintenanceLastErrorCount: 0,
+    maintenanceLastError: null,
     lastError: null,
   };
   state.service.realCopyQuality = {
-    enabled,
-    status: enabled ? 'starting' : 'disabled',
+    enabled: realCopyQualityActive,
+    status: realCopyQualityActive ? 'starting' : 'disabled',
     lastBackfillAt: null,
     lastScoredAt: null,
     queuedWalletCount: 0,
@@ -107,6 +146,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     started = true;
     if (!enabled) {
       await startCachedRealCopyQuality();
+      await startMaintenanceTimer();
       return;
     }
 
@@ -142,6 +182,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     backfillTimer = setInterval(runBackfill, Math.max(15_000, CANDIDATE_POLL_INTERVAL_MS));
     resolutionTimer = setInterval(runResolution, CANDIDATE_RESOLUTION_POLL_INTERVAL_MS);
     copyPoolTimer = setInterval(runCopyPoolEvaluation, AUTO_COPY_POOL_INTERVAL_MS);
+    await startMaintenanceTimer();
   }
 
   async function startCachedRealCopyQuality() {
@@ -154,6 +195,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.realCopyQuality.status = 'cached';
       const payload = await storage.getRealCopyQualityLeaderboard?.({ limit: 1, eligible: null });
       applyRealCopyQualitySummary(payload?.summary, payload?.summary?.total || 0);
+      await hydrateMaintenanceState();
       state.service.realCopyQuality.lastError = null;
     } catch (error) {
       storage = null;
@@ -165,11 +207,37 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     broadcast();
   }
 
+  async function hydrateMaintenanceState() {
+    if (!storage?.getServiceState) return;
+    const lastRun = await storage.getServiceState(MAINTENANCE_STATE_KEY).catch(() => null);
+    applyMaintenanceSummary(lastRun?.payload);
+  }
+
+  async function startMaintenanceTimer() {
+    if (!maintenanceEnabled) {
+      state.service.candidates.maintenanceStatus = 'disabled';
+      return;
+    }
+    if (!storage) {
+      state.service.candidates.maintenanceStatus = 'unavailable';
+      return;
+    }
+
+    await hydrateMaintenanceState();
+    state.service.candidates.maintenanceStatus = 'ready';
+    if (maintenanceRunOnStart) await runMaintenance();
+
+    if (!maintenanceTimer) {
+      maintenanceTimer = setInterval(runMaintenance, Math.max(60_000, maintenanceIntervalMs));
+    }
+  }
+
   async function close() {
     clearInterval(pollTimer);
     clearInterval(backfillTimer);
     clearInterval(resolutionTimer);
     clearInterval(copyPoolTimer);
+    clearInterval(maintenanceTimer);
     await storage?.close();
   }
 
@@ -349,7 +417,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
-  async function runResolution() {
+  async function runResolution({ maxTrades = null, evaluateCopyPoolOnSettle = true } = {}) {
     if (!storage || resolutionRunning) return;
     resolutionRunning = true;
     let checked = 0;
@@ -359,7 +427,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       broadcast();
       const queueMetrics = await storage.getResolutionQueueMetrics?.();
       if (queueMetrics) state.service.candidates.resolutionQueue = queueMetrics;
-      const batchSize = resolutionBatchSize(queueMetrics);
+      const batchSize = maxTrades
+        ? Math.max(1, Math.min(10_000, Number(maxTrades)))
+        : resolutionBatchSize(queueMetrics);
       state.service.candidates.lastResolutionBatchSize = batchSize;
       const trades = await storage.getOpenTrades(batchSize);
 
@@ -388,18 +458,177 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.candidates.lastResolutionSettled = settled;
       state.service.candidates.resolutionQueue = (await storage.getResolutionQueueMetrics?.()) || state.service.candidates.resolutionQueue;
       state.service.candidates.lastError = null;
-      if (settled) await runCopyPoolEvaluation();
+      if (settled && evaluateCopyPoolOnSettle) await runCopyPoolEvaluation();
       broadcast();
+      return { checked, settled };
     } catch (error) {
       state.service.candidates.status = 'error';
       state.service.candidates.lastError = error.message;
       broadcast();
+      return { checked, settled, error: error.message };
     } finally {
       resolutionRunning = false;
     }
   }
 
-  async function runCopyPoolEvaluation() {
+  async function runMaintenance({ force = false } = {}) {
+    if (!storage || !maintenanceEnabled || maintenanceRunning) return null;
+    maintenanceRunning = true;
+    try {
+      state.service.candidates.maintenanceStatus = 'running';
+      state.service.candidates.maintenanceLastStartedAt = new Date().toISOString();
+      state.service.candidates.maintenanceLastError = null;
+      broadcast();
+
+      const runWithDueCheck = async () => {
+        if (!force) {
+          const due = await isMaintenanceDue();
+          if (!due.due) {
+            state.service.candidates.maintenanceStatus = 'ready';
+            return {
+              ok: true,
+              status: 'skipped',
+              reason: due.reason,
+              nextRunAt: due.nextRunAt,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+        }
+        return executeMaintenance();
+      };
+
+      const lockResult = storage.withMaintenanceLock
+        ? await storage.withMaintenanceLock(runWithDueCheck)
+        : { acquired: true, result: await runWithDueCheck() };
+
+      if (!lockResult.acquired) {
+        const summary = {
+          ok: true,
+          status: 'locked',
+          reason: 'Another candidate maintenance run is already active',
+          updatedAt: new Date().toISOString(),
+        };
+        state.service.candidates.maintenanceStatus = 'locked';
+        return summary;
+      }
+
+      return lockResult.result;
+    } catch (error) {
+      state.service.candidates.maintenanceStatus = 'error';
+      state.service.candidates.maintenanceLastError = error.message;
+      state.service.candidates.lastError = error.message;
+      broadcast();
+      return { ok: false, status: 'error', error: error.message, updatedAt: new Date().toISOString() };
+    } finally {
+      maintenanceRunning = false;
+      broadcast();
+    }
+  }
+
+  async function isMaintenanceDue() {
+    if (!storage?.getServiceState) return { due: true, reason: 'No persisted maintenance state reader' };
+    const lastRun = await storage.getServiceState(MAINTENANCE_STATE_KEY).catch(() => null);
+    applyMaintenanceSummary(lastRun?.payload);
+    const payload = lastRun?.payload || {};
+    if (payload.status !== 'done') return { due: true, reason: 'No completed maintenance run' };
+    const lastFinishedAt = Date.parse(payload.finishedAt || payload.updatedAt || lastRun?.updatedAt);
+    if (!Number.isFinite(lastFinishedAt)) return { due: true, reason: 'Completed run has no timestamp' };
+    const elapsedMs = Date.now() - lastFinishedAt;
+    if (elapsedMs >= maintenanceIntervalMs) return { due: true, reason: 'Maintenance interval elapsed' };
+    return {
+      due: false,
+      reason: 'Maintenance interval has not elapsed',
+      nextRunAt: new Date(lastFinishedAt + maintenanceIntervalMs).toISOString(),
+    };
+  }
+
+  async function executeMaintenance() {
+    const startedAt = new Date().toISOString();
+    const candidateStatusBefore = state.service.candidates.status;
+    const cutoff = new Date(Date.now() - maintenanceLookbackHours * 60 * 60_000);
+    const wallets = await storage.getMaintenanceWallets?.({
+      scope: maintenanceScope,
+      baselineWallets: WATCHED_WALLETS,
+    });
+    const walletList = Array.isArray(wallets) ? wallets.map(normalizeWallet).filter(Boolean) : [];
+    const errors = [];
+    let requestCount = 0;
+    let rawTradeCount = 0;
+    let normalizedTradeCount = 0;
+    let insertedTradeCount = 0;
+
+    for (const wallet of walletList) {
+      try {
+        let reachedCutoff = false;
+        for (let page = 0; page < Math.max(1, maintenanceMaxPagesPerWallet) && !reachedCutoff; page += 1) {
+          const offset = page * Math.max(1, maintenancePageLimit);
+          requestCount += 1;
+          const rawTrades = await fetchTrades({
+            user: wallet,
+            limit: Math.max(1, maintenancePageLimit),
+            offset,
+            filterType: 'CASH',
+            filterAmount: CANDIDATE_MIN_USD,
+          });
+          if (!rawTrades.length) break;
+          rawTradeCount += rawTrades.length;
+
+          for (const raw of rawTrades.slice().reverse()) {
+            const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
+            if (rawTimestamp && rawTimestamp * 1000 < cutoff.getTime()) {
+              reachedCutoff = true;
+              continue;
+            }
+            const trade = normalizeCandidateTrade(raw, { source: 'maintenance' });
+            if (!trade) continue;
+            normalizedTradeCount += 1;
+            const result = await storage.upsertTrade(trade);
+            if (result.insertedTrade) insertedTradeCount += 1;
+          }
+        }
+      } catch (error) {
+        errors.push({ wallet, error: error.message });
+      }
+    }
+
+    const resolution = await runResolution({
+      maxTrades: maintenanceResolutionMaxTrades,
+      evaluateCopyPoolOnSettle: false,
+    });
+    const copyPoolResult = await runCopyPoolEvaluation({ scoreRealCopyQuality: false });
+    const scoring = await runRealCopyQualityScoring({ scope: maintenanceScope });
+    const finishedAt = new Date().toISOString();
+    const summary = {
+      ok: errors.length === 0,
+      status: errors.length ? 'partial' : 'done',
+      scope: maintenanceScope,
+      lookbackHours: maintenanceLookbackHours,
+      cutoffAt: cutoff.toISOString(),
+      startedAt,
+      finishedAt,
+      walletCount: walletList.length,
+      requestCount,
+      rawTradeCount,
+      normalizedTradeCount,
+      insertedTradeCount,
+      resolvedTradeCount: Number(resolution?.settled || 0),
+      resolutionCheckedCount: Number(resolution?.checked || 0),
+      copyPoolChangedCount: Array.isArray(copyPoolResult?.changed) ? copyPoolResult.changed.length : 0,
+      scoredWalletCount: Number(scoring?.scored || 0),
+      errorCount: errors.length,
+      errors: errors.slice(0, 10),
+      updatedAt: finishedAt,
+    };
+    await storage.saveServiceState?.(MAINTENANCE_STATE_KEY, summary);
+    applyMaintenanceSummary(summary);
+    state.service.candidates.maintenanceStatus = errors.length ? 'partial' : 'ready';
+    state.service.candidates.maintenanceLastError = errors[0]?.error || null;
+    if (!enabled) state.service.candidates.status = candidateStatusBefore || 'disabled';
+    state.service.candidates.lastError = null;
+    return summary;
+  }
+
+  async function runCopyPoolEvaluation({ scoreRealCopyQuality = true } = {}) {
     if (!storage || copyPoolRunning) return;
     if (!copyPoolEnabled) {
       state.service.candidates.copyPoolStatus = 'disabled';
@@ -427,17 +656,19 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         state.service.candidates.shadowTraderLastRunAt = shadowSnapshot.lastEvaluatedAt;
         state.service.candidates.shadowTraderSelectedWalletCount = shadowSnapshot.selectedWalletCount;
       }
-      await runRealCopyQualityScoring({ scope: 'active_copy_pool' });
+      if (scoreRealCopyQuality) await runRealCopyQualityScoring({ scope: 'active_copy_pool' });
       state.service.candidates.copyPoolStatus = 'ready';
       state.service.candidates.copyPoolLastRunAt = new Date().toISOString();
       state.service.candidates.copyPoolLastChangedCount = result.changed.length;
       state.service.candidates.lastError = null;
       onStateChanged();
       broadcast();
+      return result;
     } catch (error) {
       state.service.candidates.copyPoolStatus = 'error';
       state.service.candidates.lastError = error.message;
       broadcast();
+      return { ok: false, error: error.message };
     } finally {
       copyPoolRunning = false;
     }
@@ -509,9 +740,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     applyRealCopyQualitySummary(payload.summary, payload.summary?.total || 0);
     return {
       ...payload,
-      enabled,
-      cached: !enabled,
-      status: enabled ? state.service.realCopyQuality.status : 'cached',
+      enabled: realCopyQualityActive,
+      cached: !realCopyQualityActive,
+      status: realCopyQualityActive ? state.service.realCopyQuality.status : 'cached',
       updatedAt: new Date().toISOString(),
     };
   }
@@ -522,7 +753,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   }
 
   async function recalculateRealCopyQuality(params = {}) {
-    if (!enabled || !storage) return inactiveRealCopyQualityPayload('disabled');
+    if (!storage) return inactiveRealCopyQualityPayload('disabled');
     return runRealCopyQualityScoring(params);
   }
 
@@ -538,6 +769,22 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     state.service.realCopyQuality = service;
   }
 
+  function applyMaintenanceSummary(summary = {}) {
+    if (!summary || typeof summary !== 'object') return;
+    state.service.candidates.maintenanceLastRunAt = summary.finishedAt || summary.updatedAt || null;
+    state.service.candidates.maintenanceLastStartedAt = summary.startedAt || state.service.candidates.maintenanceLastStartedAt;
+    state.service.candidates.maintenanceLastFinishedAt = summary.finishedAt || null;
+    state.service.candidates.maintenanceLastWalletCount = Number(summary.walletCount || 0);
+    state.service.candidates.maintenanceLastRequestCount = Number(summary.requestCount || 0);
+    state.service.candidates.maintenanceLastInsertedTradeCount = Number(summary.insertedTradeCount || 0);
+    state.service.candidates.maintenanceLastResolvedTradeCount = Number(summary.resolvedTradeCount || 0);
+    state.service.candidates.maintenanceLastScoredWalletCount = Number(summary.scoredWalletCount || 0);
+    state.service.candidates.maintenanceLastErrorCount = Number(summary.errorCount || 0);
+    state.service.candidates.maintenanceLastError = Array.isArray(summary.errors) && summary.errors.length
+      ? summary.errors[0]?.error || null
+      : null;
+  }
+
   return {
     start,
     close,
@@ -546,6 +793,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runPoll,
     runBackfill,
     runResolution,
+    runMaintenance,
     runCopyPoolEvaluation,
     runRealCopyQualityScoring,
     getRealCopyQualityLeaderboard,
@@ -608,4 +856,11 @@ function toUnixSeconds(value) {
   if (typeof value === 'number') return value > 10_000_000_000 ? Math.floor(value / 1000) : Math.floor(value);
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : null;
+}
+
+function normalizeMaintenanceScope(scope) {
+  const text = String(scope || '').trim().toLowerCase();
+  if (text === 'all_candidates') return 'all_candidates';
+  if (text === 'active_copy_pool') return 'active_copy_pool';
+  return 'active_scored';
 }
