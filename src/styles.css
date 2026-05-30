@@ -1544,6 +1544,14 @@ button {
   gap: 16px;
 }
 
+.realWorkspaceRoot {
+  min-width: 0;
+}
+
+.realMobileDashboard {
+  display: none;
+}
+
 .realAccountSurface {
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(250px, auto);
@@ -2037,9 +2045,502 @@ button {
 }
 
 @media (max-width: 780px) {
+  .realMode {
+    display: block;
+    min-height: 100svh;
+    background: #f6f8fb;
+  }
+
+  .realMode .sidebar,
+  .realMode .topbar {
+    display: none;
+  }
+
+  .realMode .workspace {
+    min-height: 100svh;
+    padding: 0;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #f4f7fb 100%);
+  }
+
+  .realMode .realDesktopWorkspace {
+    display: none;
+  }
+
+  .realMode .realWorkspaceRoot.realTab-following .realDesktopWorkspace,
+  .realMode .realWorkspaceRoot.realTab-positions .realDesktopWorkspace,
+  .realMode .realWorkspaceRoot.realTab-real-traders .realDesktopWorkspace {
+    display: block;
+    padding: 8px 14px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .realMode .realDesktopWorkspace > .panel,
+  .realMode .realDesktopWorkspace > .fullPanel {
+    min-height: auto;
+    border-radius: 8px;
+  }
+
+  .realMobileDashboard {
+    display: block;
+    min-height: 100svh;
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  .realMobileTop {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: grid;
+    gap: 10px;
+    padding: 14px 14px 10px;
+    border-bottom: 1px solid rgba(223, 229, 236, 0.82);
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(14px);
+  }
+
+  .realMobileTitleRow,
+  .realMobileFeedHead,
+  .realMobileOrderTop {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .realMobileTitleBlock {
+    min-width: 0;
+  }
+
+  .realMobileTitleBlock h1,
+  .realMobileFeedHead h2,
+  .realMobileOrderCard h3,
+  .realMobileOrderCard p {
+    margin: 0;
+    letter-spacing: 0;
+  }
+
+  .realMobileTitleBlock h1 {
+    margin-top: 1px;
+    font-size: 1.28rem;
+    line-height: 1.1;
+  }
+
+  .realMobileActions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+
+  .realMobileModeToggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    min-width: 138px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--soft);
+  }
+
+  .realMobileModeToggle button {
+    min-height: 30px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    font-size: 0.78rem;
+    font-weight: 780;
+  }
+
+  .realMobileModeToggle button.active {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(22, 32, 45, 0.08);
+  }
+
+  .realMobileRefresh {
+    width: 34px;
+    min-height: 34px;
+    border-radius: 8px;
+  }
+
+  .realMobileStatusStrip {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .realMobileLivePill {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--green-soft);
+    color: var(--green);
+    font-size: 0.8rem;
+    font-weight: 760;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .realMobileLivePill.offline {
+    background: var(--red-soft);
+    color: var(--red);
+  }
+
+  .realMobileLiveDot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 0 4px rgba(15, 143, 95, 0.13);
+  }
+
+  .realMobileLivePill.offline .realMobileLiveDot {
+    box-shadow: 0 0 0 4px rgba(196, 59, 71, 0.13);
+  }
+
+  .realMobileStatusMini {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    padding: 7px 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fbfcfe;
+  }
+
+  .realMobileStatusMini span {
+    color: var(--muted);
+    font-size: 0.63rem;
+    font-weight: 720;
+  }
+
+  .realMobileStatusMini strong {
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+
+  .realMobileMetricRail {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: calc((100% - 16px) / 3);
+    gap: 8px;
+    overflow-x: auto;
+    padding: 12px 14px 6px;
+    scrollbar-width: none;
+  }
+
+  .realMobileMetricRail::-webkit-scrollbar,
+  .realMobileFilters::-webkit-scrollbar {
+    display: none;
+  }
+
+  .realMobileMetric {
+    min-height: 86px;
+    display: grid;
+    align-content: space-between;
+    gap: 8px;
+    padding: 11px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    box-shadow: 0 8px 18px rgba(22, 32, 45, 0.05);
+  }
+
+  .realMobileMetric span {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 720;
+  }
+
+  .realMobileMetric strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: normal;
+    font-size: 1rem;
+    line-height: 1.08;
+  }
+
+  .realMobileContent {
+    display: grid;
+    gap: 12px;
+    padding: 8px 14px 0;
+  }
+
+  .realMobileFeedHead {
+    padding-top: 2px;
+  }
+
+  .realMobileFeedHead h2 {
+    margin-top: 2px;
+    font-size: 1.05rem;
+  }
+
+  .realMobileFeedHead span {
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 720;
+  }
+
+  .realMobileFilters {
+    position: sticky;
+    top: 96px;
+    z-index: 20;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    margin: 0 -14px;
+    padding: 4px 14px 10px;
+    background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(248, 250, 252, 0.82));
+    backdrop-filter: blur(12px);
+    scrollbar-width: none;
+  }
+
+  .realMobileFilters button {
+    min-height: 36px;
+    flex: 0 0 auto;
+    border: 0;
+    border-radius: 8px;
+    padding: 0 12px;
+    background: var(--soft);
+    color: #334155;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: 0.84rem;
+    font-weight: 760;
+  }
+
+  .realMobileFilters button.active {
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 0 10px 22px rgba(22, 32, 45, 0.16);
+  }
+
+  .realMobileFilters b {
+    font-size: 0.72rem;
+  }
+
+  .realMobileOrderStack,
+  .realMobileCollapsedPanels {
+    display: grid;
+    gap: 8px;
+  }
+
+  .realMobileOrderCard {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--green);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 8px 18px rgba(22, 32, 45, 0.05);
+  }
+
+  .realMobileOrderCard.rejected {
+    border-left-color: var(--amber);
+  }
+
+  .realMobileOrderCard.failed {
+    border-left-color: var(--red);
+  }
+
+  .realMobileBadge {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    padding: 0 8px;
+    background: var(--green-soft);
+    color: var(--green);
+    font-size: 0.68rem;
+    font-weight: 840;
+    text-transform: uppercase;
+  }
+
+  .realMobileBadge.rejected {
+    background: var(--amber-soft);
+    color: var(--amber);
+  }
+
+  .realMobileBadge.failed {
+    background: var(--red-soft);
+    color: var(--red);
+  }
+
+  .realMobileOrderTop > span:last-child {
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 680;
+  }
+
+  .realMobileOrderCard h3 {
+    overflow-wrap: anywhere;
+    font-size: 0.98rem;
+    line-height: 1.2;
+  }
+
+  .realMobileOrderCard p {
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 620;
+  }
+
+  .realMobileMiniGrid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .realMobileMini {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    padding: 7px;
+    border-radius: 8px;
+    background: #f7f9fc;
+  }
+
+  .realMobileMini span {
+    color: var(--muted);
+    font-size: 0.61rem;
+    font-weight: 720;
+  }
+
+  .realMobileMini strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.74rem;
+  }
+
+  .realMobileReason {
+    display: grid;
+    grid-template-columns: 8px minmax(0, 1fr);
+    gap: 8px;
+    align-items: start;
+    color: var(--muted);
+    font-size: 0.82rem;
+    font-weight: 660;
+    line-height: 1.28;
+    overflow-wrap: anywhere;
+  }
+
+  .realMobileReason::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    margin-top: 4px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  .realMobileOrderCard.rejected .realMobileReason::before {
+    background: var(--amber);
+  }
+
+  .realMobileOrderCard.failed .realMobileReason::before {
+    background: var(--red);
+  }
+
+  .realMobileCollapsedPanels {
+    padding-top: 4px;
+  }
+
+  .realMobileAccordionRow {
+    min-height: 48px;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fbfcfe;
+    color: var(--ink);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 0 12px;
+    text-align: left;
+  }
+
+  .realMobileAccordionRow.static {
+    cursor: default;
+  }
+
+  .realMobileAccordionRow strong {
+    font-size: 0.88rem;
+  }
+
+  .realMobileAccordionRow span {
+    min-width: 0;
+    color: var(--muted);
+    font-size: 0.76rem;
+    font-weight: 680;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .realMobileBottomNav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 60;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(14px);
+  }
+
+  .realMobileBottomNav button {
+    min-height: 42px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 2px;
+    font-size: 0.73rem;
+    font-weight: 760;
+  }
+
+  .realMobileBottomNav button.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .realMobileModeToggle button:focus-visible,
+  .realMobileFilters button:focus-visible,
+  .realMobileBottomNav button:focus-visible {
+    outline: 2px solid rgba(23, 105, 255, 0.35);
+    outline-offset: 2px;
+  }
+
   .workspace,
   .sidebar {
     padding: 16px;
+  }
+
+  .realMode .workspace {
+    padding: 0;
   }
 
   .sidebar {

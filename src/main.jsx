@@ -93,7 +93,7 @@ function DesktopApp() {
         {mode === 'demo' ? (
           <DemoWorkspace data={data} metrics={metrics} tab={tab} />
         ) : (
-          <RealWorkspace data={data} tab={tab} />
+          <RealWorkspace data={data} tab={tab} setTab={setTab} setMode={setMode} />
         )}
       </section>
     </main>
@@ -304,7 +304,7 @@ function DemoWorkspace({ data, metrics, tab }) {
   );
 }
 
-function RealWorkspace({ tab }) {
+function RealWorkspace({ tab, setTab, setMode }) {
   const realState = useRealState();
   const real = realState.real;
 
@@ -334,9 +334,223 @@ function RealWorkspace({ tab }) {
   if (tab === 'orders') desktopView = <RealOrdersView real={real} />;
 
   return (
-    <>
+    <div className={`realWorkspaceRoot realTab-${tab}`}>
+      <RealMobileDashboard
+        real={real}
+        realState={realState}
+        tab={tab}
+        setTab={setTab}
+        setMode={setMode}
+      />
       <div className="realDesktopWorkspace">{desktopView}</div>
-    </>
+    </div>
+  );
+}
+
+function RealMobileDashboard({ real, realState, tab, setTab, setMode }) {
+  const [orderFilter, setOrderFilter] = React.useState('all');
+  const runtime = real.runtime || {};
+  const service = real.service || {};
+  const summary = real.summary || {};
+  const account = real.account || {};
+  const workerOnline = isRuntimeOnline(runtime);
+  const live = isLiveRealMode(real);
+  const activeFollowCount = summary.activeFollowCount ?? (real.follows || []).filter((follow) => follow.status === 'active').length;
+  const openPositionCount = summary.openPositionCount ?? (real.positions || []).filter((position) => isOpenPosition(position)).length;
+  const balance = account?.collateral?.walletBalanceUsd ?? account?.collateral?.balanceUsd;
+  const lastPollAt = runtime.lastPollAt || service.lastPollAt;
+  const showFeed = tab === 'overview' || tab === 'orders';
+
+  const metrics = [
+    { label: 'Balance', value: formatAccountUsd(balance) },
+    { label: live ? 'Live P/L' : 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), tone: pnlTone(summary.totalPnlUsd) },
+    { label: 'Open value', value: usd(summary.openValueUsd || 0) },
+    { label: 'Attempts', value: summary.attemptedCount || 0 },
+  ];
+
+  return (
+    <section className="realMobileDashboard" aria-label="Mobile real dashboard">
+      <header className="realMobileTop">
+        <div className="realMobileTitleRow">
+          <div className="realMobileTitleBlock">
+            <p className="eyebrow">Real dashboard</p>
+            <h1>Autotrader</h1>
+          </div>
+          <div className="realMobileActions">
+            <div className="realMobileModeToggle" aria-label="Mode switch">
+              <button type="button" className="active" onClick={() => setTab('overview')}>
+                <Lock size={14} /> Real
+              </button>
+              <button type="button" onClick={() => setMode('demo')}>
+                <PlayCircle size={14} /> Demo
+              </button>
+            </div>
+            <button className="realMobileRefresh iconButton" onClick={realState.refresh} aria-label="Refresh real dashboard">
+              <RefreshCcw size={15} />
+            </button>
+          </div>
+        </div>
+        <div className="realMobileStatusStrip">
+          <div className={`realMobileLivePill ${workerOnline ? 'online' : 'offline'}`}>
+            <span className="realMobileLiveDot" />
+            {workerOnline ? 'Worker online' : 'Worker offline'}
+          </div>
+          <div className="realMobileStatusMini">
+            <span>Poll</span>
+            <strong>{formatTimeAgo(lastPollAt)}</strong>
+          </div>
+          <div className="realMobileStatusMini">
+            <span>Follows</span>
+            <strong>{activeFollowCount}</strong>
+          </div>
+        </div>
+      </header>
+
+      <section className="realMobileMetricRail" aria-label="Real account summary">
+        {metrics.map((metric) => (
+          <article className="realMobileMetric" key={metric.label}>
+            <span>{metric.label}</span>
+            <strong className={metric.tone || ''}>{metric.value}</strong>
+          </article>
+        ))}
+      </section>
+
+      {showFeed && (
+        <RealMobileOrderFeed
+          real={real}
+          filter={orderFilter}
+          setFilter={setOrderFilter}
+          activeFollowCount={activeFollowCount}
+          openPositionCount={openPositionCount}
+          setTab={setTab}
+        />
+      )}
+
+      <RealMobileBottomNav tab={tab} setTab={setTab} />
+    </section>
+  );
+}
+
+function RealMobileOrderFeed({ real, filter, setFilter, activeFollowCount, openPositionCount, setTab }) {
+  const orders = real.orders || [];
+  const live = isLiveRealMode(real);
+  const filledOrders = orders.filter(isFilledRealOrder);
+  const rejectedOrders = orders.filter((order) => !isFilledRealOrder(order));
+  const failedOrders = orders.filter(isFailedRealOrder);
+  const filteredOrders = {
+    all: orders,
+    filled: filledOrders,
+    rejected: rejectedOrders,
+    failed: failedOrders,
+  }[filter] || orders;
+  const risk = realRiskSettings(real);
+  const filters = [
+    { id: 'all', label: 'All', count: orders.length },
+    { id: 'filled', label: live ? 'Filled' : 'Would fill', count: filledOrders.length },
+    { id: 'rejected', label: 'Rejected', count: rejectedOrders.length },
+    { id: 'failed', label: 'Failed', count: failedOrders.length },
+  ];
+
+  return (
+    <section className="realMobileContent">
+      <div className="realMobileFeedHead">
+        <div>
+          <p className="eyebrow">Order audit</p>
+          <h2>Trade feed</h2>
+        </div>
+        <span>{orders.length ? `${orders.length} recent` : 'No orders'}</span>
+      </div>
+
+      <nav className="realMobileFilters" aria-label="Order filters">
+        {filters.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={filter === item.id ? 'active' : ''}
+            onClick={() => setFilter(item.id)}
+          >
+            {item.label} <b>{item.count}</b>
+          </button>
+        ))}
+      </nav>
+
+      <div className="realMobileOrderStack">
+        {filteredOrders.slice(0, 30).map((order) => (
+          <RealMobileOrderCard key={order.id} order={order} real={real} />
+        ))}
+        {!filteredOrders.length && (
+          <EmptyState
+            title={orders.length ? 'No matching orders' : live ? 'No live orders yet' : 'No dry-run orders yet'}
+            text="Fresh BUY trades from followed wallets will appear here after the guard checks run."
+          />
+        )}
+      </div>
+
+      <section className="realMobileCollapsedPanels" aria-label="Real dashboard summaries">
+        <button type="button" className="realMobileAccordionRow" onClick={() => setTab('positions')}>
+          <strong>Open positions</strong>
+          <span>{openPositionCount} positions, {usd(real.summary?.openValueUsd || 0)} open</span>
+        </button>
+        <button type="button" className="realMobileAccordionRow" onClick={() => setTab('following')}>
+          <strong>Active copy list</strong>
+          <span>{activeFollowCount} follows</span>
+        </button>
+        <button type="button" className="realMobileAccordionRow" onClick={() => setTab('real-traders')}>
+          <strong>Scored traders</strong>
+          <span>Copy quality candidates</span>
+        </button>
+        <div className="realMobileAccordionRow static">
+          <strong>Risk rules</strong>
+          <span>{usd(risk.stakeUsd)} stake, {formatCents(risk.maxEntryPriceCents)} max entry</span>
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function RealMobileOrderCard({ order, real }) {
+  const tone = mobileRealOrderTone(order);
+  const live = order.dryRun === false || order.liveExecution || isLiveRealMode(real);
+  const status = mobileRealOrderStatus(order, live);
+  const stakeUsd = order.stakeUsd ?? order.notionalUsd ?? realRiskSettings(real).stakeUsd;
+  return (
+    <article className={`realMobileOrderCard ${tone}`}>
+      <div className="realMobileOrderTop">
+        <span className={`realMobileBadge ${tone}`}>{status}</span>
+        <span>{formatClockTime(order.checkedAt || order.createdAt)}</span>
+      </div>
+      <h3>{order.marketTitle || 'Unknown market'}</h3>
+      <p>{order.outcome || 'Outcome'} from {shortWallet(order.traderWallet)}</p>
+      <div className="realMobileMiniGrid">
+        <div className="realMobileMini"><span>Source</span><strong>{formatCents(order.sourcePriceCents)}</strong></div>
+        <div className="realMobileMini"><span>Ask</span><strong>{formatCents(order.bestAskCents)}</strong></div>
+        <div className="realMobileMini"><span>Max</span><strong>{formatCents(order.maxGuardCents)}</strong></div>
+        <div className="realMobileMini"><span>Stake</span><strong>{usd(stakeUsd)}</strong></div>
+      </div>
+      <div className="realMobileReason">{order.reason || order.reasonCode || (isFilledRealOrder(order) ? 'Order passed the configured guard checks.' : 'Order did not pass the configured guard checks.')}</div>
+    </article>
+  );
+}
+
+function RealMobileBottomNav({ tab, setTab }) {
+  const items = [
+    { id: 'overview', label: 'Feed', icon: Activity },
+    { id: 'following', label: 'Follows', icon: Users },
+    { id: 'positions', label: 'Positions', icon: Layers3 },
+    { id: 'real-traders', label: 'Scores', icon: Trophy },
+  ];
+  return (
+    <nav className="realMobileBottomNav" aria-label="Mobile real dashboard tabs">
+      {items.map(({ id, label, icon: Icon }) => {
+        const active = id === 'overview' ? tab === 'overview' || tab === 'orders' : tab === id;
+        return (
+          <button key={id} type="button" className={active ? 'active' : ''} onClick={() => setTab(id)}>
+            <Icon size={15} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -2629,6 +2843,42 @@ function formatAccountUsd(value) {
 
 function isFilledRealOrder(order) {
   return ['would_fill', 'filled', 'live_filled'].includes(String(order?.status || '').toLowerCase());
+}
+
+function isFailedRealOrder(order) {
+  const status = String(order?.status || '').toLowerCase();
+  const reason = String(order?.reasonCode || order?.reason || '').toLowerCase();
+  return status.includes('fail') || status.includes('error') || reason.includes('error') || reason.includes('failed');
+}
+
+function mobileRealOrderTone(order) {
+  if (isFilledRealOrder(order)) return 'filled';
+  if (isFailedRealOrder(order)) return 'failed';
+  return 'rejected';
+}
+
+function mobileRealOrderStatus(order, live) {
+  if (isFilledRealOrder(order)) return live ? 'filled' : 'would fill';
+  if (isFailedRealOrder(order)) return 'failed';
+  return 'rejected';
+}
+
+function realRiskSettings(real = {}) {
+  const runtimePayload = real.runtime?.payload || {};
+  const service = real.service || {};
+  return {
+    stakeUsd: runtimePayload.stakeUsd ?? service.stakeUsd ?? 10,
+    maxEntryPriceCents: runtimePayload.maxEntryPriceCents ?? service.maxEntryPriceCents ?? 75,
+    priceGuardCents: runtimePayload.priceGuardCents ?? service.priceGuardCents ?? 4,
+    maxSourceTradeAgeSeconds: runtimePayload.maxSourceTradeAgeSeconds ?? service.maxSourceTradeAgeSeconds ?? 30,
+  };
+}
+
+function formatClockTime(value) {
+  if (!value) return 'now';
+  const time = typeof value === 'number' ? value : Date.parse(value);
+  if (!Number.isFinite(time)) return 'time n/a';
+  return new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit' }).format(new Date(time));
 }
 
 function marketDateLabel(position) {
