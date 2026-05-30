@@ -85,6 +85,7 @@ Optional:
 - `CANDIDATE_MAINTENANCE_ENABLED`: enables low-cost wallet-scoped candidate maintenance while global discovery stays off, defaults to `false`.
 - `CANDIDATE_MAINTENANCE_INTERVAL_MS`: daily maintenance interval, defaults to `86400000`.
 - `CANDIDATE_MAINTENANCE_LOOKBACK_HOURS`: overlap window for per-wallet refreshes, defaults to `48`.
+- `CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS`: wider startup catch-up window used when no completed run has covered it yet, defaults to `96`.
 - `CANDIDATE_MAINTENANCE_SCOPE`: wallet scope for maintenance and scoring, defaults to `active_scored`.
 - `CANDIDATE_MAINTENANCE_PAGE_LIMIT`: per-wallet Data API page size, defaults to `500`.
 - `CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET`: max pages fetched per wallet per run, defaults to `2`.

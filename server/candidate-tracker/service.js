@@ -16,6 +16,7 @@ import {
   CANDIDATE_MAINTENANCE_PAGE_LIMIT,
   CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES,
   CANDIDATE_MAINTENANCE_SCOPE,
+  CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS,
   CANDIDATE_MAX_USD,
   CANDIDATE_MIN_USD,
   CANDIDATE_POLL_INTERVAL_MS,
@@ -44,6 +45,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   const realCopyQualityActive = enabled || maintenanceEnabled;
   const maintenanceIntervalMs = Number(options.maintenanceIntervalMs ?? CANDIDATE_MAINTENANCE_INTERVAL_MS);
   const maintenanceLookbackHours = Number(options.maintenanceLookbackHours ?? CANDIDATE_MAINTENANCE_LOOKBACK_HOURS);
+  const maintenanceStartupCatchupHours = Number(
+    options.maintenanceStartupCatchupHours ?? CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS
+  );
   const maintenanceScope = normalizeMaintenanceScope(options.maintenanceScope ?? CANDIDATE_MAINTENANCE_SCOPE);
   const maintenancePageLimit = Number(options.maintenancePageLimit ?? CANDIDATE_MAINTENANCE_PAGE_LIMIT);
   const maintenanceMaxPagesPerWallet = Number(
@@ -115,6 +119,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceScope,
     maintenanceIntervalMs,
     maintenanceLookbackHours,
+    maintenanceStartupCatchupHours,
     maintenanceLastRunAt: null,
     maintenanceLastStartedAt: null,
     maintenanceLastFinishedAt: null,
@@ -481,6 +486,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       broadcast();
 
       const runWithDueCheck = async () => {
+        let lookbackHours = maintenanceLookbackHours;
         if (!force) {
           const due = await isMaintenanceDue();
           if (!due.due) {
@@ -493,8 +499,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
               updatedAt: new Date().toISOString(),
             };
           }
+          lookbackHours = due.lookbackHours || maintenanceLookbackHours;
         }
-        return executeMaintenance();
+        return executeMaintenance({ lookbackHours });
       };
 
       const lockResult = storage.withMaintenanceLock
@@ -530,7 +537,21 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     const lastRun = await storage.getServiceState(MAINTENANCE_STATE_KEY).catch(() => null);
     applyMaintenanceSummary(lastRun?.payload);
     const payload = lastRun?.payload || {};
-    if (payload.status !== 'done') return { due: true, reason: 'No completed maintenance run' };
+    const completedLookbackHours = Number(payload.lookbackHours || 0);
+    if (payload.status !== 'done') {
+      return {
+        due: true,
+        reason: 'No completed maintenance run',
+        lookbackHours: Math.max(maintenanceLookbackHours, maintenanceStartupCatchupHours),
+      };
+    }
+    if (completedLookbackHours < maintenanceStartupCatchupHours) {
+      return {
+        due: true,
+        reason: 'Startup catch-up window has not been covered',
+        lookbackHours: maintenanceStartupCatchupHours,
+      };
+    }
     const lastFinishedAt = Date.parse(payload.finishedAt || payload.updatedAt || lastRun?.updatedAt);
     if (!Number.isFinite(lastFinishedAt)) return { due: true, reason: 'Completed run has no timestamp' };
     const elapsedMs = Date.now() - lastFinishedAt;
@@ -542,10 +563,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     };
   }
 
-  async function executeMaintenance() {
+  async function executeMaintenance({ lookbackHours = maintenanceLookbackHours } = {}) {
     const startedAt = new Date().toISOString();
     const candidateStatusBefore = state.service.candidates.status;
-    const cutoff = new Date(Date.now() - maintenanceLookbackHours * 60 * 60_000);
+    const runLookbackHours = Math.max(1, Number(lookbackHours) || maintenanceLookbackHours);
+    const maxPagesForRun = maintenancePagesForLookback(runLookbackHours);
+    const cutoff = new Date(Date.now() - runLookbackHours * 60 * 60_000);
     const wallets = await storage.getMaintenanceWallets?.({
       scope: maintenanceScope,
       baselineWallets: WATCHED_WALLETS,
@@ -560,7 +583,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     for (const wallet of walletList) {
       try {
         let reachedCutoff = false;
-        for (let page = 0; page < Math.max(1, maintenanceMaxPagesPerWallet) && !reachedCutoff; page += 1) {
+        for (let page = 0; page < maxPagesForRun && !reachedCutoff; page += 1) {
           const offset = page * Math.max(1, maintenancePageLimit);
           requestCount += 1;
           const rawTrades = await fetchTrades({
@@ -602,7 +625,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       ok: errors.length === 0,
       status: errors.length ? 'partial' : 'done',
       scope: maintenanceScope,
-      lookbackHours: maintenanceLookbackHours,
+      lookbackHours: runLookbackHours,
+      maxPagesPerWallet: maxPagesForRun,
       cutoffAt: cutoff.toISOString(),
       startedAt,
       finishedAt,
@@ -626,6 +650,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!enabled) state.service.candidates.status = candidateStatusBefore || 'disabled';
     state.service.candidates.lastError = null;
     return summary;
+  }
+
+  function maintenancePagesForLookback(lookbackHours) {
+    const basePages = Math.max(1, maintenanceMaxPagesPerWallet);
+    const baseLookback = Math.max(1, maintenanceLookbackHours);
+    return Math.max(basePages, Math.ceil((lookbackHours / baseLookback) * basePages));
   }
 
   async function runCopyPoolEvaluation({ scoreRealCopyQuality = true } = {}) {

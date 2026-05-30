@@ -288,6 +288,7 @@ describe('candidate tracker service', () => {
         payload: {
           status: 'done',
           finishedAt: new Date().toISOString(),
+          lookbackHours: 96,
           walletCount: 2,
           insertedTradeCount: 4,
           scoredWalletCount: 2,
@@ -313,6 +314,70 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.maintenanceStatus).toBe('ready');
     expect(state.service.candidates.maintenanceLastWalletCount).toBe(2);
     expect(state.service.candidates.maintenanceLastInsertedTradeCount).toBe(4);
+  });
+
+  it('runs startup catch-up when the last completed maintenance covered a shorter window', async () => {
+    const state = createAppState();
+    const calls = {
+      fetches: [],
+      upserts: [],
+      serviceState: [],
+    };
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: { total: 1, scored: 1, eligible: 1 },
+        rows: [],
+      }),
+      getServiceState: async () => ({
+        payload: {
+          status: 'done',
+          finishedAt: new Date().toISOString(),
+          lookbackHours: 48,
+        },
+      }),
+      saveServiceState: async (...args) => calls.serviceState.push(args),
+      getMaintenanceWallets: async () => ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertTrade: async (trade) => {
+        calls.upserts.push(trade);
+        return { insertedTrade: true };
+      },
+      getOpenTrades: async () => [],
+      evaluateCopyPool: async () => ({ changed: [], snapshot: {} }),
+      recalculateRealCopyQuality: async () => ({ ok: true, scored: 1, summary: { total: 1, scored: 1 } }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: true,
+      maintenanceLookbackHours: 48,
+      maintenanceStartupCatchupHours: 96,
+      maintenanceMaxPagesPerWallet: 2,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        return params.offset === 0
+          ? [rawTrade(72, { timestamp: nowSeconds - 72 * 60 * 60, size: 3_000, price: 0.5 })]
+          : [];
+      },
+    });
+
+    await tracker.start();
+    await tracker.close();
+
+    expect(calls.fetches[0]).toMatchObject({
+      user: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      filterType: 'CASH',
+      filterAmount: 1000,
+    });
+    expect(calls.upserts).toHaveLength(1);
+    expect(calls.serviceState[0][1]).toMatchObject({
+      status: 'done',
+      lookbackHours: 96,
+      maxPagesPerWallet: 4,
+      insertedTradeCount: 1,
+    });
   });
 
   it('scales candidate resolution batches for large due queues', () => {

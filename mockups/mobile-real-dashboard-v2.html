@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile Real Dashboard V2 Mockup</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --ink: #16202d;
+        --muted: #6f7a88;
+        --line: #dfe5ec;
+        --soft: #eef3f8;
+        --surface: #ffffff;
+        --accent: #1769ff;
+        --accent-soft: #e6efff;
+        --green: #0f8f5f;
+        --green-soft: #e8f8f0;
+        --red: #c43b47;
+        --red-soft: #fff0f1;
+        --amber: #9c6a00;
+        --amber-soft: #fff6d8;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-width: 320px;
+        min-height: 100vh;
+        margin: 0;
+        background: #e9eef5;
+        color: var(--ink);
+      }
+
+      .page {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: minmax(320px, 430px) minmax(280px, 390px);
+        align-items: center;
+        justify-content: center;
+        gap: 34px;
+        padding: 32px;
+      }
+
+      .phone {
+        width: min(100%, 390px);
+        height: min(860px, calc(100vh - 42px));
+        min-height: 720px;
+        border: 10px solid #111827;
+        border-radius: 36px;
+        overflow: hidden;
+        background: #f6f8fb;
+        box-shadow: 0 34px 80px rgba(22, 32, 45, 0.28);
+      }
+
+      .app {
+        height: 100%;
+        overflow-y: auto;
+        scrollbar-width: none;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #f4f7fb 100%);
+      }
+
+      .app::-webkit-scrollbar {
+        display: none;
+      }
+
+      .top {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: grid;
+        gap: 10px;
+        padding: 14px 14px 10px;
+        border-bottom: 1px solid rgba(223, 229, 236, 0.82);
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(14px);
+      }
+
+      .titleRow,
+      .feedHead,
+      .orderTop,
+      .bottomNav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .titleBlock {
+        min-width: 0;
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.68rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 760;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-top: 1px;
+        font-size: 1.28rem;
+        line-height: 1.1;
+        letter-spacing: 0;
+      }
+
+      .modeToggle {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+        min-width: 118px;
+        padding: 4px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: var(--soft);
+      }
+
+      .modeOption {
+        min-height: 30px;
+        display: grid;
+        place-items: center;
+        border-radius: 7px;
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 780;
+      }
+
+      .modeOption.active {
+        background: var(--surface);
+        color: var(--ink);
+        box-shadow: 0 1px 2px rgba(22, 32, 45, 0.08);
+      }
+
+      .statusStrip {
+        display: grid;
+        grid-template-columns: 1fr auto auto;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .livePill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        padding: 8px 10px;
+        border-radius: 10px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 0.8rem;
+        font-weight: 760;
+      }
+
+      .liveDot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(15, 143, 95, 0.13);
+      }
+
+      .statusMini {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fbfcfe;
+      }
+
+      .statusMini span {
+        color: var(--muted);
+        font-size: 0.63rem;
+        font-weight: 720;
+      }
+
+      .statusMini strong {
+        font-size: 0.78rem;
+        white-space: nowrap;
+      }
+
+      .metricRail {
+        display: grid;
+        grid-auto-flow: column;
+        grid-auto-columns: calc((100% - 16px) / 3);
+        gap: 8px;
+        overflow-x: auto;
+        padding: 12px 14px 6px;
+        scrollbar-width: none;
+      }
+
+      .metricRail::-webkit-scrollbar {
+        display: none;
+      }
+
+      .metric {
+        min-height: 82px;
+        display: grid;
+        align-content: space-between;
+        gap: 8px;
+        padding: 11px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+        box-shadow: 0 8px 18px rgba(22, 32, 45, 0.05);
+      }
+
+      .metric span {
+        color: var(--muted);
+        font-size: 0.72rem;
+        font-weight: 720;
+      }
+
+      .metric strong {
+        font-size: 1.08rem;
+        letter-spacing: 0;
+      }
+
+      .positive {
+        color: var(--green);
+      }
+
+      .negative {
+        color: var(--red);
+      }
+
+      .content {
+        display: grid;
+        gap: 12px;
+        padding: 8px 14px 82px;
+      }
+
+      .feedHead {
+        padding-top: 2px;
+      }
+
+      .feedHead h2 {
+        margin-top: 2px;
+        font-size: 1.05rem;
+        letter-spacing: 0;
+      }
+
+      .feedCount {
+        color: var(--muted);
+        font-size: 0.78rem;
+        font-weight: 720;
+      }
+
+      .filters {
+        position: sticky;
+        top: 96px;
+        z-index: 10;
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        margin: 0 -14px;
+        padding: 4px 14px 10px;
+        background: linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(248, 250, 252, 0.82));
+        backdrop-filter: blur(12px);
+        scrollbar-width: none;
+      }
+
+      .filters::-webkit-scrollbar {
+        display: none;
+      }
+
+      .chip {
+        min-height: 36px;
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 9px;
+        padding: 0 12px;
+        background: var(--soft);
+        color: #334155;
+        font: inherit;
+        font-size: 0.84rem;
+        font-weight: 760;
+      }
+
+      .chip.active {
+        background: var(--ink);
+        color: #fff;
+        box-shadow: 0 10px 22px rgba(22, 32, 45, 0.16);
+      }
+
+      .orderCard {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--green);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 8px 18px rgba(22, 32, 45, 0.05);
+      }
+
+      .orderCard.skipped {
+        border-left-color: var(--amber);
+      }
+
+      .orderCard.failed {
+        border-left-color: var(--red);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 0 8px;
+        border-radius: 999px;
+        background: var(--green-soft);
+        color: var(--green);
+        font-size: 0.68rem;
+        font-weight: 840;
+      }
+
+      .badge.skipped {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .badge.failed {
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .orderTime {
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 680;
+      }
+
+      .orderCard h3 {
+        overflow-wrap: anywhere;
+        font-size: 0.98rem;
+        line-height: 1.2;
+        letter-spacing: 0;
+      }
+
+      .orderMeta {
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 620;
+      }
+
+      .miniGrid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 7px;
+      }
+
+      .mini {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+        padding: 7px;
+        border-radius: 9px;
+        background: #f7f9fc;
+      }
+
+      .mini span {
+        color: var(--muted);
+        font-size: 0.61rem;
+        font-weight: 720;
+      }
+
+      .mini strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 0.74rem;
+      }
+
+      .reason {
+        display: grid;
+        grid-template-columns: 8px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 660;
+        line-height: 1.28;
+      }
+
+      .reason::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        margin-top: 4px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+
+      .skipped .reason::before {
+        background: var(--amber);
+      }
+
+      .failed .reason::before {
+        background: var(--red);
+      }
+
+      .collapsedPanels {
+        display: grid;
+        gap: 8px;
+        padding-top: 4px;
+      }
+
+      .accordionRow {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: #fbfcfe;
+      }
+
+      .accordionRow span {
+        color: var(--muted);
+        font-size: 0.76rem;
+        font-weight: 680;
+      }
+
+      .accordionRow strong {
+        font-size: 0.88rem;
+      }
+
+      .bottomNav {
+        position: sticky;
+        bottom: 0;
+        z-index: 30;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.96);
+        backdrop-filter: blur(14px);
+      }
+
+      .navItem {
+        min-height: 42px;
+        display: grid;
+        place-items: center;
+        border-radius: 10px;
+        color: var(--muted);
+        font-size: 0.73rem;
+        font-weight: 760;
+      }
+
+      .navItem.active {
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .notes {
+        display: grid;
+        gap: 18px;
+        align-content: center;
+      }
+
+      .notes h2 {
+        font-size: clamp(1.7rem, 4vw, 2.4rem);
+        line-height: 1;
+        letter-spacing: 0;
+      }
+
+      .notes p {
+        color: #485567;
+        line-height: 1.55;
+      }
+
+      .noteList {
+        display: grid;
+        gap: 10px;
+        padding: 0;
+        margin: 0;
+        list-style: none;
+      }
+
+      .noteList li {
+        padding: 12px 13px;
+        border: 1px solid rgba(223, 229, 236, 0.9);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.72);
+        color: #334155;
+        line-height: 1.35;
+      }
+
+      @media (max-width: 860px) {
+        .page {
+          grid-template-columns: 1fr;
+          padding: 16px;
+        }
+
+        .notes {
+          max-width: 390px;
+          margin: 0 auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="phone" aria-label="Mobile dashboard mockup">
+        <div class="app">
+          <header class="top">
+            <div class="titleRow">
+              <div class="titleBlock">
+                <p class="eyebrow">Real dashboard</p>
+                <h1>Autotrader</h1>
+              </div>
+              <div class="modeToggle" aria-label="Mode switch">
+                <div class="modeOption active">Real</div>
+                <div class="modeOption">Demo</div>
+              </div>
+            </div>
+            <div class="statusStrip">
+              <div class="livePill"><span class="liveDot"></span> Live worker online</div>
+              <div class="statusMini"><span>Poll</span><strong>2m</strong></div>
+              <div class="statusMini"><span>Follows</span><strong>506</strong></div>
+            </div>
+          </header>
+
+          <section class="metricRail" aria-label="Account and trade summary">
+            <article class="metric"><span>Balance</span><strong>$284.18</strong></article>
+            <article class="metric"><span>Live P/L</span><strong class="positive">+$18.40</strong></article>
+            <article class="metric"><span>Open value</span><strong>$42.00</strong></article>
+            <article class="metric"><span>Attempts</span><strong>14</strong></article>
+          </section>
+
+          <section class="content">
+            <div class="feedHead">
+              <div>
+                <p class="eyebrow">Order audit</p>
+                <h2>Trade feed</h2>
+              </div>
+              <span class="feedCount">Today</span>
+            </div>
+
+            <nav class="filters" aria-label="Order filters">
+              <button class="chip active">All today</button>
+              <button class="chip">Filled today 3</button>
+              <button class="chip">Skipped today 9</button>
+              <button class="chip">Failed today 2</button>
+            </nav>
+
+            <article class="orderCard">
+              <div class="orderTop">
+                <span class="badge">FILLED</span>
+                <span class="orderTime">11:13</span>
+              </div>
+              <h3>Roland Garros WTA: Maria Sakkari vs Maja Chwalinska</h3>
+              <p class="orderMeta">YES copied from 0x7a1e...92bf</p>
+              <div class="miniGrid">
+                <div class="mini"><span>Source</span><strong>54.0c</strong></div>
+                <div class="mini"><span>Ask</span><strong>55.0c</strong></div>
+                <div class="mini"><span>Stake</span><strong>$10</strong></div>
+                <div class="mini"><span>If win</span><strong>$18.18</strong></div>
+              </div>
+              <div class="reason">Order passed entry, guard, and duplicate checks.</div>
+            </article>
+
+            <article class="orderCard skipped">
+              <div class="orderTop">
+                <span class="badge skipped">SKIPPED</span>
+                <span class="orderTime">10:48</span>
+              </div>
+              <h3>NBA Finals: Thunder vs Knicks Game 1</h3>
+              <p class="orderMeta">YES from 0xb039...44e1</p>
+              <div class="miniGrid">
+                <div class="mini"><span>Source</span><strong>76.0c</strong></div>
+                <div class="mini"><span>Max</span><strong>75.0c</strong></div>
+                <div class="mini"><span>Guard</span><strong>+4.0c</strong></div>
+                <div class="mini"><span>If win</span><strong>$13.16</strong></div>
+              </div>
+              <div class="reason">Entry was above the configured max entry price.</div>
+            </article>
+
+            <article class="orderCard failed">
+              <div class="orderTop">
+                <span class="badge failed">FAILED</span>
+                <span class="orderTime">09:22</span>
+              </div>
+              <h3>Bitcoin above $110k on Friday?</h3>
+              <p class="orderMeta">NO from 0x49d2...71aa</p>
+              <div class="miniGrid">
+                <div class="mini"><span>Source</span><strong>44.0c</strong></div>
+                <div class="mini"><span>Ask</span><strong>45.5c</strong></div>
+                <div class="mini"><span>Status</span><strong>API</strong></div>
+                <div class="mini"><span>If win</span><strong>$22.73</strong></div>
+              </div>
+              <div class="reason">Order submission returned an exchange error.</div>
+            </article>
+
+            <section class="collapsedPanels" aria-label="Secondary panels">
+              <div class="accordionRow"><strong>Risk rules</strong><span>$10 stake, 75c max entry</span></div>
+              <div class="accordionRow"><strong>Open positions</strong><span>2 positions, $42.00 open</span></div>
+              <div class="accordionRow"><strong>Active copy list</strong><span>506 follows</span></div>
+            </section>
+          </section>
+
+          <nav class="bottomNav" aria-label="Mobile tabs">
+            <div class="navItem active">Feed</div>
+            <div class="navItem">Follows</div>
+            <div class="navItem">Positions</div>
+            <div class="navItem">Scores</div>
+          </nav>
+        </div>
+      </section>
+
+      <aside class="notes">
+        <p class="eyebrow">Mobile v2 mockup</p>
+        <h2>Feed-first real dashboard</h2>
+        <p>
+          This keeps the current light control-room styling, but changes the phone order so the trade feed appears in the first viewport.
+          Account, risk, positions, and follows become compact summary surfaces instead of blocking the audit stream.
+        </p>
+        <ul class="noteList">
+          <li>Top area stays under 170px: title, worker status, poll freshness, and active follows.</li>
+          <li>KPIs become a horizontal rail, so they are available but no longer push the trade feed down.</li>
+          <li>Filters stay close to the feed and can become sticky while scrolling.</li>
+          <li>Risk rules, positions, and follows move below the first few orders as collapsed rows.</li>
+        </ul>
+      </aside>
+    </main>
+  </body>
+</html>
