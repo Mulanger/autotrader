@@ -728,7 +728,7 @@ async function getLeaderboard(pool, { limit = 100, offset = 0 } = {}) {
           from candidate_trades
           where side = 'BUY' and status in ('resolved_win', 'resolved_loss') and pnl_usd is not null
         ) ranked_form
-        where rn <= 8
+        where rn <= 10
         group by wallet
       ),
       month_windows as (
@@ -1095,6 +1095,20 @@ async function getRealCopyQualityMetricRows(pool, {
         select wallet, min(drawdown_usd)::numeric as max_drawdown_usd_30d
         from drawdown_points
         group by wallet
+      ),
+      recent_form as (
+        select wallet, jsonb_agg(status order by resolved_at desc, trade_timestamp desc) as recent_form_results
+        from (
+          select
+            wallet,
+            status,
+            resolved_at,
+            trade_timestamp,
+            row_number() over (partition by wallet order by resolved_at desc nulls last, trade_timestamp desc) as rn
+          from resolved_30d
+        ) ranked_form
+        where rn <= 10
+        group by wallet
       )
       select
         sw.wallet,
@@ -1112,13 +1126,15 @@ async function getRealCopyQualityMetricRows(pool, {
         coalesce(drs.win_count_30d, 0)::integer as win_count_30d,
         drs.win_rate_pct_30d,
         ps.top_win_share_pct_30d,
-        es.avg_trade_size_usd_30d
+        es.avg_trade_size_usd_30d,
+        coalesce(rf.recent_form_results, '[]'::jsonb) as recent_form_results
       from scope_wallets sw
       left join candidate_traders t on t.wallet = sw.wallet
       left join entry_stats es on es.wallet = sw.wallet
       left join distinct_stats drs on drs.wallet = sw.wallet
       left join pnl_stats ps on ps.wallet = sw.wallet
       left join drawdown_stats ds on ds.wallet = sw.wallet
+      left join recent_form rf on rf.wallet = sw.wallet
       where sw.wallet is not null
       order by coalesce(ps.profit_usd_30d, 0) desc, sw.wallet asc
     `,
@@ -1955,6 +1971,13 @@ function mapRealCopyQualityRow(row) {
     winCount30d: Number(row.win_count_30d || 0),
     winRatePct30d: nullableNumberFromPg(row.win_rate_pct_30d),
     topWinSharePct30d: nullableNumberFromPg(row.top_win_share_pct_30d),
+    recentFormResults: Array.isArray(row.recent_form_results)
+      ? row.recent_form_results
+      : Array.isArray(row.payload?.input?.recent_form_results)
+        ? row.payload.input.recent_form_results
+        : Array.isArray(row.payload?.input?.recentFormResults)
+          ? row.payload.input.recentFormResults
+          : [],
     scoredAt: isoOrNull(row.scored_at),
   };
 }

@@ -235,7 +235,7 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
     trader.observedCount += 1;
     trader.lastSeenAt = event.observedAt;
     trader.recentTrades.unshift({ ...trade, status: trade.resolution?.status || 'open' });
-    trader.recentTrades = trader.recentTrades.slice(0, 8);
+    trader.recentTrades = trader.recentTrades.slice(0, 10);
 
     event.copyDecision = copyEligible
       ? evaluateDemoCopy(state.demo, trade)

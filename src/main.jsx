@@ -31,9 +31,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import AutotraderMobile from './components/AutotraderMobile.jsx';
 import './styles.css';
-import './styles/autotrader-mobile.css';
 
 const API_BASE = '';
 const CANDIDATE_TRADE_PAGE_SIZE = 80;
@@ -56,24 +54,7 @@ function authHeaders() {
 }
 
 function App() {
-  const mobileReal = useMobileRealSurface();
-  if (mobileReal) return <MobileRealApp />;
-
   return <DesktopApp />;
-}
-
-function MobileRealApp() {
-  const realState = useRealState();
-  return (
-    <main className="shell realMode mobileOnlyShell">
-      <AutotraderMobile
-        real={realState.real}
-        loading={realState.loading}
-        error={realState.error}
-        onRefresh={realState.refresh}
-      />
-    </main>
-  );
 }
 
 function DesktopApp() {
@@ -117,24 +98,6 @@ function DesktopApp() {
       </section>
     </main>
   );
-}
-
-function useMobileRealSurface() {
-  const [matches, setMatches] = React.useState(() => (
-    typeof window !== 'undefined' &&
-    window.matchMedia('(max-width: 780px)').matches &&
-    new URLSearchParams(window.location.search).get('desktop') !== '1'
-  ));
-
-  React.useEffect(() => {
-    const media = window.matchMedia('(max-width: 780px)');
-    const update = () => setMatches(media.matches && new URLSearchParams(window.location.search).get('desktop') !== '1');
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-
-  return matches;
 }
 
 function useAutotraderState() {
@@ -372,7 +335,6 @@ function RealWorkspace({ tab }) {
 
   return (
     <>
-      <AutotraderMobile real={real} />
       <div className="realDesktopWorkspace">{desktopView}</div>
     </>
   );
@@ -800,6 +762,7 @@ function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
         </div>
         <span>{shortWallet(row.wallet)}</span>
         <small className="qualityExplanation">{row.explanation || row.reason}</small>
+        <RecentForm results={row.recentFormResults || []} className="identityRecentForm" />
       </div>
       <div className="candidateMetric">
         <span>Edge / Med</span>
@@ -955,6 +918,27 @@ function RealMiniStat({ label, value, tone }) {
     <div className="realMiniStat">
       <span>{label}</span>
       <strong className={tone || ''}>{value}</strong>
+    </div>
+  );
+}
+
+function RecentForm({ results = [], className = '', label = 'Recent 10' }) {
+  const form = (Array.isArray(results) ? results : [])
+    .filter(isResolvedFormResult)
+    .slice(0, 10);
+
+  return (
+    <div className={`recentForm ${className}`} aria-label={label}>
+      <span className="recentFormLabel">{label}</span>
+      <div className="recentFormSquares">
+        {form.length ? form.map((result, index) => (
+          <span
+            key={`${result}-${index}`}
+            title={formResultLabel(result)}
+            className={`formSquare ${formResultClass(result)}`}
+          />
+        )) : <small className="muted">No resolved form</small>}
+      </div>
     </div>
   );
 }
@@ -1429,6 +1413,7 @@ function TraderGrid({ traders, compact = false }) {
 
 function TraderCard({ trader, compact }) {
   const recent = trader.recentTrades || [];
+  const recentForm = traderRecentForm(trader);
   return (
     <article className="traderCard">
       <div className="traderTop">
@@ -1446,6 +1431,7 @@ function TraderCard({ trader, compact }) {
         <span><b>{pct(trader.allTimeWinRatePct)}</b> winrate</span>
         <span><b>{trader.copiedCount}</b> copied</span>
       </div>
+      <RecentForm results={recentForm} className="traderForm" />
       {!compact && (
         <div className="recentTradeStack">
           {recent.slice(0, 4).map((trade) => (
@@ -1895,15 +1881,7 @@ function CandidateRow({ row, copyPoolEntry, thresholds, realFollowEntry, expande
             <strong className={eligibility.tone}>{eligibility.label}</strong>
             <small>{eligibility.meta}</small>
           </div>
-          <div className="candidateForm" aria-label="Recent form">
-            {form.length ? form.map((result, index) => (
-              <span
-                key={`${result}-${index}`}
-                title={statusLabel(result)}
-                className={`formSquare ${result === 'resolved_win' ? 'win' : 'loss'}`}
-              />
-            )) : <small className="muted">No resolved form</small>}
-          </div>
+          <RecentForm results={form} className="candidateForm" />
         </>
       )}
       <div className="candidateProfit">
@@ -2566,6 +2544,39 @@ function statusTone(status) {
   if (value === 'resolved_win' || value === 'win') return 'positive';
   if (value === 'resolved_loss' || value === 'loss') return 'negative';
   return '';
+}
+
+function isResolvedFormResult(result) {
+  return isFormWin(result) || isFormLoss(result);
+}
+
+function isFormWin(result) {
+  const value = String(result || '').toLowerCase();
+  return value === 'resolved_win' || value === 'win' || value === 'won' || value === 'w';
+}
+
+function isFormLoss(result) {
+  const value = String(result || '').toLowerCase();
+  return value === 'resolved_loss' || value === 'loss' || value === 'lost' || value === 'l';
+}
+
+function formResultClass(result) {
+  if (isFormWin(result)) return 'win';
+  if (isFormLoss(result)) return 'loss';
+  return 'neutral';
+}
+
+function formResultLabel(result) {
+  if (isFormWin(result)) return 'win';
+  if (isFormLoss(result)) return 'loss';
+  return statusLabel(result);
+}
+
+function traderRecentForm(trader) {
+  if (Array.isArray(trader?.recentFormResults) && trader.recentFormResults.length) {
+    return trader.recentFormResults;
+  }
+  return (trader?.recentTrades || []).map((trade) => trade.status || trade.resolution?.status);
 }
 
 function isOpenPosition(position) {

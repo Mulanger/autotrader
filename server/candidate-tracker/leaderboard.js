@@ -47,7 +47,7 @@ export function buildLeaderboardRows(traders = [], trades = [], { limit = 100, o
     const recentFormResults = resolvedBuyTrades
       .slice()
       .sort(compareResolvedNewest)
-      .slice(0, 8)
+      .slice(0, 10)
       .map((trade) => trade.status);
     const recentResolvedDistinctTrades = latestDistinctMarketTrades(
       resolvedBuyTrades.filter((trade) => {

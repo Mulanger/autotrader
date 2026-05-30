@@ -113,6 +113,22 @@ describe('candidate leaderboard aggregation', () => {
     expect(windows[2].roiPct).toBe(50);
   });
 
+  it('keeps the 10 newest resolved BUY results for recent form', () => {
+    const statuses = Array.from({ length: 12 }, (_, index) => (
+      index % 2 === 0 ? 'resolved_win' : 'resolved_loss'
+    ));
+    const rows = buildLeaderboardRows(
+      [{ wallet: '0xaaa', displayName: 'Alpha' }],
+      statuses.map((status, index) => trade(`form-${index}`, {
+        status,
+        resolvedAt: `2026-05-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+        tradeTimestamp: `2026-05-${String(index + 1).padStart(2, '0')}T00:00:00.000Z`,
+      }))
+    );
+
+    expect(rows[0].recentFormResults).toEqual(statuses.slice().reverse().slice(0, 10));
+  });
+
   it('calculates candidate metrics for normal wins/losses and drawdown path order', () => {
     const metrics = buildCandidateMetrics([
       trade('loss-newer', { status: 'resolved_loss', pnlUsd: -10, usdSize: 50, price: 0.5, resolvedAt: '2026-05-20T00:00:00.000Z' }),

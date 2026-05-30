@@ -1149,16 +1149,38 @@ button {
   font-size: 0.95rem;
 }
 
+.recentForm,
 .candidateForm {
   min-height: 22px;
   display: flex;
   align-items: center;
+  gap: 7px;
+}
+
+.candidateForm {
   justify-content: flex-end;
+}
+
+.recentFormLabel {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.recentFormSquares {
+  min-width: 0;
+  display: flex;
+  align-items: center;
   gap: 4px;
 }
 
 .formSquare {
-  width: 11px;
+  flex: 0 0 auto;
+  width: 10px;
   height: 18px;
   border-radius: 3px;
   background: #c7d0db;
@@ -1169,7 +1191,26 @@ button {
 }
 
 .formSquare.loss {
-  background: #b05b68;
+  background: var(--red);
+}
+
+.identityRecentForm {
+  margin-top: 4px;
+}
+
+.identityRecentForm .formSquare {
+  width: 8px;
+  height: 13px;
+}
+
+.traderForm {
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.traderForm .formSquare {
+  width: 9px;
+  height: 15px;
 }
 
 .candidateMonthCarousel {
