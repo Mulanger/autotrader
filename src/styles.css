@@ -2310,10 +2310,10 @@ button {
   }
 
   .realMobileMetric {
-    min-height: 86px;
+    min-height: 92px;
     display: grid;
-    align-content: space-between;
-    gap: 8px;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 7px;
     padding: 11px;
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -2321,18 +2321,37 @@ button {
     box-shadow: 0 8px 18px rgba(22, 32, 45, 0.05);
   }
 
-  .realMobileMetric span {
+  .realMobileMetricHead {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .realMobileMetricHead span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--muted);
     font-size: 0.72rem;
     font-weight: 720;
   }
 
+  .realMobileMetricHead svg {
+    flex: 0 0 auto;
+    color: #8ea0b7;
+  }
+
   .realMobileMetric strong {
     min-width: 0;
+    align-self: center;
+    justify-self: start;
     overflow-wrap: anywhere;
     white-space: normal;
-    font-size: 1rem;
-    line-height: 1.08;
+    font-size: 1.18rem;
+    line-height: 1.05;
   }
 
   .realMobileContent {

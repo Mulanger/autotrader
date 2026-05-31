@@ -419,10 +419,10 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayo
   }
 
   const metrics = [
-    { label: 'Balance', value: formatAccountUsd(balance) },
-    { label: live ? 'Live P/L' : 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), tone: pnlTone(summary.totalPnlUsd) },
-    { label: 'Open value', value: usd(summary.openValueUsd || 0) },
-    { label: 'Attempts', value: summary.attemptedCount || 0 },
+    { label: 'Balance', value: formatAccountUsd(balance), icon: Wallet },
+    { label: live ? 'Live P/L' : 'Dry-run P/L', value: signedUsd(summary.totalPnlUsd || 0), tone: pnlTone(summary.totalPnlUsd), icon: LineChart },
+    { label: 'Open value', value: usd(summary.openValueUsd || 0), icon: CircleDollarSign },
+    { label: 'Attempts', value: summary.attemptedCount || 0, icon: Activity },
   ];
 
   return (
@@ -464,12 +464,18 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayo
       </header>
 
       <section className="realMobileMetricRail" aria-label="Real account summary">
-        {metrics.map((metric) => (
-          <article className="realMobileMetric" key={metric.label}>
-            <span>{metric.label}</span>
-            <strong className={metric.tone || ''}>{metric.value}</strong>
-          </article>
-        ))}
+        {metrics.map((metric) => {
+          const Icon = metric.icon;
+          return (
+            <article className="realMobileMetric" key={metric.label}>
+              <div className="realMobileMetricHead">
+                <span>{metric.label}</span>
+                <Icon size={16} aria-hidden="true" />
+              </div>
+              <strong className={metric.tone || ''}>{metric.value}</strong>
+            </article>
+          );
+        })}
       </section>
 
       {mobileMain}
