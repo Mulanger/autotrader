@@ -53,6 +53,27 @@ function authHeaders() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+function useMobileLayoutQuery() {
+  const [matches, setMatches] = React.useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 780px)').matches
+  ));
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const query = window.matchMedia('(max-width: 780px)');
+    const handleChange = () => setMatches(query.matches);
+    handleChange();
+    if (query.addEventListener) {
+      query.addEventListener('change', handleChange);
+      return () => query.removeEventListener('change', handleChange);
+    }
+    query.addListener(handleChange);
+    return () => query.removeListener(handleChange);
+  }, []);
+
+  return matches;
+}
+
 function App() {
   return <DesktopApp />;
 }
@@ -306,6 +327,7 @@ function DemoWorkspace({ data, metrics, tab }) {
 
 function RealWorkspace({ tab, setTab, setMode }) {
   const realState = useRealState();
+  const mobileLayout = useMobileLayoutQuery();
   const real = realState.real;
 
   if (realState.error) {
@@ -341,13 +363,14 @@ function RealWorkspace({ tab, setTab, setMode }) {
         tab={tab}
         setTab={setTab}
         setMode={setMode}
+        mobileLayout={mobileLayout}
       />
       <div className="realDesktopWorkspace">{desktopView}</div>
     </div>
   );
 }
 
-function RealMobileDashboard({ real, realState, tab, setTab, setMode }) {
+function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayout }) {
   const [orderFilter, setOrderFilter] = React.useState('all');
   const runtime = real.runtime || {};
   const service = real.service || {};
@@ -360,6 +383,38 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode }) {
   const balance = account?.collateral?.walletBalanceUsd ?? account?.collateral?.balanceUsd;
   const lastPollAt = runtime.lastPollAt || service.lastPollAt;
   const showFeed = tab === 'overview' || tab === 'orders';
+  let mobileMain = null;
+
+  if (mobileLayout && showFeed) {
+    mobileMain = (
+      <RealMobileOrderFeed
+        real={real}
+        filter={orderFilter}
+        setFilter={setOrderFilter}
+        activeFollowCount={activeFollowCount}
+        openPositionCount={openPositionCount}
+        setTab={setTab}
+      />
+    );
+  } else if (mobileLayout && tab === 'following') {
+    mobileMain = (
+      <div className="realMobileInlinePanel">
+        <RealFollowingView real={real} realState={realState} />
+      </div>
+    );
+  } else if (mobileLayout && tab === 'positions') {
+    mobileMain = (
+      <div className="realMobileInlinePanel">
+        <RealPositionsView real={real} />
+      </div>
+    );
+  } else if (mobileLayout && tab === 'real-traders') {
+    mobileMain = (
+      <div className="realMobileInlinePanel realMobileScoresPanel">
+        <RealScoredTradersView realState={realState} />
+      </div>
+    );
+  }
 
   const metrics = [
     { label: 'Balance', value: formatAccountUsd(balance) },
@@ -369,7 +424,7 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode }) {
   ];
 
   return (
-    <section className="realMobileDashboard" aria-label="Mobile real dashboard">
+    <section className={`realMobileDashboard realMobileTab-${tab}`} aria-label="Mobile real dashboard">
       <header className="realMobileTop">
         <div className="realMobileTitleRow">
           <div className="realMobileTitleBlock">
@@ -415,16 +470,7 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode }) {
         ))}
       </section>
 
-      {showFeed && (
-        <RealMobileOrderFeed
-          real={real}
-          filter={orderFilter}
-          setFilter={setOrderFilter}
-          activeFollowCount={activeFollowCount}
-          openPositionCount={openPositionCount}
-          setTab={setTab}
-        />
-      )}
+      {mobileMain}
 
       <RealMobileBottomNav tab={tab} setTab={setTab} />
     </section>

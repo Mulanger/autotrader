@@ -2049,6 +2049,7 @@ button {
     display: block;
     min-height: 100svh;
     background: #f6f8fb;
+    overflow-x: hidden;
   }
 
   .realMode .sidebar,
@@ -2060,29 +2061,26 @@ button {
     min-height: 100svh;
     padding: 0;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #f4f7fb 100%);
+    overflow-x: hidden;
+  }
+
+  .realMode .realWorkspaceRoot,
+  .realMode .realDesktopWorkspace {
+    max-width: 100%;
+    overflow-x: hidden;
   }
 
   .realMode .realDesktopWorkspace {
-    display: none;
-  }
-
-  .realMode .realWorkspaceRoot.realTab-following .realDesktopWorkspace,
-  .realMode .realWorkspaceRoot.realTab-positions .realDesktopWorkspace,
-  .realMode .realWorkspaceRoot.realTab-real-traders .realDesktopWorkspace {
-    display: block;
-    padding: 8px 14px calc(88px + env(safe-area-inset-bottom));
-  }
-
-  .realMode .realDesktopWorkspace > .panel,
-  .realMode .realDesktopWorkspace > .fullPanel {
-    min-height: auto;
-    border-radius: 8px;
+    display: none !important;
   }
 
   .realMobileDashboard {
-    display: block;
+    --real-mobile-filter-top: 118px;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
     min-height: 100svh;
-    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+    min-width: 0;
+    overflow-x: hidden;
   }
 
   .realMobileTop {
@@ -2125,6 +2123,7 @@ button {
   }
 
   .realMobileActions {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -2170,7 +2169,7 @@ button {
 
   .realMobileStatusStrip {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 8px;
     align-items: center;
   }
@@ -2233,10 +2232,11 @@ button {
   .realMobileMetricRail {
     display: grid;
     grid-auto-flow: column;
-    grid-auto-columns: calc((100% - 16px) / 3);
+    grid-auto-columns: minmax(112px, calc((100% - 16px) / 3));
     gap: 8px;
     overflow-x: auto;
     padding: 12px 14px 6px;
+    overscroll-behavior-x: contain;
     scrollbar-width: none;
   }
 
@@ -2274,7 +2274,8 @@ button {
   .realMobileContent {
     display: grid;
     gap: 12px;
-    padding: 8px 14px 0;
+    min-width: 0;
+    padding: 8px 14px calc(88px + env(safe-area-inset-bottom));
   }
 
   .realMobileFeedHead {
@@ -2294,7 +2295,7 @@ button {
 
   .realMobileFilters {
     position: sticky;
-    top: 96px;
+    top: var(--real-mobile-filter-top);
     z-index: 20;
     display: flex;
     gap: 8px;
@@ -2459,6 +2460,81 @@ button {
     padding-top: 4px;
   }
 
+  .realMobileInlinePanel {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    padding: 8px 14px calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .realMobileInlinePanel > .panel,
+  .realMobileInlinePanel > .fullPanel {
+    min-height: auto;
+    min-width: 0;
+    padding: 14px;
+  }
+
+  .realMobileInlinePanel .sectionHead {
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .realMobileInlinePanel .sectionHead h2 {
+    line-height: 1.15;
+  }
+
+  .realMobileInlinePanel .sectionActions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .realMobileInlinePanel .panelCopy {
+    margin-bottom: 12px;
+    font-size: 0.84rem;
+    line-height: 1.4;
+  }
+
+  .realMobileInlinePanel .candidateSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .realMobileInlinePanel .candidateToolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .realMobileInlinePanel .realQualityToolbar label {
+    display: grid;
+    gap: 5px;
+  }
+
+  .realMobileInlinePanel .realQualityToolbar select,
+  .realMobileInlinePanel .realQualityToolbar .searchInput {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .realMobileInlinePanel .realQualityToolbar .toggleLine,
+  .realMobileInlinePanel .realQualityToolbar .searchInput,
+  .realMobileInlinePanel .realQualityToolbar .statusBadge,
+  .realMobileInlinePanel .realQualityToolbar .negative {
+    grid-column: 1 / -1;
+  }
+
+  .realMobileInlinePanel .positionSummary {
+    gap: 8px;
+  }
+
+  .realMobileInlinePanel .realFollowList,
+  .realMobileInlinePanel .positionList,
+  .realMobileInlinePanel .candidateList {
+    gap: 8px;
+  }
+
   .realMobileAccordionRow {
     min-height: 48px;
     width: 100%;
@@ -2499,6 +2575,7 @@ button {
     right: 0;
     bottom: 0;
     z-index: 60;
+    min-height: calc(60px + env(safe-area-inset-bottom));
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 6px;
@@ -2506,6 +2583,8 @@ button {
     border-top: 1px solid var(--line);
     background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(14px);
+    box-sizing: border-box;
+    transform: translateZ(0);
   }
 
   .realMobileBottomNav button {
