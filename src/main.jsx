@@ -16,6 +16,7 @@ import {
   Eye,
   ExternalLink,
   Gauge,
+  Info,
   Layers3,
   LineChart,
   ListFilter,
@@ -30,6 +31,7 @@ import {
   UserPlus,
   Users,
   Wallet,
+  X,
 } from 'lucide-react';
 import './styles.css';
 
@@ -793,6 +795,7 @@ function RealScoredTradersView({ realState }) {
   const [eligibleOnly, setEligibleOnly] = React.useState(true);
   const [sort, setSort] = React.useState('score');
   const [query, setQuery] = React.useState('');
+  const [metricsHelpOpen, setMetricsHelpOpen] = React.useState(false);
   const [pinRequest, setPinRequest] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
   const [pendingWallet, setPendingWallet] = React.useState(null);
@@ -898,10 +901,13 @@ function RealScoredTradersView({ realState }) {
           <h2>Scored real candidates</h2>
         </div>
         <div className="sectionActions">
+          <button type="button" className="iconButton" onClick={() => setMetricsHelpOpen(true)} aria-label="Explain score metrics">
+            <Info size={16} />
+          </button>
           <button className="textButton" onClick={requestRecalculate} disabled={cachedScores || pendingWallet === '__recalculate__'}>
             <RefreshCcw size={14} /> {pendingWallet === '__recalculate__' ? 'Scoring' : 'Recalculate'}
           </button>
-          <button className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
+          <button type="button" className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
         </div>
       </div>
 
@@ -988,7 +994,97 @@ function RealScoredTradersView({ realState }) {
           setActionError(null);
         }}
       />
+      <ScoreMetricsHelpModal open={metricsHelpOpen} onClose={() => setMetricsHelpOpen(false)} />
     </section>
+  );
+}
+
+const SCORE_METRIC_HELP = [
+  {
+    term: 'Score',
+    text: 'A 0-100 fit score for copying this wallet. Higher means the wallet looks better after entry price, profit, risk, and sample-size checks.',
+  },
+  {
+    term: 'Eligible',
+    text: 'The wallet currently passes the basic copy-quality gates. It is still decision support, not an automatic trade signal.',
+  },
+  {
+    term: 'Edge / Med',
+    text: 'Edge is the estimated copy advantage from the resolved trades we track. Med is the typical buy price; lower entries are usually easier to copy safely.',
+  },
+  {
+    term: 'PF',
+    text: 'Profit factor. It compares tracked wins against tracked losses. Above 1.00x means wins outweighed losses.',
+  },
+  {
+    term: 'ROI',
+    text: 'Return on the resolved trades in our database. It is profit divided by the amount risked on those tracked trades, not the trader profile monthly profit.',
+  },
+  {
+    term: 'Markets / Trades',
+    text: 'How much resolved history we have for the wallet. More markets is usually better than many trades concentrated in one market.',
+  },
+  {
+    term: 'Win / Top win',
+    text: 'Win rate shows how often tracked resolved trades won. Top win shows how much one biggest win explains the result; lower is healthier.',
+  },
+  {
+    term: 'Profit / DD',
+    text: 'Profit is tracked resolved profit. DD is drawdown, the worst drop from a previous high point in the scored history.',
+  },
+  {
+    term: 'Recent 10',
+    text: 'The last resolved outcomes we have stored for that wallet. Green means win, red means loss.',
+  },
+  {
+    term: 'Flags',
+    text: 'Short warnings such as thin sample, high drawdown, or profit concentration. They explain why a wallet may rank lower.',
+  },
+];
+
+function ScoreMetricsHelpModal({ open, onClose }) {
+  React.useEffect(() => {
+    if (!open) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div className="modalBackdrop scoreHelpBackdrop" role="presentation" onClick={onClose}>
+      <section
+        className="scoreHelpModal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="scoreHelpTitle"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="scoreHelpHead">
+          <div>
+            <p className="eyebrow">Score guide</p>
+            <h3 id="scoreHelpTitle">What the metrics mean</h3>
+          </div>
+          <button type="button" className="iconButton" onClick={onClose} aria-label="Close score guide">
+            <X size={16} />
+          </button>
+        </div>
+        <p className="scoreHelpIntro">
+          These numbers use the resolved qualifying trades saved in our database. They are built for copy-quality decisions, so they can differ from public Polymarket profile stats.
+        </p>
+        <dl className="scoreHelpList">
+          {SCORE_METRIC_HELP.map((item) => (
+            <div className="scoreHelpItem" key={item.term}>
+              <dt>{item.term}</dt>
+              <dd>{item.text}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+    </div>
   );
 }
 
