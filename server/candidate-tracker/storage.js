@@ -1103,7 +1103,8 @@ async function getRealCopyQualityMetricRows(pool, {
       resolved_enriched as (
         select
           *,
-          coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as market_key
+          coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as market_key,
+          coalesce(nullif(event_slug, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as event_key
         from resolved_30d
       ),
       distinct_resolved as (
@@ -1114,6 +1115,7 @@ async function getRealCopyQualityMetricRows(pool, {
           (array_agg(condition_id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as condition_id,
           (array_agg(market_slug order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_slug,
           (array_agg(market_title order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_title,
+          (array_agg(event_key order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as event_key,
           case when coalesce(sum(pnl_usd), 0) > 0 then 'resolved_win' else 'resolved_loss' end as status,
           coalesce(sum(pnl_usd), 0)::numeric as pnl_usd,
           coalesce(sum(usd_size), 0)::numeric as usd_size,
@@ -1141,6 +1143,7 @@ async function getRealCopyQualityMetricRows(pool, {
           (array_agg(condition_id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as condition_id,
           (array_agg(market_slug order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_slug,
           (array_agg(market_title order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_title,
+          (array_agg(event_key order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as event_key,
           case when coalesce(sum(pnl_usd), 0) > 0 then 'resolved_win' else 'resolved_loss' end as status,
           coalesce(sum(pnl_usd), 0)::numeric as pnl_usd,
           coalesce(sum(usd_size), 0)::numeric as usd_size,
@@ -1208,6 +1211,7 @@ async function getRealCopyQualityMetricRows(pool, {
         select
           wallet,
           count(*)::integer as copyable_resolved_markets_30d,
+          count(distinct event_key)::integer as copyable_distinct_event_count_30d,
           count(*) filter (where status = 'resolved_win')::integer as copyable_win_count_30d,
           case when count(*) > 0
             then count(*) filter (where status = 'resolved_win')::numeric / count(*) * 100
@@ -1230,6 +1234,7 @@ async function getRealCopyQualityMetricRows(pool, {
         select
           wallet,
           copyable_resolved_markets_30d,
+          copyable_distinct_event_count_30d,
           copyable_win_count_30d,
           copyable_win_rate_pct_30d,
           copyable_pnl_trade_count_30d,
@@ -1377,6 +1382,7 @@ async function getRealCopyQualityMetricRows(pool, {
         cps.copyable_median_entry_cents_30d,
         cps.copyable_avg_entry_price_cents_30d,
         coalesce(cps.copyable_resolved_markets_30d, 0)::integer as copyable_resolved_markets_30d,
+        coalesce(cps.copyable_distinct_event_count_30d, 0)::integer as copyable_distinct_event_count_30d,
         coalesce(cps.copyable_pnl_trade_count_30d, 0)::integer as copyable_pnl_trade_count_30d,
         coalesce(cps.copyable_win_count_30d, 0)::integer as copyable_win_count_30d,
         cps.copyable_win_rate_pct_30d,
@@ -1738,29 +1744,37 @@ async function evaluateCopyPool(pool, { baselineWallets = [], thresholds: thresh
 }
 
 async function evaluateShadowTrader(pool, { windowDays = 30, criteria = SHADOW_TRADER_CRITERIA } = {}) {
-  const result = await queryShadowTraderMetricRows(pool, { windowDays });
+  const normalizedCriteria = { ...SHADOW_TRADER_CRITERIA, ...(criteria || {}) };
+  const rows = await getRealCopyQualityMetricRows(pool, { scope: 'all_candidates' });
+  const rankedCandidates = rows
+    .map((row) => mapShadowScoreRow(row, scoreCopyTrader(row), normalizedCriteria))
+    .filter((candidate) => candidate.wallet)
+    .sort(compareShadowCandidates)
+    .map((candidate, index) => ({ ...candidate, shadowRank: index + 1 }));
+  const selected = rankedCandidates
+    .filter((candidate) => candidate.shadowEligible)
+    .slice(0, Math.max(1, Number(normalizedCriteria.selectionLimit || 20)));
   const selectedWallets = {};
 
-  for (const row of result.rows) {
-    const metrics = mapShadowMetricRow(row);
-    if (!isHybridV1Eligible(metrics, criteria)) continue;
+  for (const metrics of selected) {
     selectedWallets[metrics.wallet] = {
       ...metrics,
       status: 'active',
       strategy: SHADOW_TRADER_STRATEGY,
-      reason: 'Selected by hybrid v1 shadow gate',
+      reason: 'Selected by ECP top-20 shadow rank',
     };
   }
 
   return {
     enabled: true,
     strategy: SHADOW_TRADER_STRATEGY,
-    label: 'Hybrid v1 shadow',
+    label: 'ECP top 20 shadow',
     status: 'ready',
-    criteria,
+    criteria: normalizedCriteria,
     selectedWallets,
     selectedWalletCount: Object.keys(selectedWallets).length,
-    candidatesScoredCount: result.rows.length,
+    rankedCandidates: rankedCandidates.slice(0, Math.max(20, Number(normalizedCriteria.rankedCandidateLimit || 80))),
+    candidatesScoredCount: rows.length,
     lastEvaluatedAt: new Date().toISOString(),
   };
 }
@@ -2139,6 +2153,93 @@ function mapShadowMetricRow(row) {
   };
 }
 
+function mapShadowScoreRow(row, score, criteria = SHADOW_TRADER_CRITERIA) {
+  const wallet = normalizeWallet(row.wallet);
+  const copyableResolvedMarkets30d = Number(row.copyable_resolved_markets_30d || 0);
+  const copyableWinCount30d = Number(row.copyable_win_count_30d || 0);
+  const copyableDistinctEventCount30d = Number(row.copyable_distinct_event_count_30d || 0);
+  const copyableProfitUsd30d = nullableNumberFromPg(row.copyable_profit_usd_30d);
+  const copyableMaxDrawdownUsd30d = nullableNumberFromPg(row.copyable_max_drawdown_usd_30d);
+  const realAttemptCount30d = Number(score.realAttemptCount30d ?? row.real_attempt_count_30d ?? 0);
+  const realFillRatePct30d = nullableNumberFromPg(score.realFillRatePct30d ?? row.real_fill_rate_pct_30d);
+  const candidate = {
+    wallet,
+    displayName: row.display_name,
+    pseudonym: row.pseudonym,
+    profileImage: row.profile_image,
+    status: 'candidate',
+    strategy: SHADOW_TRADER_STRATEGY,
+    reason: score.reason || null,
+    score: nullableNumberFromPg(score.copyQualityScore),
+    tier: score.tier || 'ignore',
+    scoreEligible: Boolean(score.eligible),
+    expectedCopyProfitUsd: nullableNumberFromPg(score.expectedCopyProfitUsd),
+    conservativeCopyEdgePct: nullableNumberFromPg(score.conservativeCopyEdgePct),
+    edgeAfterSlippagePct: nullableNumberFromPg(score.edgeAfterSlippagePct),
+    fillFactor: nullableNumberFromPg(score.fillFactor),
+    copyableProfitUsd30d,
+    copyableRoiPct30d: nullableNumberFromPg(row.copyable_roi_pct_30d),
+    copyableProfitFactor30d: nullableNumberFromPg(row.copyable_profit_factor_30d),
+    copyableMaxDrawdownUsd30d,
+    copyableDrawdownInStakes: Number.isFinite(copyableMaxDrawdownUsd30d)
+      ? Math.abs(copyableMaxDrawdownUsd30d) / Math.max(1, REAL_STAKE_USD)
+      : null,
+    copyableMedianEntryCents30d: nullableNumberFromPg(row.copyable_median_entry_cents_30d),
+    copyableAvgEntryPriceCents30d: nullableNumberFromPg(row.copyable_avg_entry_price_cents_30d),
+    copyableResolvedMarkets30d,
+    copyableDistinctEventCount30d,
+    copyablePnlTradeCount30d: Number(row.copyable_pnl_trade_count_30d || 0),
+    copyableWinCount30d,
+    copyableWinRatePct30d: nullableNumberFromPg(row.copyable_win_rate_pct_30d),
+    copyableTopWinSharePct30d: nullableNumberFromPg(row.copyable_top_win_share_pct_30d),
+    copyableAvgEdgePct30d: nullableNumberFromPg(row.copyable_avg_edge_pct_30d),
+    copyableEdgeLowerBoundPct30d: nullableNumberFromPg(row.copyable_edge_lower_bound_pct_30d),
+    realAttemptCount30d,
+    realFillCount30d: Number(score.realFillCount30d ?? row.real_fill_count_30d ?? 0),
+    realFillRatePct30d,
+    realAvgSlippageCents30d: nullableNumberFromPg(score.realAvgSlippageCents30d ?? row.real_avg_slippage_cents_30d),
+    flags: Array.isArray(score.flags) ? score.flags : [],
+    explanation: score.explanation || null,
+  };
+  const { eligible, reason } = shadowEligibility(candidate, criteria);
+  return {
+    ...candidate,
+    shadowEligible: eligible,
+    shadowReason: reason,
+  };
+}
+
+function compareShadowCandidates(a, b) {
+  const eligibleDelta = Number(b.shadowEligible) - Number(a.shadowEligible);
+  if (eligibleDelta) return eligibleDelta;
+  const expectedDelta = Number(b.expectedCopyProfitUsd || 0) - Number(a.expectedCopyProfitUsd || 0);
+  if (expectedDelta) return expectedDelta;
+  return Number(b.score || 0) - Number(a.score || 0);
+}
+
+function shadowEligibility(candidate, criteria = SHADOW_TRADER_CRITERIA) {
+  const reasons = [];
+  if (!candidate.scoreEligible) reasons.push(candidate.reason || 'copy_quality_rejected');
+  if (candidate.copyableResolvedMarkets30d < Number(criteria.minCopyableMarkets || 0)) reasons.push('too_few_copyable_markets');
+  if (candidate.copyableWinCount30d < Number(criteria.minCopyableWins || 0)) reasons.push('too_few_copyable_wins');
+  if (candidate.copyableDistinctEventCount30d < Number(criteria.minDistinctEvents || 0)) reasons.push('too_few_events');
+  if (!numberAbove(candidate.edgeAfterSlippagePct, Number(criteria.minEdgeLowerBoundPct ?? 0))) reasons.push('edge_not_positive');
+  if (!numberAtLeast(candidate.copyableProfitFactor30d, Number(criteria.minProfitFactor || 0))) reasons.push('profit_factor_low');
+  if (Number.isFinite(candidate.copyableTopWinSharePct30d) && candidate.copyableTopWinSharePct30d > Number(criteria.maxTopWinSharePct || 100)) {
+    reasons.push('top_win_concentrated');
+  }
+  if (
+    candidate.realAttemptCount30d >= Number(criteria.minFillRateAttempts || 20) &&
+    !numberAtLeast(candidate.realFillRatePct30d, Number(criteria.minFillRatePct || 0))
+  ) {
+    reasons.push('fill_rate_low');
+  }
+  return {
+    eligible: reasons.length === 0,
+    reason: reasons.length ? reasons.join(', ') : 'Selected by expected copy profit',
+  };
+}
+
 function isHybridV1Eligible(metrics, criteria = SHADOW_TRADER_CRITERIA) {
   return (
     Boolean(metrics.wallet) &&
@@ -2251,6 +2352,7 @@ function mapRealCopyQualityRow(row) {
     copyableMedianEntryCents30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_median_entry_cents_30d) : null,
     copyableAvgEntryPriceCents30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_avg_entry_price_cents_30d) : null,
     copyableResolvedMarkets30d: hasCopyableMetrics ? Number(payloadInput.copyable_resolved_markets_30d || 0) : null,
+    copyableDistinctEventCount30d: hasCopyableMetrics ? Number(payloadInput.copyable_distinct_event_count_30d || 0) : null,
     copyablePnlTradeCount30d: hasCopyableMetrics ? Number(payloadInput.copyable_pnl_trade_count_30d || 0) : null,
     copyableWinCount30d: hasCopyableMetrics ? Number(payloadInput.copyable_win_count_30d || 0) : null,
     copyableWinRatePct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_win_rate_pct_30d) : null,

@@ -521,6 +521,13 @@ button {
   align-items: start;
 }
 
+.shadowScoreGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.55fr);
+  gap: 14px;
+  align-items: start;
+}
+
 .compactHead {
   margin-bottom: 10px;
 }
@@ -559,6 +566,155 @@ button {
   grid-column: 2;
   grid-row: 1;
   justify-self: end;
+}
+
+.shadowRankedList {
+  max-height: 640px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.shadowCandidateRow {
+  width: 100%;
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(82px, auto);
+  gap: 8px 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  padding: 10px;
+  text-align: left;
+}
+
+.shadowCandidateRow.active {
+  border-color: #a9c1fb;
+  background: #f7faff;
+}
+
+.shadowRankBadge {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--soft);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font-weight: 850;
+}
+
+.shadowRankBadge.selected {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.shadowCandidateRow div {
+  min-width: 0;
+}
+
+.shadowCandidateRow strong,
+.shadowCandidateRow span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shadowCandidateRow span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.shadowCandidateNumbers {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.shadowCandidateNumbers small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.shadowCandidateRow .shadowProgress {
+  grid-column: 2 / span 2;
+}
+
+.shadowProgress {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--soft);
+  overflow: hidden;
+}
+
+.shadowProgress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.shadowDetail {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px;
+}
+
+.shadowDetailHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.shadowDetailHead code {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.shadowBars {
+  display: grid;
+  gap: 9px;
+}
+
+.shadowScoreBar {
+  display: grid;
+  gap: 5px;
+}
+
+.shadowScoreBar div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.shadowScoreBar span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.shadowScoreBar strong {
+  font-size: 0.9rem;
+}
+
+.shadowDetailStats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shadowFlags {
+  gap: 6px;
 }
 
 .positionRow {
@@ -2059,7 +2215,8 @@ button {
   }
 
   .shadowSummary,
-  .shadowColumns {
+  .shadowColumns,
+  .shadowScoreGrid {
     grid-template-columns: 1fr;
   }
 
@@ -2719,7 +2876,7 @@ button {
     z-index: 60;
     min-height: calc(60px + env(safe-area-inset-bottom));
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 6px;
     padding: 9px 12px calc(9px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--line);
@@ -2817,7 +2974,8 @@ button {
   }
 
   .shadowCardStats,
-  .shadowSummary {
+  .shadowSummary,
+  .shadowScoreGrid {
     grid-template-columns: 1fr;
   }
 

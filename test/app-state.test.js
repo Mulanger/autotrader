@@ -191,6 +191,24 @@ describe('app state', () => {
     expect(state.shadowTrader.feed).toHaveLength(1);
   });
 
+  it('exposes ranked ECP shadow candidates in dashboard snapshots', () => {
+    const state = createAppState();
+    const wallet = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    applyShadowTraderSnapshot(state, {
+      strategy: 'ecp_top20_v1',
+      rankedCandidates: [{ wallet, shadowRank: 1, expectedCopyProfitUsd: 1.25 }],
+      selectedWallets: {
+        [wallet]: { wallet, shadowRank: 1, expectedCopyProfitUsd: 1.25, status: 'active' },
+      },
+    });
+
+    const snapshot = snapshotState(state);
+
+    expect(snapshot.shadowTrader.strategy).toBe('ecp_top20_v1');
+    expect(snapshot.shadowTrader.rankedCandidates[0].wallet).toBe(wallet);
+    expect(snapshot.shadowTrader.selectedWalletCount).toBe(1);
+  });
+
   it('stops copying removed auto wallets without closing existing positions', () => {
     const state = createAppState();
     const wallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';

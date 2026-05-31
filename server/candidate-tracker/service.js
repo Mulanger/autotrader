@@ -779,15 +779,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         historyDays: CANDIDATE_ACCEPTED_HISTORY_DAYS,
       });
       applyCopyPoolSnapshot(state, result.snapshot);
-      const shadowSnapshot = await storage.evaluateShadowTrader?.({
-        windowDays: CANDIDATE_BACKFILL_DAYS,
-      });
-      if (shadowSnapshot) {
-        applyShadowTraderSnapshot(state, shadowSnapshot);
-        state.service.candidates.shadowTraderStatus = 'ready';
-        state.service.candidates.shadowTraderLastRunAt = shadowSnapshot.lastEvaluatedAt;
-        state.service.candidates.shadowTraderSelectedWalletCount = shadowSnapshot.selectedWalletCount;
-      }
+      await runShadowTraderEvaluation();
       if (scoreRealCopyQuality) await runRealCopyQualityScoring({ scope: 'active_copy_pool' });
       state.service.candidates.copyPoolStatus = 'ready';
       state.service.candidates.copyPoolLastRunAt = new Date().toISOString();
@@ -803,6 +795,41 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       return { ok: false, error: error.message };
     } finally {
       copyPoolRunning = false;
+    }
+  }
+
+  async function runShadowTraderEvaluation() {
+    if (!storage?.evaluateShadowTrader) {
+      state.service.candidates.shadowTraderStatus = 'unavailable';
+      return { ok: false, error: 'Shadow trader evaluation is unavailable' };
+    }
+    try {
+      state.service.candidates.shadowTraderStatus = 'evaluating';
+      broadcast();
+      const shadowSnapshot = await storage.evaluateShadowTrader({
+        windowDays: CANDIDATE_BACKFILL_DAYS,
+      });
+      if (shadowSnapshot) {
+        applyShadowTraderSnapshot(state, shadowSnapshot);
+        state.service.candidates.shadowTraderStatus = 'ready';
+        state.service.candidates.shadowTraderLastRunAt = shadowSnapshot.lastEvaluatedAt;
+        state.service.candidates.shadowTraderSelectedWalletCount = shadowSnapshot.selectedWalletCount;
+        state.service.candidates.lastError = null;
+        onStateChanged();
+        broadcast();
+      }
+      return {
+        ok: true,
+        strategy: shadowSnapshot?.strategy || null,
+        selectedWalletCount: shadowSnapshot?.selectedWalletCount || 0,
+        candidatesScoredCount: shadowSnapshot?.candidatesScoredCount || 0,
+        lastEvaluatedAt: shadowSnapshot?.lastEvaluatedAt || null,
+      };
+    } catch (error) {
+      state.service.candidates.shadowTraderStatus = 'error';
+      state.service.candidates.lastError = error.message;
+      broadcast();
+      return { ok: false, error: error.message };
     }
   }
 
@@ -933,6 +960,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runResolution,
     runMaintenance,
     runCopyPoolEvaluation,
+    runShadowTraderEvaluation,
     runRealCopyQualityScoring,
     getRealCopyQualityLeaderboard,
     getRealCopyQualityScore,

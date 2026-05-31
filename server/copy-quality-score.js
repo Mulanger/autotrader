@@ -73,9 +73,9 @@ export function scoreCopyTrader(row = {}) {
   const hardReject =
     profit <= 0 ||
     profitFactor < 1.25 ||
-    markets < 15 ||
-    wins < 15 ||
-    trades < 25 ||
+    markets < 20 ||
+    wins < 12 ||
+    trades < 20 ||
     medianEntry > 90 ||
     edgeAfterSlippagePct <= 0 ||
     topWinShare > 35 ||
@@ -262,9 +262,9 @@ function buildRejectReason(metrics) {
   const reasons = [];
   if (metrics.profit <= 0) reasons.push('negative_or_zero_profit');
   if (metrics.profitFactor < 1.25) reasons.push('profit_factor_below_1_25');
-  if (metrics.markets < 15) reasons.push('too_few_resolved_markets');
-  if (metrics.wins < 15) reasons.push('too_few_winning_markets');
-  if (metrics.trades < 25) reasons.push('too_few_pnl_trades');
+  if (metrics.markets < 20) reasons.push('too_few_resolved_markets');
+  if (metrics.wins < 12) reasons.push('too_few_winning_markets');
+  if (metrics.trades < 20) reasons.push('too_few_pnl_trades');
   if (metrics.medianEntry > 90) reasons.push('median_entry_above_90c');
   if (metrics.edgeAfterSlippagePct <= 0) reasons.push('negative_expected_copy_edge');
   if (metrics.topWinShare > 35) reasons.push('top_win_share_above_35_pct');

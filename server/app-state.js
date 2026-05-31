@@ -231,7 +231,7 @@ export function ingestTrade(state, trade, source = 'unknown', options = {}) {
   } else {
     event.shadowDecision = {
       action: 'ignored',
-      reason: 'Wallet is not selected by hybrid v1 shadow',
+      reason: 'Wallet is not selected by ECP top 20 shadow',
       at: nowIso(),
     };
   }
@@ -327,6 +327,7 @@ function serializeShadowTrader(shadowTrader) {
       copiedTraderMarketKeys: [...portfolio.copiedTraderMarketKeys],
     },
     feed: Array.isArray(shadow.feed) ? shadow.feed.slice(0, 200) : [],
+    rankedCandidates: Array.isArray(shadow.rankedCandidates) ? shadow.rankedCandidates.slice(0, 100) : [],
   };
 }
 
@@ -340,6 +341,7 @@ function shadowTraderView(shadowTrader) {
     status: shadow.status,
     criteria: shadow.criteria,
     selectedWallets: shadow.selectedWallets || {},
+    rankedCandidates: Array.isArray(shadow.rankedCandidates) ? shadow.rankedCandidates.slice(0, 100) : [],
     selectedWalletCount: Number(shadow.selectedWalletCount || 0),
     candidatesScoredCount: Number(shadow.candidatesScoredCount || 0),
     lastEvaluatedAt: shadow.lastEvaluatedAt || null,

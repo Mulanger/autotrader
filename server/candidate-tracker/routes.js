@@ -29,6 +29,19 @@ export function createCandidateRoutes(candidateTracker) {
     }
   });
 
+  router.post('/shadow/recalculate', async (_request, response) => {
+    try {
+      if (!candidateTracker?.runShadowTraderEvaluation) {
+        response.status(503).json({ ok: false, error: 'Shadow trader evaluation is unavailable' });
+        return;
+      }
+      const payload = await candidateTracker.runShadowTraderEvaluation();
+      response.status(payload?.ok === false ? 500 : 200).json(payload);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   return router;
 }
 

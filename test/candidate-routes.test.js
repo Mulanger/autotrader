@@ -71,4 +71,23 @@ describe('candidate routes', () => {
 
     expect(response.status).toBe(404);
   });
+
+  it('triggers shadow trader recalculation', async () => {
+    let called = false;
+    const base = await startApp({
+      getLeaderboard: async () => ({ ok: true, enabled: true, rows: [], summary: {} }),
+      getTrader: async () => null,
+      runShadowTraderEvaluation: async () => {
+        called = true;
+        return { ok: true, strategy: 'ecp_top20_v1', selectedWalletCount: 20 };
+      },
+    });
+
+    const response = await fetch(`${base}/api/candidates/shadow/recalculate`, { method: 'POST' });
+    const payload = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(called).toBe(true);
+    expect(payload.selectedWalletCount).toBe(20);
+  });
 });

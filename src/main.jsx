@@ -87,7 +87,7 @@ function DesktopApp() {
   const [tab, setTab] = React.useState('overview');
 
   React.useEffect(() => {
-    if (mode === 'real' && !['overview', 'following', 'real-traders', 'positions', 'orders'].includes(tab)) setTab('overview');
+    if (mode === 'real' && !['overview', 'following', 'real-traders', 'shadow', 'positions', 'orders'].includes(tab)) setTab('overview');
   }, [mode, tab]);
 
   const data = state || emptyState();
@@ -263,7 +263,7 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service, real }) {
-  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'real-traders', 'positions', 'orders'];
+  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'real-traders', 'shadow', 'positions', 'orders'];
   const runtime = mode === 'real' ? real?.runtime || null : null;
   const lastPollAt = mode === 'real' ? runtime?.lastPollAt || service?.real?.lastPollAt : service?.pollLastRunAt;
   const realLiveRequested = runtime
@@ -328,10 +328,11 @@ function DemoWorkspace({ data, metrics, tab }) {
   );
 }
 
-function RealWorkspace({ tab, setTab, setMode }) {
+function RealWorkspace({ data, tab, setTab, setMode }) {
   const realState = useRealState();
   const mobileLayout = useMobileLayoutQuery();
   const real = realState.real;
+  const shadowTrader = data?.shadowTrader;
 
   if (realState.error) {
     return (
@@ -355,6 +356,7 @@ function RealWorkspace({ tab, setTab, setMode }) {
   let desktopView = <RealOverview real={real} />;
   if (tab === 'following') desktopView = <RealFollowingView real={real} realState={realState} />;
   if (tab === 'real-traders') desktopView = <RealScoredTradersView realState={realState} />;
+  if (tab === 'shadow') desktopView = <ShadowTraderView shadowTrader={shadowTrader} />;
   if (tab === 'positions') desktopView = <RealPositionsView real={real} />;
   if (tab === 'orders') desktopView = <RealOrdersView real={real} />;
 
@@ -366,6 +368,7 @@ function RealWorkspace({ tab, setTab, setMode }) {
         tab={tab}
         setTab={setTab}
         setMode={setMode}
+        shadowTrader={shadowTrader}
         mobileLayout={mobileLayout}
       />
       <div className="realDesktopWorkspace">{desktopView}</div>
@@ -373,7 +376,7 @@ function RealWorkspace({ tab, setTab, setMode }) {
   );
 }
 
-function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayout }) {
+function RealMobileDashboard({ real, realState, tab, setTab, setMode, shadowTrader, mobileLayout }) {
   const [orderFilter, setOrderFilter] = React.useState('all');
   const runtime = real.runtime || {};
   const service = real.service || {};
@@ -415,6 +418,12 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayo
     mobileMain = (
       <div className="realMobileInlinePanel realMobileScoresPanel">
         <RealScoredTradersView realState={realState} />
+      </div>
+    );
+  } else if (mobileLayout && tab === 'shadow') {
+    mobileMain = (
+      <div className="realMobileInlinePanel realMobileShadowPanel">
+        <ShadowTraderView shadowTrader={shadowTrader} />
       </div>
     );
   }
@@ -593,6 +602,7 @@ function RealMobileBottomNav({ tab, setTab }) {
     { id: 'following', label: 'Follows', icon: Users },
     { id: 'positions', label: 'Positions', icon: Layers3 },
     { id: 'real-traders', label: 'Scores', icon: Trophy },
+    { id: 'shadow', label: 'Shadow', icon: Eye },
   ];
   return (
     <nav className="realMobileBottomNav" aria-label="Mobile real dashboard tabs">
@@ -1494,7 +1504,7 @@ function ShadowTraderCard({ shadowTrader }) {
       <div className="sectionHead">
         <div>
           <p className="eyebrow">Shadow trader</p>
-          <h2>Hybrid v1 paper copy</h2>
+          <h2>ECP top 20 paper copy</h2>
         </div>
         <Eye size={18} />
       </div>
@@ -1513,7 +1523,7 @@ function ShadowTraderCard({ shadowTrader }) {
         </div>
       </div>
       <div className="shadowStatus">
-        <span className="statusBadge neutral">{shadowTrader?.strategy || 'hybrid_gate_v1'}</span>
+        <span className="statusBadge neutral">{shadowTrader?.strategy || 'ecp_top20_v1'}</span>
         <small>Last evaluated {formatTimeAgo(shadowTrader?.lastEvaluatedAt)}</small>
       </div>
     </section>
@@ -1524,28 +1534,77 @@ function ShadowTraderView({ shadowTrader }) {
   const shadow = shadowTrader || emptyState().shadowTrader;
   const metrics = shadow.metrics || {};
   const selectedWallets = Object.values(shadow.selectedWallets || {})
-    .sort((a, b) => Number(b.distinctResolvedTradeCount || 0) - Number(a.distinctResolvedTradeCount || 0))
-    .slice(0, 10);
+    .sort((a, b) => Number(a.shadowRank || 999) - Number(b.shadowRank || 999));
+  const rankedCandidates = (shadow.rankedCandidates?.length ? shadow.rankedCandidates : selectedWallets)
+    .slice()
+    .sort((a, b) => Number(a.shadowRank || 999) - Number(b.shadowRank || 999))
+    .slice(0, 80);
+  const [activeWallet, setActiveWallet] = React.useState(null);
+  const [shadowRefreshPending, setShadowRefreshPending] = React.useState(false);
+  const [shadowRefreshError, setShadowRefreshError] = React.useState(null);
+  const activeCandidate = rankedCandidates.find((candidate) => candidate.wallet === activeWallet) || rankedCandidates[0] || null;
+  const maxEcp = Math.max(0.01, ...rankedCandidates.map((candidate) => Number(candidate.expectedCopyProfitUsd || 0)));
+  const avgSelectedEcp = selectedWallets.length
+    ? selectedWallets.reduce((sum, item) => sum + Number(item.expectedCopyProfitUsd || 0), 0) / selectedWallets.length
+    : null;
+
+  React.useEffect(() => {
+    if (!rankedCandidates.length) {
+      setActiveWallet(null);
+      return;
+    }
+    if (!rankedCandidates.some((candidate) => candidate.wallet === activeWallet)) {
+      setActiveWallet(rankedCandidates[0].wallet);
+    }
+  }, [activeWallet, rankedCandidates]);
+
+  const refreshShadow = React.useCallback(async () => {
+    setShadowRefreshPending(true);
+    setShadowRefreshError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/candidates/shadow/recalculate`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) throw new Error(payload.error || 'Shadow refresh failed');
+    } catch (error) {
+      setShadowRefreshError(error.message);
+    } finally {
+      setShadowRefreshPending(false);
+    }
+  }, []);
 
   return (
     <div className="shadowWorkspace">
       <section className="panel fullPanel shadowPanel">
         <div className="sectionHead">
           <div>
-            <p className="eyebrow">Hybrid v1 shadow</p>
-            <h2>Second demo trader</h2>
+            <p className="eyebrow">Shadow trader</p>
+            <h2>ECP top 20 paper copy</h2>
           </div>
-          <span className="statusBadge neutral">{shadow.status || 'starting'}</span>
+          <div className="sectionActions">
+            <span className="statusBadge neutral">{shadow.strategy || 'ecp_top20_v1'}</span>
+            <span className="statusBadge neutral">{shadow.status || 'starting'}</span>
+            <button type="button" className="iconButton" onClick={refreshShadow} disabled={shadowRefreshPending} aria-label="Recalculate shadow trader">
+              <RefreshCcw size={16} />
+            </button>
+          </div>
         </div>
+        {shadowRefreshError && <div className="candidateTradeMessage negative">{shadowRefreshError}</div>}
         <MetricStrip metrics={metrics} />
         <div className="shadowSummary">
           <div className="positionStat">
-            <span>Selected wallets</span>
+            <span>Auto-selected</span>
             <strong>{shadow.selectedWalletCount || 0}</strong>
           </div>
           <div className="positionStat">
             <span>Scored wallets</span>
             <strong>{shadow.candidatesScoredCount || 0}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Avg ECP</span>
+            <strong className={pnlTone(avgSelectedEcp)}>{formatNullableSignedCompactUsd(avgSelectedEcp)}</strong>
           </div>
           <div className="positionStat">
             <span>Open</span>
@@ -1557,31 +1616,68 @@ function ShadowTraderView({ shadowTrader }) {
           </div>
         </div>
         <div className="shadowCriteria">
-          <span>n &gt;= {shadow.criteria?.minResolved ?? 15}</span>
-          <span>win &gt;= {pct(shadow.criteria?.minWinRatePct ?? 70)}</span>
-          <span>mean edge &gt; 0</span>
-          <span>weighted edge &gt; 0</span>
+          <span>top {shadow.criteria?.selectionLimit ?? 20} by ECP</span>
+          <span>markets &gt;= {shadow.criteria?.minCopyableMarkets ?? 20}</span>
+          <span>events &gt;= {shadow.criteria?.minDistinctEvents ?? 6}</span>
+          <span>edge &gt; 0</span>
+          <span>PF &gt;= {formatPlainProfitFactor(shadow.criteria?.minProfitFactor ?? 1.3)}</span>
+          <span>fill &gt;= {formatNullablePct(shadow.criteria?.minFillRatePct ?? 50)} after {shadow.criteria?.minFillRateAttempts ?? 20} attempts</span>
+        </div>
+        <div className="shadowScoreGrid">
+          <section>
+            <div className="sectionHead compactHead">
+              <div>
+                <p className="eyebrow">Ranked candidates</p>
+                <h2>Auto-selection board</h2>
+              </div>
+            </div>
+            <div className="shadowWalletList shadowRankedList">
+              {rankedCandidates.map((wallet) => (
+                <ShadowCandidateRow
+                  key={wallet.wallet}
+                  wallet={wallet}
+                  active={activeCandidate?.wallet === wallet.wallet}
+                  maxEcp={maxEcp}
+                  onClick={() => setActiveWallet(wallet.wallet)}
+                />
+              ))}
+              {!rankedCandidates.length && <EmptyState title="No ranked candidates" text="Shadow scoring has not produced ranked candidates yet." />}
+            </div>
+          </section>
+          <section>
+            <div className="sectionHead compactHead">
+              <div>
+                <p className="eyebrow">Selected wallet</p>
+                <h2>{activeCandidate ? activeCandidate.displayName || activeCandidate.pseudonym || shortWallet(activeCandidate.wallet) : 'No selection'}</h2>
+              </div>
+            </div>
+            {activeCandidate ? (
+              <ShadowCandidateDetail candidate={activeCandidate} maxEcp={maxEcp} />
+            ) : (
+              <EmptyState title="No selected wallet" text="The shadow selector needs scored candidates before it can display details." />
+            )}
+          </section>
         </div>
         <div className="shadowColumns">
           <section>
             <div className="sectionHead compactHead">
               <div>
                 <p className="eyebrow">Positions</p>
-                <h2>Hybrid v1 copied trades</h2>
+                <h2>Paper copied trades</h2>
               </div>
             </div>
             <PositionList
               positions={[...(shadow.openPositions || []), ...(shadow.closedPositions || [])].slice(0, 40)}
               expanded
               emptyTitle="No shadow positions yet"
-              emptyText="Hybrid v1 will paper-copy future selected-wallet BUY trades here."
+              emptyText="Selected shadow wallets will paper-copy future live BUY trades here."
             />
           </section>
           <section>
             <div className="sectionHead compactHead">
               <div>
-                <p className="eyebrow">Selected wallets</p>
-                <h2>Current gate passers</h2>
+                <p className="eyebrow">Current top 20</p>
+                <h2>Shadow follows</h2>
               </div>
             </div>
             <div className="shadowWalletList">
@@ -1589,11 +1685,11 @@ function ShadowTraderView({ shadowTrader }) {
                 <div className="shadowWalletRow" key={wallet.wallet}>
                   <strong>{wallet.displayName || wallet.pseudonym || shortWallet(wallet.wallet)}</strong>
                   <span>{shortWallet(wallet.wallet)}</span>
-                  <b>{Number(wallet.winRatePct || 0).toFixed(1)}%</b>
-                  <small>{Number(wallet.distinctResolvedTradeCount || 0)} resolved</small>
+                  <b>{formatNullableSignedCompactUsd(wallet.expectedCopyProfitUsd)}</b>
+                  <small>{wallet.shadowReason || wallet.reason}</small>
                 </div>
               ))}
-              {!selectedWallets.length && <EmptyState title="No selected wallets" text="Hybrid v1 has not selected any wallets yet." />}
+              {!selectedWallets.length && <EmptyState title="No selected wallets" text="No wallet currently passes the ECP top-20 shadow criteria." />}
             </div>
           </section>
         </div>
@@ -1602,11 +1698,86 @@ function ShadowTraderView({ shadowTrader }) {
         events={shadow.feed || []}
         shadowMode
         eyebrow="Shadow tape"
-        title="Hybrid v1 trades and copy decisions"
-        emptyTitle="Waiting for hybrid v1 trades"
-        emptyText="Trades from selected hybrid v1 wallets will appear here."
+        title="ECP top 20 trades and copy decisions"
+        emptyTitle="Waiting for shadow trades"
+        emptyText="Trades from selected ECP top-20 wallets will appear here."
       />
     </div>
+  );
+}
+
+function ShadowCandidateRow({ wallet, active, maxEcp, onClick }) {
+  const selected = Boolean(wallet.shadowEligible && Number(wallet.shadowRank || 999) <= 20);
+  return (
+    <button type="button" className={`shadowCandidateRow ${active ? 'active' : ''}`} onClick={onClick}>
+      <span className={`shadowRankBadge ${selected ? 'selected' : ''}`}>{wallet.shadowRank || '-'}</span>
+      <div>
+        <strong>{wallet.displayName || wallet.pseudonym || shortWallet(wallet.wallet)}</strong>
+        <span>{shortWallet(wallet.wallet)} - {selected ? 'selected' : wallet.shadowReason || wallet.reason}</span>
+      </div>
+      <div className="shadowCandidateNumbers">
+        <b className={pnlTone(wallet.expectedCopyProfitUsd)}>{formatNullableSignedCompactUsd(wallet.expectedCopyProfitUsd)}</b>
+        <small>{Math.round(wallet.score || 0)} score</small>
+      </div>
+      <ShadowProgress value={Number(wallet.expectedCopyProfitUsd || 0) / maxEcp} />
+    </button>
+  );
+}
+
+function ShadowCandidateDetail({ candidate, maxEcp }) {
+  const fillProgress = Number.isFinite(Number(candidate.realFillRatePct30d))
+    ? Number(candidate.realFillRatePct30d) / 100
+    : Number(candidate.fillFactor || 0);
+  return (
+    <div className="shadowDetail">
+      <div className="shadowDetailHead">
+        <span className={`statusBadge ${candidate.shadowEligible ? 'positive' : 'neutral'}`}>
+          {candidate.shadowEligible ? 'shadow selected' : 'not selected'}
+        </span>
+        <code>{candidate.wallet}</code>
+      </div>
+      <div className="shadowBars">
+        <ShadowScoreBar label="Score" value={`${Math.round(candidate.score || 0)}/100`} progress={Number(candidate.score || 0) / 100} />
+        <ShadowScoreBar label="ECP" value={`${formatNullableSignedCompactUsd(candidate.expectedCopyProfitUsd)}/trade`} progress={Number(candidate.expectedCopyProfitUsd || 0) / maxEcp} tone={pnlTone(candidate.expectedCopyProfitUsd)} />
+        <ShadowScoreBar label="Edge" value={formatNullableSignedPct(candidate.edgeAfterSlippagePct)} progress={Math.max(0, Number(candidate.edgeAfterSlippagePct || 0)) / 50} tone={pnlTone(candidate.edgeAfterSlippagePct)} />
+        <ShadowScoreBar label="Fill" value={formatNullablePct(candidate.realFillRatePct30d ?? Number(candidate.fillFactor || 0) * 100)} progress={fillProgress} />
+        <ShadowScoreBar label="Sample" value={`${candidate.copyableResolvedMarkets30d || 0} markets`} progress={Number(candidate.copyableResolvedMarkets30d || 0) / 80} />
+        <ShadowScoreBar label="Risk" value={formatDrawdownUsd(candidate.copyableMaxDrawdownUsd30d)} progress={1 - Math.min(1, Number(candidate.copyableDrawdownInStakes || 0) / 8)} />
+      </div>
+      <div className="shadowDetailStats">
+        <RealMiniStat label="PF / ROI" value={`${formatPlainProfitFactor(candidate.copyableProfitFactor30d)} / ${formatNullableSignedPct(candidate.copyableRoiPct30d)}`} />
+        <RealMiniStat label="Win / Top" value={`${formatNullablePct(candidate.copyableWinRatePct30d)} / ${formatNullablePct(candidate.copyableTopWinSharePct30d)}`} />
+        <RealMiniStat label="Events" value={candidate.copyableDistinctEventCount30d || 0} />
+        <RealMiniStat label="Median" value={formatNullableCents(candidate.copyableMedianEntryCents30d)} />
+        <RealMiniStat label="Slip" value={formatNullableCents(candidate.realAvgSlippageCents30d)} />
+        <RealMiniStat label="Attempts" value={`${candidate.realFillCount30d || 0}/${candidate.realAttemptCount30d || 0}`} />
+      </div>
+      <div className="qualityFlags shadowFlags">
+        {(candidate.flags || []).slice(0, 5).map((flag) => <span key={flag}>{flagLabel(flag)}</span>)}
+        {candidate.shadowReason && <span>{flagLabel(candidate.shadowReason)}</span>}
+      </div>
+    </div>
+  );
+}
+
+function ShadowScoreBar({ label, value, progress, tone }) {
+  return (
+    <div className="shadowScoreBar">
+      <div>
+        <span>{label}</span>
+        <strong className={tone || ''}>{value}</strong>
+      </div>
+      <ShadowProgress value={progress} />
+    </div>
+  );
+}
+
+function ShadowProgress({ value }) {
+  const progress = Math.max(0, Math.min(1, Number(value) || 0));
+  return (
+    <span className="shadowProgress" aria-hidden="true">
+      <i style={{ width: `${Math.round(progress * 100)}%` }} />
+    </span>
   );
 }
 
@@ -2613,17 +2784,22 @@ function emptyState() {
     },
     shadowTrader: {
       enabled: true,
-      strategy: 'hybrid_gate_v1',
-      label: 'Hybrid v1 shadow',
+      strategy: 'ecp_top20_v1',
+      label: 'ECP top 20 shadow',
       status: 'starting',
       criteria: {
-        minResolved: 15,
-        minWinRatePct: 70,
-        maxAvgEntryPriceCents: 75,
-        minMeanEdge: 0,
-        minUsdWeightedEdge: 0,
+        selectionLimit: 20,
+        minCopyableMarkets: 20,
+        minCopyableWins: 12,
+        minDistinctEvents: 6,
+        minEdgeLowerBoundPct: 0,
+        minProfitFactor: 1.3,
+        maxTopWinSharePct: 35,
+        minFillRatePct: 50,
+        minFillRateAttempts: 20,
       },
       selectedWallets: {},
+      rankedCandidates: [],
       selectedWalletCount: 0,
       candidatesScoredCount: 0,
       lastEvaluatedAt: null,
@@ -2719,6 +2895,7 @@ function formatAep(value) {
 }
 
 function formatNullableCents(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return `${number.toFixed(1)}c`;
@@ -2738,18 +2915,21 @@ function formatProfitFactor(metrics = {}) {
 }
 
 function formatPlainProfitFactor(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return `${number.toFixed(number >= 10 ? 1 : 2)}x`;
 }
 
 function formatNullablePct(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return `${number.toFixed(number >= 99 ? 0 : 1)}%`;
 }
 
 function formatNullableSignedPct(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   const prefix = number >= 0 ? '+' : '';
@@ -2757,18 +2937,21 @@ function formatNullableSignedPct(value) {
 }
 
 function formatNullableCompactUsd(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return compactUsd(number);
 }
 
 function formatNullableSignedCompactUsd(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return compactSignedUsd(number);
 }
 
 function formatNullableInteger(value) {
+  if (value === null || value === undefined || value === '') return EMPTY_METRIC;
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(number);

@@ -1,25 +1,30 @@
 import { createDemoState } from './demo-engine.js';
 import { nowIso } from './format.js';
 
-export const SHADOW_TRADER_STRATEGY = 'hybrid_gate_v1';
+export const SHADOW_TRADER_STRATEGY = 'ecp_top20_v1';
 
 export const SHADOW_TRADER_CRITERIA = {
-  minResolved: 15,
-  minWinRatePct: 70,
-  maxAvgEntryPriceCents: 75,
-  minMeanEdge: 0,
-  minUsdWeightedEdge: 0,
-  edgeComparison: 'gt',
+  selectionLimit: 20,
+  rankedCandidateLimit: 80,
+  minCopyableMarkets: 20,
+  minCopyableWins: 12,
+  minDistinctEvents: 6,
+  minEdgeLowerBoundPct: 0,
+  minProfitFactor: 1.3,
+  maxTopWinSharePct: 35,
+  minFillRatePct: 50,
+  minFillRateAttempts: 20,
 };
 
 export function createShadowTraderState(overrides = {}) {
   return {
     enabled: true,
     strategy: SHADOW_TRADER_STRATEGY,
-    label: 'Hybrid v1 shadow',
+    label: 'ECP top 20 shadow',
     status: 'starting',
     criteria: SHADOW_TRADER_CRITERIA,
     selectedWallets: {},
+    rankedCandidates: [],
     selectedWalletCount: 0,
     candidatesScoredCount: 0,
     lastEvaluatedAt: null,
@@ -40,8 +45,11 @@ export function ensureShadowTraderState(state) {
   state.shadowTrader.selectedWalletCount = Object.keys(state.shadowTrader.selectedWallets).length;
   state.shadowTrader.criteria = state.shadowTrader.criteria || SHADOW_TRADER_CRITERIA;
   state.shadowTrader.strategy = state.shadowTrader.strategy || SHADOW_TRADER_STRATEGY;
-  state.shadowTrader.label = state.shadowTrader.label || 'Hybrid v1 shadow';
+  state.shadowTrader.label = state.shadowTrader.label || 'ECP top 20 shadow';
   state.shadowTrader.feed = Array.isArray(state.shadowTrader.feed) ? state.shadowTrader.feed : [];
+  state.shadowTrader.rankedCandidates = Array.isArray(state.shadowTrader.rankedCandidates)
+    ? state.shadowTrader.rankedCandidates
+    : [];
   return state.shadowTrader;
 }
 
@@ -64,9 +72,10 @@ export function applyShadowTraderSnapshot(state, snapshot = {}) {
     ...snapshot,
     enabled: snapshot.enabled ?? current.enabled ?? true,
     strategy: snapshot.strategy || current.strategy || SHADOW_TRADER_STRATEGY,
-    label: snapshot.label || current.label || 'Hybrid v1 shadow',
+    label: snapshot.label || current.label || 'ECP top 20 shadow',
     criteria: snapshot.criteria || current.criteria || SHADOW_TRADER_CRITERIA,
     selectedWallets,
+    rankedCandidates: Array.isArray(snapshot.rankedCandidates) ? snapshot.rankedCandidates : current.rankedCandidates || [],
     selectedWalletCount: Object.keys(selectedWallets).length,
     candidatesScoredCount: Number(snapshot.candidatesScoredCount || 0),
     lastEvaluatedAt: snapshot.lastEvaluatedAt || nowIso(),
