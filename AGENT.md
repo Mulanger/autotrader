@@ -125,6 +125,12 @@ Production/Railway:
 - `DEMO_STARTING_CAPITAL_USD`: demo portfolio starting cash. Defaults to `1000`.
 - `DEMO_MAX_ENTRY_PRICE_CENTS`: maximum BUY entry price to copy. Defaults to `75`.
 - `CANDIDATE_TRACKER_ENABLED`: enables the isolated candidate tracker. Defaults to `false`.
+- `CANDIDATE_MAINTENANCE_ENABLED`: enables low-cost wallet-scoped candidate maintenance while global discovery stays off. Defaults to `false`.
+- `CANDIDATE_MAINTENANCE_INTERVAL_MS`: lightweight wallet refresh interval. Defaults to `86400000`.
+- `CANDIDATE_MAINTENANCE_SCORING_INTERVAL_MS`: heavier Real copy-quality scoring interval. Defaults to `432000000`.
+- `CANDIDATE_MAINTENANCE_LOOKBACK_HOURS`: overlap window for wallet-scoped maintenance refreshes. Defaults to `48`.
+- `CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS`: maximum catch-up window when a completed refresh is missing or stale. Defaults to `96`.
+- `CANDIDATE_MAINTENANCE_SCOPE`: wallet scope for maintenance and scoring. Defaults to `active_scored`.
 - `CANDIDATE_MIN_USD`: candidate tracker minimum trade notional. Defaults to `1000`.
 - `CANDIDATE_MAX_USD`: candidate tracker exclusive maximum trade notional. Defaults to `10000`.
 - `CANDIDATE_BACKFILL_DAYS`: first-seen candidate wallet history window. Defaults to `30`.

@@ -266,7 +266,11 @@ describe('candidate tracker service', () => {
     expect(calls.resolutionLimits).toEqual([25]);
     expect(calls.copyPoolRuns).toBe(1);
     expect(calls.scoringScopes).toEqual(['active_scored']);
-    expect(calls.serviceState[0][0]).toBe('maintenance:last_run');
+    expect(calls.serviceState.map(([key]) => key)).toEqual([
+      'maintenance:last_fetch',
+      'maintenance:last_score',
+      'maintenance:last_run',
+    ]);
     expect(summary.status).toBe('partial');
     expect(summary.insertedTradeCount).toBe(1);
     expect(summary.errorCount).toBe(1);
@@ -316,7 +320,7 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.maintenanceLastInsertedTradeCount).toBe(4);
   });
 
-  it('runs startup catch-up when the last completed maintenance covered a shorter window', async () => {
+  it('runs fetch catch-up when the last completed maintenance fetch is stale', async () => {
     const state = createAppState();
     const calls = {
       fetches: [],
@@ -330,13 +334,25 @@ describe('candidate tracker service', () => {
         summary: { total: 1, scored: 1, eligible: 1 },
         rows: [],
       }),
-      getServiceState: async () => ({
-        payload: {
-          status: 'done',
-          finishedAt: new Date().toISOString(),
-          lookbackHours: 48,
-        },
-      }),
+      getServiceState: async (key) => {
+        if (key === 'maintenance:last_score') {
+          return {
+            payload: {
+              status: 'done',
+              scoringStatus: 'done',
+              scoredAt: new Date().toISOString(),
+              scoredWalletCount: 1,
+            },
+          };
+        }
+        return {
+          payload: {
+            status: 'done',
+            finishedAt: new Date(Date.now() - 96 * 60 * 60_000).toISOString(),
+            lookbackHours: 48,
+          },
+        };
+      },
       saveServiceState: async (...args) => calls.serviceState.push(args),
       getMaintenanceWallets: async () => ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
       withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
@@ -372,11 +388,183 @@ describe('candidate tracker service', () => {
       filterAmount: 1000,
     });
     expect(calls.upserts).toHaveLength(1);
-    expect(calls.serviceState[0][1]).toMatchObject({
+    expect(calls.serviceState[0]).toEqual([
+      'maintenance:last_fetch',
+      expect.objectContaining({
+        status: 'done',
+        lookbackHours: 96,
+        maxPagesPerWallet: 4,
+        insertedTradeCount: 1,
+        scoringStatus: 'skipped',
+      }),
+    ]);
+    expect(calls.serviceState.at(-1)[1]).toMatchObject({
       status: 'done',
       lookbackHours: 96,
       maxPagesPerWallet: 4,
       insertedTradeCount: 1,
+      scoringStatus: 'skipped',
+    });
+  });
+
+  it('runs daily maintenance fetch without scoring while scoring interval is fresh', async () => {
+    const state = createAppState();
+    const calls = {
+      fetches: [],
+      upserts: [],
+      serviceState: [],
+      copyPoolRuns: 0,
+      scoringRuns: 0,
+    };
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: { total: 1, scored: 1, eligible: 1 },
+        rows: [],
+      }),
+      getServiceState: async (key) => {
+        if (key === 'maintenance:last_score') {
+          return {
+            payload: {
+              status: 'done',
+              scoringStatus: 'done',
+              scoredAt: new Date().toISOString(),
+              scoredWalletCount: 1,
+            },
+          };
+        }
+        return {
+          payload: {
+            status: 'done',
+            finishedAt: new Date(Date.now() - 25 * 60 * 60_000).toISOString(),
+            lookbackHours: 48,
+          },
+        };
+      },
+      saveServiceState: async (...args) => calls.serviceState.push(args),
+      getMaintenanceWallets: async () => ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertTrade: async (trade) => {
+        calls.upserts.push(trade);
+        return { insertedTrade: true };
+      },
+      getOpenTrades: async () => [],
+      evaluateCopyPool: async () => {
+        calls.copyPoolRuns += 1;
+        return { changed: [], snapshot: {} };
+      },
+      recalculateRealCopyQuality: async () => {
+        calls.scoringRuns += 1;
+        return { ok: true, scored: 1, summary: { total: 1, scored: 1 } };
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: true,
+      maintenanceRunOnStart: false,
+      maintenanceIntervalMs: 24 * 60 * 60_000,
+      maintenanceScoringIntervalMs: 5 * 24 * 60 * 60_000,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        if (params.offset > 0) return [];
+        return [rawTrade(1, { timestamp: nowSeconds, size: 3_000, price: 0.5 })];
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runMaintenance();
+    await tracker.close();
+
+    expect(calls.fetches).toHaveLength(2);
+    expect(calls.upserts).toHaveLength(1);
+    expect(calls.copyPoolRuns).toBe(0);
+    expect(calls.scoringRuns).toBe(0);
+    expect(calls.serviceState.map(([key]) => key)).toEqual(['maintenance:last_fetch', 'maintenance:last_run']);
+    expect(summary).toMatchObject({
+      status: 'done',
+      fetchStatus: 'done',
+      scoringStatus: 'skipped',
+      scoredWalletCount: 1,
+    });
+    expect(state.service.candidates.maintenanceLastScoredWalletCount).toBe(1);
+  });
+
+  it('runs scoring without fetching when only the scoring interval has elapsed', async () => {
+    const state = createAppState();
+    const calls = {
+      fetches: 0,
+      serviceState: [],
+      copyPoolRuns: 0,
+      scoringRuns: 0,
+    };
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: { total: 1, scored: 1, eligible: 1 },
+        rows: [],
+      }),
+      getServiceState: async (key) => {
+        if (key === 'maintenance:last_score') {
+          return {
+            payload: {
+              status: 'done',
+              scoringStatus: 'done',
+              scoredAt: new Date(Date.now() - 6 * 24 * 60 * 60_000).toISOString(),
+              scoredWalletCount: 1,
+            },
+          };
+        }
+        return {
+          payload: {
+            status: 'done',
+            finishedAt: new Date().toISOString(),
+            lookbackHours: 48,
+          },
+        };
+      },
+      saveServiceState: async (...args) => calls.serviceState.push(args),
+      getMaintenanceWallets: async () => {
+        throw new Error('fresh fetch should not load wallets');
+      },
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      getOpenTrades: async () => [],
+      evaluateCopyPool: async () => {
+        calls.copyPoolRuns += 1;
+        return { changed: [], snapshot: {} };
+      },
+      recalculateRealCopyQuality: async () => {
+        calls.scoringRuns += 1;
+        return { ok: true, scored: 1, summary: { total: 1, scored: 1 } };
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: true,
+      maintenanceRunOnStart: false,
+      maintenanceIntervalMs: 24 * 60 * 60_000,
+      maintenanceScoringIntervalMs: 5 * 24 * 60 * 60_000,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => {
+        calls.fetches += 1;
+        throw new Error('fresh fetch should not request trades');
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runMaintenance();
+    await tracker.close();
+
+    expect(calls.fetches).toBe(0);
+    expect(calls.copyPoolRuns).toBe(1);
+    expect(calls.scoringRuns).toBe(1);
+    expect(calls.serviceState.map(([key]) => key)).toEqual(['maintenance:last_score', 'maintenance:last_run']);
+    expect(summary).toMatchObject({
+      status: 'done',
+      fetchStatus: 'skipped',
+      scoringStatus: 'done',
+      scoredWalletCount: 1,
     });
   });
 
