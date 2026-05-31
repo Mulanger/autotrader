@@ -221,6 +221,30 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     broadcast();
   }
 
+  async function ensureStorageAvailable() {
+    if (storage) return true;
+    try {
+      storage = await storageFactory();
+      state.service.candidates.storageStatus = 'ready';
+      if (!enabled) state.service.candidates.status = 'disabled';
+      if (realCopyQualityActive && state.service.realCopyQuality.status === 'disabled') {
+        state.service.realCopyQuality.status = 'cached';
+      }
+      state.service.candidates.lastError = null;
+      state.service.realCopyQuality.lastError = null;
+      return true;
+    } catch (error) {
+      storage = null;
+      state.service.candidates.storageStatus = 'unavailable';
+      state.service.candidates.maintenanceStatus = maintenanceEnabled ? 'unavailable' : state.service.candidates.maintenanceStatus;
+      state.service.candidates.lastError = error.message;
+      state.service.realCopyQuality.status = realCopyQualityActive ? 'disabled' : state.service.realCopyQuality.status;
+      state.service.realCopyQuality.lastError = error.message;
+      broadcast();
+      return false;
+    }
+  }
+
   async function hydrateMaintenanceState() {
     if (!storage?.getServiceState) return;
     const [lastRun, lastFetch, lastScoring] = await Promise.all([
@@ -238,14 +262,13 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       state.service.candidates.maintenanceStatus = 'disabled';
       return;
     }
-    if (!storage) {
-      state.service.candidates.maintenanceStatus = 'unavailable';
-      return;
-    }
+    if (!storage) await ensureStorageAvailable();
 
-    await hydrateMaintenanceState();
-    state.service.candidates.maintenanceStatus = 'ready';
-    if (maintenanceRunOnStart) await runMaintenance();
+    if (storage) {
+      await hydrateMaintenanceState();
+      state.service.candidates.maintenanceStatus = 'ready';
+      if (maintenanceRunOnStart) await runMaintenance();
+    }
 
     if (!maintenanceTimer) {
       maintenanceTimer = setInterval(runMaintenance, Math.max(60_000, maintenanceIntervalMs));
@@ -492,7 +515,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   }
 
   async function runMaintenance({ force = false, forceScoring = false } = {}) {
-    if (!storage || !maintenanceEnabled || maintenanceRunning) return null;
+    if (!maintenanceEnabled || maintenanceRunning) return null;
+    if (!storage && !(await ensureStorageAvailable())) return null;
     maintenanceRunning = true;
     try {
       state.service.candidates.maintenanceStatus = 'running';
@@ -799,6 +823,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   }
 
   async function runShadowTraderEvaluation() {
+    if (!storage && !(await ensureStorageAvailable())) {
+      return { ok: false, error: state.service.candidates.lastError || 'Candidate storage is unavailable' };
+    }
     if (!storage?.evaluateShadowTrader) {
       state.service.candidates.shadowTraderStatus = 'unavailable';
       return { ok: false, error: 'Shadow trader evaluation is unavailable' };
@@ -834,7 +861,10 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   }
 
   async function runRealCopyQualityScoring({ scope = 'active_copy_pool', wallet = null } = {}) {
-    if (!storage || realCopyQualityRunning) return state.service.realCopyQuality;
+    if (realCopyQualityRunning) return state.service.realCopyQuality;
+    if (!storage && !(await ensureStorageAvailable())) {
+      return { ok: false, error: state.service.realCopyQuality.lastError || 'Candidate storage is unavailable' };
+    }
     realCopyQualityRunning = true;
     try {
       state.service.realCopyQuality.status = 'scoring';
