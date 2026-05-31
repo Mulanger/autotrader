@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   Clock3,
+  Copy,
   Cpu,
   Database,
   Eye,
@@ -1247,22 +1248,63 @@ function RealFollowList({ follows, compact = false, onRemove, pendingWallet }) {
 function RealFollowRow({ follow, compact, onRemove, pending }) {
   const metrics = follow.metrics || {};
   const active = follow.status === 'active';
+  const wallet = follow.wallet || '';
+  const rawDisplay = follow.displayName || follow.pseudonym || '';
+  const display = rawDisplay && !String(rawDisplay).toLowerCase().startsWith('0x') ? rawDisplay : shortWallet(wallet);
+  const [copied, setCopied] = React.useState(false);
+  const stats = [
+    { label: 'P/L', value: signedUsd(metrics.totalPnlUsd || 0), tone: pnlTone(metrics.totalPnlUsd) },
+    { label: 'Fill rate', value: formatNullablePct(metrics.fillRatePct) },
+    { label: 'Attempts', value: `${metrics.wouldFillCount || 0}/${metrics.attemptedCount || 0}` },
+    { label: 'Avg slip', value: formatNullableCents(metrics.avgSlippageCents), tone: pnlTone(-Number(metrics.avgSlippageCents || 0)) },
+    { label: 'Open', value: usd(metrics.openValueUsd || 0) },
+  ];
+
+  React.useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  const copyWallet = React.useCallback(async () => {
+    if (!wallet || !navigator.clipboard?.writeText) return;
+    try {
+      await navigator.clipboard.writeText(wallet);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  }, [wallet]);
+
   return (
     <article className="realFollowRow">
       <div className="avatar">
         {follow.profileImage ? <img src={follow.profileImage} alt="" /> : <Cpu size={17} />}
       </div>
       <div className="realFollowIdentity">
-        <strong>{follow.displayName || follow.pseudonym || shortWallet(follow.wallet)}</strong>
-        <span>{shortWallet(follow.wallet)} - {active ? `added ${formatTimeAgo(follow.addedAt)}` : `removed ${formatTimeAgo(follow.removedAt)}`}</span>
+        <strong>{display}</strong>
+        {wallet && (
+          <div className="realFollowWalletLine">
+            <code>{wallet}</code>
+            <button
+              type="button"
+              className="realWalletCopyButton"
+              onClick={copyWallet}
+              aria-label={copied ? 'Wallet copied' : 'Copy wallet address'}
+              title={copied ? 'Copied' : 'Copy wallet address'}
+            >
+              <Copy size={13} />
+            </button>
+          </div>
+        )}
+        <span className="realFollowMeta">{active ? `added ${formatTimeAgo(follow.addedAt)}` : `removed ${formatTimeAgo(follow.removedAt)}`}</span>
       </div>
       {!compact && (
         <>
-          <RealMiniStat label="P/L" value={signedUsd(metrics.totalPnlUsd || 0)} tone={pnlTone(metrics.totalPnlUsd)} />
-          <RealMiniStat label="Fill rate" value={formatNullablePct(metrics.fillRatePct)} />
-          <RealMiniStat label="Attempts" value={`${metrics.wouldFillCount || 0}/${metrics.attemptedCount || 0}`} />
-          <RealMiniStat label="Avg slip" value={formatNullableCents(metrics.avgSlippageCents)} tone={pnlTone(-Number(metrics.avgSlippageCents || 0))} />
-          <RealMiniStat label="Open" value={usd(metrics.openValueUsd || 0)} />
+          {stats.map((stat) => <RealMiniStat key={stat.label} {...stat} />)}
+          <div className="realFollowMobileStats" aria-label={`${display} follow stats`}>
+            {stats.map((stat) => <RealMiniStat key={`mobile-${stat.label}`} {...stat} />)}
+          </div>
         </>
       )}
       {active && onRemove && (

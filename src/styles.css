@@ -1788,6 +1788,10 @@ button {
   grid-template-columns: 34px minmax(0, 1fr);
 }
 
+.realFollowMobileStats {
+  display: none;
+}
+
 .realOrderRow {
   grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 0.9fr) minmax(170px, 0.55fr);
 }
@@ -1832,6 +1836,41 @@ button {
   font-size: 0.78rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.realFollowWalletLine {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.realFollowWalletLine code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 0.73rem;
+  line-height: 1.25;
+}
+
+.realWalletCopyButton {
+  flex: 0 0 auto;
+  width: 26px;
+  min-height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+.realWalletCopyButton:hover {
+  color: var(--accent);
+  border-color: #b8cdfd;
 }
 
 .realOrderStats {
@@ -2911,6 +2950,44 @@ button {
     grid-column: 2;
     justify-self: start;
     justify-items: start;
+  }
+
+  .realFollowIdentity strong {
+    overflow-wrap: anywhere;
+  }
+
+  .realFollowWalletLine {
+    align-items: flex-start;
+  }
+
+  .realFollowWalletLine code {
+    white-space: normal;
+  }
+
+  .realFollowRow > .realMiniStat {
+    display: none !important;
+  }
+
+  .realFollowMobileStats {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .realFollowMobileStats .realMiniStat {
+    grid-column: auto;
+    display: grid !important;
+    justify-self: stretch;
+    justify-items: start;
+    padding: 8px;
+    border-radius: 8px;
+    background: #f7f9fc;
+  }
+
+  .realFollowMobileStats .realMiniStat:last-child {
+    grid-column: 1 / -1;
   }
 
   .realOrderStatus .statusBadge {
