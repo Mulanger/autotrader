@@ -90,6 +90,16 @@ describe('copy quality scoring', () => {
     expect(score.fillFactor).toBeCloseTo(0.5, 4);
   });
 
+  it('keeps missing fill-rate samples neutral instead of treating null as zero', () => {
+    const score = scoreCopyTrader(baseRow({
+      realAttemptCount30d: 0,
+      realFillRatePct30d: null,
+    }));
+
+    expect(score.realFillRatePct30d).toBeNull();
+    expect(score.fillFactor).toBeCloseTo(0.7, 4);
+  });
+
   it('rejects copyable subsets with negative expected copy edge', () => {
     const score = scoreCopyTrader(baseRow({
       copyableEdgeLowerBoundPct30d: -2,

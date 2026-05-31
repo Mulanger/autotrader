@@ -331,6 +331,7 @@ function numberOrFallback(value, fallback) {
 
 function firstFinite(...values) {
   for (const value of values) {
+    if (value === null || value === undefined || value === '') continue;
     const number = Number(value);
     if (Number.isFinite(number)) return number;
   }
