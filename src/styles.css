@@ -2049,7 +2049,7 @@ button {
     display: block;
     min-height: 100svh;
     background: #f6f8fb;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .realMode .sidebar,
@@ -2061,13 +2061,13 @@ button {
     min-height: 100svh;
     padding: 0;
     background: linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #f4f7fb 100%);
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .realMode .realWorkspaceRoot,
   .realMode .realDesktopWorkspace {
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .realMode .realDesktopWorkspace {
@@ -2080,7 +2080,7 @@ button {
     grid-template-rows: auto auto 1fr;
     min-height: 100svh;
     min-width: 0;
-    overflow-x: hidden;
+    overflow-x: clip;
   }
 
   .realMobileTop {
