@@ -2613,6 +2613,21 @@ button {
     grid-column: 1 / -1;
   }
 
+  .realMobileInlinePanel .realQualityToolbar .toggleLine {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    min-height: 34px;
+  }
+
+  .realMobileInlinePanel .realQualityToolbar .toggleLine input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+  }
+
   .realMobileInlinePanel .positionSummary {
     gap: 8px;
   }
@@ -2823,6 +2838,19 @@ button {
 
   .realQualityRow .candidateIdentity {
     grid-column: 2;
+  }
+
+  .realQualityRow .candidateNameLine {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .realQualityRow .qualityExplanation {
+    max-width: 100%;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
   }
 
   .candidateMetric,
