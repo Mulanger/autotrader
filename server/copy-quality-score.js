@@ -1,32 +1,74 @@
 export function scoreCopyTrader(row = {}) {
-  const profit = numberOrFallback(row.profit_usd_30d ?? row.profitUsd30d ?? row.profit_usd, 0);
-  const roi = numberOrFallback(row.roi_pct_30d ?? row.roiPct30d ?? row.roi_pct, 0);
-  const profitFactor = numberOrFallback(row.profit_factor_30d ?? row.profitFactor30d ?? row.profit_factor, 0);
+  const profit = firstFinite(
+    row.copyable_profit_usd_30d,
+    row.copyableProfitUsd30d,
+    row.profit_usd_30d,
+    row.profitUsd30d,
+    row.profit_usd
+  ) ?? 0;
+  const roi = firstFinite(row.copyable_roi_pct_30d, row.copyableRoiPct30d, row.roi_pct_30d, row.roiPct30d, row.roi_pct) ?? 0;
+  const profitFactor = firstFinite(
+    row.copyable_profit_factor_30d,
+    row.copyableProfitFactor30d,
+    row.profit_factor_30d,
+    row.profitFactor30d,
+    row.profit_factor
+  ) ?? 0;
   const maxDrawdown = Math.abs(numberOrFallback(
-    row.max_drawdown_usd_30d ?? row.maxDrawdownUsd30d ?? row.max_drawdown_usd,
+    firstFinite(
+      row.copyable_max_drawdown_usd_30d,
+      row.copyableMaxDrawdownUsd30d,
+      row.max_drawdown_usd_30d,
+      row.maxDrawdownUsd30d,
+      row.max_drawdown_usd
+    ),
     0
   ));
-  const medianEntry = numberOrFallback(
-    row.median_entry_cents_30d ?? row.medianEntryCents30d ?? row.median_entry_cents,
-    0
-  );
-  const avgEntry = numberOrFallback(
-    row.avg_entry_price_cents_30d ?? row.avgEntryPriceCents30d ?? row.avg_entry_price_cents,
-    0
-  );
-  const markets = numberOrFallback(
+  const medianEntry = firstFinite(
+    row.copyable_median_entry_cents_30d,
+    row.copyableMedianEntryCents30d,
+    row.median_entry_cents_30d,
+    row.medianEntryCents30d,
+    row.median_entry_cents
+  ) ?? 0;
+  const avgEntry = firstFinite(
+    row.copyable_avg_entry_price_cents_30d,
+    row.copyableAvgEntryPriceCents30d,
+    row.avg_entry_price_cents_30d,
+    row.avgEntryPriceCents30d,
+    row.avg_entry_price_cents
+  ) ?? 0;
+  const markets = firstFinite(
+    row.copyable_resolved_markets_30d,
+    row.copyableResolvedMarkets30d,
     row.distinct_resolved_markets_30d ??
       row.resolved_distinct_trade_count_30d ??
-      row.distinctResolvedMarkets30d,
-    0
-  );
-  const wins = numberOrFallback(row.win_count_30d ?? row.win_count_distinct_30d ?? row.winCount30d, 0);
-  const trades = numberOrFallback(row.pnl_trade_count_30d ?? row.pnlTradeCount30d ?? row.pnl_trade_count, 0);
-  const topWinShare = numberOrFallback(
-    row.top_win_share_pct_30d ?? row.topWinSharePct30d ?? row.top_win_share_pct,
-    100
-  );
+      row.distinctResolvedMarkets30d
+  ) ?? 0;
+  const wins = firstFinite(row.copyable_win_count_30d, row.copyableWinCount30d, row.win_count_30d, row.win_count_distinct_30d, row.winCount30d) ?? 0;
+  const trades = firstFinite(row.copyable_pnl_trade_count_30d, row.copyablePnlTradeCount30d, row.pnl_trade_count_30d, row.pnlTradeCount30d, row.pnl_trade_count) ?? 0;
+  const topWinShare = firstFinite(row.copyable_top_win_share_pct_30d, row.copyableTopWinSharePct30d, row.top_win_share_pct_30d, row.topWinSharePct30d, row.top_win_share_pct) ?? 100;
   const drawdownToProfitRatio = profit > 0 ? maxDrawdown / profit : Infinity;
+  const copyStakeUsd = numberOrFallback(row.copy_stake_usd ?? row.copyStakeUsd, 10);
+  const realAttemptCount = firstFinite(row.real_attempt_count_30d, row.realAttemptCount30d) ?? 0;
+  const realFillCount = firstFinite(row.real_fill_count_30d, row.realFillCount30d) ?? 0;
+  const realFillRatePct = firstFinite(row.real_fill_rate_pct_30d, row.realFillRatePct30d);
+  const realAvgSlippageCents = firstFinite(row.real_avg_slippage_cents_30d, row.realAvgSlippageCents30d);
+  const fillFactor = executionFillFactor(realAttemptCount, realFillRatePct);
+  const conservativeWinRate = wilsonLowerBound(wins, markets, 1.28);
+  const entryPrice = Math.max(0.05, medianEntry / 100);
+  const inferredCopyEdgePct = ((conservativeWinRate / entryPrice) - 1) * 100;
+  const conservativeCopyEdgePct = firstFinite(
+    row.copyable_edge_lower_bound_pct_30d,
+    row.copyableEdgeLowerBoundPct30d,
+    row.conservative_copy_edge_pct,
+    row.conservativeCopyEdgePct
+  ) ?? inferredCopyEdgePct;
+  const slippagePenaltyPct = Number.isFinite(realAvgSlippageCents) && realAvgSlippageCents > 0
+    ? (realAvgSlippageCents / Math.max(5, medianEntry)) * 100
+    : 0;
+  const edgeAfterSlippagePct = conservativeCopyEdgePct - slippagePenaltyPct;
+  const expectedCopyProfitUsd = copyStakeUsd * fillFactor * Math.max(0, edgeAfterSlippagePct / 100);
 
   const hardReject =
     profit <= 0 ||
@@ -35,6 +77,7 @@ export function scoreCopyTrader(row = {}) {
     wins < 15 ||
     trades < 25 ||
     medianEntry > 90 ||
+    edgeAfterSlippagePct <= 0 ||
     topWinShare > 35 ||
     drawdownToProfitRatio > 0.8;
 
@@ -46,6 +89,7 @@ export function scoreCopyTrader(row = {}) {
       wins,
       trades,
       medianEntry,
+      edgeAfterSlippagePct,
       topWinShare,
       drawdownToProfitRatio,
     });
@@ -53,9 +97,16 @@ export function scoreCopyTrader(row = {}) {
       eligible: false,
       tier: tierForScore({ score: 0, eligible: false, medianEntry }),
       copyQualityScore: 0,
-      conservativeCopyEdgePct: null,
-      conservativeWinRatePct: null,
+      conservativeCopyEdgePct: Number.isFinite(conservativeCopyEdgePct) ? conservativeCopyEdgePct : null,
+      edgeAfterSlippagePct: Number.isFinite(edgeAfterSlippagePct) ? edgeAfterSlippagePct : null,
+      expectedCopyProfitUsd,
+      conservativeWinRatePct: conservativeWinRate * 100,
       drawdownToProfitRatio: Number.isFinite(drawdownToProfitRatio) ? drawdownToProfitRatio : null,
+      realAttemptCount30d: realAttemptCount,
+      realFillCount30d: realFillCount,
+      realFillRatePct30d: realFillRatePct,
+      realAvgSlippageCents30d: realAvgSlippageCents,
+      fillFactor,
       reason,
       explanation: explanationForResult({
         eligible: false,
@@ -63,7 +114,10 @@ export function scoreCopyTrader(row = {}) {
         medianEntry,
         profitFactor,
         markets,
-        conservativeCopyEdgePct: null,
+        conservativeCopyEdgePct,
+        edgeAfterSlippagePct,
+        expectedCopyProfitUsd,
+        fillFactor,
       }),
       flags: buildRiskFlags({
         medianEntry,
@@ -73,30 +127,30 @@ export function scoreCopyTrader(row = {}) {
         profitFactor,
         markets,
         trades,
-        conservativeCopyEdgePct: null,
+        conservativeCopyEdgePct,
+        edgeAfterSlippagePct,
+        realAttemptCount,
+        realFillRatePct,
+        realAvgSlippageCents,
       }),
     };
   }
 
-  const conservativeWinRate = wilsonLowerBound(wins, markets, 1.28);
-  const entryPrice = Math.max(0.05, medianEntry / 100);
-  const conservativeCopyEdgePct = ((conservativeWinRate / entryPrice) - 1) * 100;
-  const conservativeCopyEdgeScore = clamp01((conservativeCopyEdgePct + 5) / 25);
+  const conservativeCopyEdgeScore = scorePositiveEdge(edgeAfterSlippagePct);
   const entryCopyabilityScore = scoreMedianEntry(medianEntry);
   const sampleReliabilityScore = 0.65 * clamp01(markets / 80) + 0.35 * clamp01(trades / 150);
   const riskScore = clamp01(1 - ((drawdownToProfitRatio - 0.05) / 0.70));
   const profitFactorScore = clamp01(Math.log(Math.max(1, profitFactor)) / Math.log(5));
   const roiScore = clamp01(roi / 35);
   const profitQualityScore = 0.65 * profitFactorScore + 0.35 * roiScore;
-  const profitScaleScore = clamp01(Math.log1p(profit) / Math.log1p(100_000));
   const concentrationScore = clamp01(1 - ((topWinShare - 8) / 27));
   const copyQualityScore = 100 * (
-    0.30 * conservativeCopyEdgeScore +
-    0.20 * entryCopyabilityScore +
+    0.35 * conservativeCopyEdgeScore +
+    0.15 * fillFactor +
+    0.15 * entryCopyabilityScore +
     0.15 * sampleReliabilityScore +
-    0.12 * riskScore +
-    0.10 * profitQualityScore +
-    0.08 * profitScaleScore +
+    0.10 * riskScore +
+    0.05 * profitQualityScore +
     0.05 * concentrationScore
   );
   const tier = tierForScore({ score: copyQualityScore, eligible: true, medianEntry });
@@ -109,6 +163,10 @@ export function scoreCopyTrader(row = {}) {
     markets,
     trades,
     conservativeCopyEdgePct,
+    edgeAfterSlippagePct,
+    realAttemptCount,
+    realFillRatePct,
+    realAvgSlippageCents,
   });
 
   return {
@@ -116,14 +174,20 @@ export function scoreCopyTrader(row = {}) {
     tier,
     copyQualityScore,
     conservativeCopyEdgePct,
+    edgeAfterSlippagePct,
+    expectedCopyProfitUsd,
     conservativeWinRatePct: conservativeWinRate * 100,
     drawdownToProfitRatio,
     conservativeCopyEdgeScore,
+    fillFactor,
+    realAttemptCount30d: realAttemptCount,
+    realFillCount30d: realFillCount,
+    realFillRatePct30d: realFillRatePct,
+    realAvgSlippageCents30d: realAvgSlippageCents,
     entryCopyabilityScore,
     sampleReliabilityScore,
     riskScore,
     profitQualityScore,
-    profitScaleScore,
     concentrationScore,
     reason: 'Eligible',
     explanation: explanationForResult({
@@ -132,6 +196,9 @@ export function scoreCopyTrader(row = {}) {
       profitFactor,
       markets,
       conservativeCopyEdgePct,
+      edgeAfterSlippagePct,
+      expectedCopyProfitUsd,
+      fillFactor,
       flags,
     }),
     flags,
@@ -178,6 +245,19 @@ function lerp(a, b, t) {
   return a + (b - a) * clamp01(t);
 }
 
+function scorePositiveEdge(edgePct) {
+  const number = Number(edgePct);
+  if (!Number.isFinite(number) || number <= 0) return 0;
+  return clamp01(1 - Math.exp(-number / 20));
+}
+
+function executionFillFactor(attempts, fillRatePct) {
+  const attemptCount = Number(attempts);
+  const fillRate = Number(fillRatePct);
+  if (!Number.isFinite(attemptCount) || attemptCount < 10 || !Number.isFinite(fillRate)) return 0.70;
+  return clamp01(fillRate / 100);
+}
+
 function buildRejectReason(metrics) {
   const reasons = [];
   if (metrics.profit <= 0) reasons.push('negative_or_zero_profit');
@@ -186,6 +266,7 @@ function buildRejectReason(metrics) {
   if (metrics.wins < 15) reasons.push('too_few_winning_markets');
   if (metrics.trades < 25) reasons.push('too_few_pnl_trades');
   if (metrics.medianEntry > 90) reasons.push('median_entry_above_90c');
+  if (metrics.edgeAfterSlippagePct <= 0) reasons.push('negative_expected_copy_edge');
   if (metrics.topWinShare > 35) reasons.push('top_win_share_above_35_pct');
   if (metrics.drawdownToProfitRatio > 0.8) reasons.push('drawdown_too_large_relative_to_profit');
   return reasons.join(', ');
@@ -203,6 +284,15 @@ function buildRiskFlags(metrics) {
   if (Number.isFinite(metrics.conservativeCopyEdgePct) && metrics.conservativeCopyEdgePct < 0) {
     flags.push('negative_conservative_copy_edge');
   }
+  if (Number.isFinite(metrics.edgeAfterSlippagePct) && metrics.edgeAfterSlippagePct < 5) {
+    flags.push('thin_copy_edge');
+  }
+  if (Number(metrics.realAttemptCount) >= 10 && Number(metrics.realFillRatePct) < 60) {
+    flags.push('low_real_fill_rate');
+  }
+  if (Number(metrics.realAvgSlippageCents) > 2) {
+    flags.push('high_real_slippage');
+  }
   return flags;
 }
 
@@ -213,16 +303,22 @@ function explanationForResult({
   profitFactor,
   markets,
   conservativeCopyEdgePct,
+  edgeAfterSlippagePct,
+  expectedCopyProfitUsd,
+  fillFactor,
   flags = [],
 }) {
   if (!eligible) {
     return `Rejected: ${reason || 'failed copy quality gate'}. High raw win rate is not enough when copy asymmetry is poor.`;
   }
   const parts = [
-    `Copy edge ${formatPct(conservativeCopyEdgePct)}`,
+    `ECP ${formatUsd(expectedCopyProfitUsd)}/trade`,
+    `copy edge ${formatPct(conservativeCopyEdgePct)}`,
+    `after slip ${formatPct(edgeAfterSlippagePct)}`,
+    `fill ${formatPct(Number(fillFactor) * 100, false)}`,
     `median entry ${formatCents(medianEntry)}`,
     `profit factor ${formatNumber(profitFactor)}`,
-    `${markets} resolved markets`,
+    `${markets} copyable markets`,
   ];
   if (flags.length) parts.push(`${flags.length} risk flag${flags.length === 1 ? '' : 's'}`);
   return parts.join(', ') + '.';
@@ -233,14 +329,30 @@ function numberOrFallback(value, fallback) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function formatPct(value) {
+function firstFinite(...values) {
+  for (const value of values) {
+    const number = Number(value);
+    if (Number.isFinite(number)) return number;
+  }
+  return null;
+}
+
+function formatPct(value, signed = true) {
   const number = Number(value);
-  return Number.isFinite(number) ? `${number >= 0 ? '+' : ''}${number.toFixed(1)}%` : 'n/a';
+  if (!Number.isFinite(number)) return 'n/a';
+  const prefix = signed && number >= 0 ? '+' : '';
+  return `${prefix}${number.toFixed(1)}%`;
 }
 
 function formatCents(value) {
   const number = Number(value);
   return Number.isFinite(number) ? `${number.toFixed(1)}c` : 'n/a';
+}
+
+function formatUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 'n/a';
+  return `${number >= 0 ? '+' : '-'}$${Math.abs(number).toFixed(2)}`;
 }
 
 function formatNumber(value) {

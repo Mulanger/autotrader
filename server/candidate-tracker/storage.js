@@ -9,6 +9,7 @@ import {
   normalizeWallet,
 } from '../copy-pool.js';
 import { scoreCopyTrader } from '../copy-quality-score.js';
+import { REAL_MAX_ENTRY_PRICE_CENTS, REAL_STAKE_USD } from '../config.js';
 import { SHADOW_TRADER_CRITERIA, SHADOW_TRADER_STRATEGY } from '../shadow-trader.js';
 
 const SCHEMA_VERSION = 3;
@@ -1099,19 +1100,63 @@ async function getRealCopyQualityMetricRows(pool, {
         where status in ('resolved_win', 'resolved_loss')
           and pnl_usd is not null
       ),
-      resolved_ranked as (
+      resolved_enriched as (
         select
           *,
-          row_number() over (
-            partition by wallet, coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id)
-            order by resolved_at desc nulls last, trade_timestamp desc, id desc
-          ) as rn
+          coalesce(nullif(condition_id, ''), nullif(market_slug, ''), nullif(market_title, ''), id) as market_key
         from resolved_30d
       ),
       distinct_resolved as (
+        select
+          wallet,
+          market_key,
+          (array_agg(id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as id,
+          (array_agg(condition_id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as condition_id,
+          (array_agg(market_slug order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_slug,
+          (array_agg(market_title order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_title,
+          case when coalesce(sum(pnl_usd), 0) > 0 then 'resolved_win' else 'resolved_loss' end as status,
+          coalesce(sum(pnl_usd), 0)::numeric as pnl_usd,
+          coalesce(sum(usd_size), 0)::numeric as usd_size,
+          coalesce(sum(shares), 0)::numeric as shares,
+          (case when coalesce(sum(shares), 0) > 0
+            then coalesce(sum(usd_size), 0) / nullif(sum(shares), 0)
+            else avg(price)
+          end)::numeric as price,
+          max(resolved_at) as resolved_at,
+          max(trade_timestamp) as trade_timestamp
+        from resolved_enriched
+        group by wallet, market_key
+      ),
+      copyable_trade_resolved as (
         select *
-        from resolved_ranked
-        where rn = 1
+        from resolved_enriched
+        where price is not null
+          and price * 100 <= $4::numeric
+      ),
+      copyable_resolved as (
+        select
+          wallet,
+          market_key,
+          (array_agg(id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as id,
+          (array_agg(condition_id order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as condition_id,
+          (array_agg(market_slug order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_slug,
+          (array_agg(market_title order by resolved_at desc nulls last, trade_timestamp desc, id desc))[1] as market_title,
+          case when coalesce(sum(pnl_usd), 0) > 0 then 'resolved_win' else 'resolved_loss' end as status,
+          coalesce(sum(pnl_usd), 0)::numeric as pnl_usd,
+          coalesce(sum(usd_size), 0)::numeric as usd_size,
+          coalesce(sum(shares), 0)::numeric as shares,
+          (case when coalesce(sum(shares), 0) > 0
+            then coalesce(sum(usd_size), 0) / nullif(sum(shares), 0)
+            else avg(price)
+          end)::numeric as price,
+          max(resolved_at) as resolved_at,
+          max(trade_timestamp) as trade_timestamp,
+          (case when coalesce(sum(usd_size), 0) > 0
+            then coalesce(sum(pnl_usd), 0) / nullif(sum(usd_size), 0)
+            else null
+          end)::numeric as realized_roi
+        from copyable_trade_resolved
+        group by wallet, market_key
       ),
       distinct_stats as (
         select
@@ -1134,7 +1179,7 @@ async function getRealCopyQualityMetricRows(pool, {
           coalesce(sum(pnl_usd) filter (where pnl_usd > 0), 0)::numeric as gross_winning_pnl_usd_30d,
           abs(coalesce(sum(pnl_usd) filter (where pnl_usd < 0), 0))::numeric as gross_losing_pnl_usd_30d,
           (max(pnl_usd) filter (where pnl_usd > 0))::numeric as largest_win_usd_30d
-        from resolved_30d
+        from distinct_resolved
         group by wallet
       ),
       pnl_stats as (
@@ -1159,6 +1204,63 @@ async function getRealCopyQualityMetricRows(pool, {
           end as top_win_share_pct_30d
         from pnl_stats_raw
       ),
+      copyable_stats_raw as (
+        select
+          wallet,
+          count(*)::integer as copyable_resolved_markets_30d,
+          count(*) filter (where status = 'resolved_win')::integer as copyable_win_count_30d,
+          case when count(*) > 0
+            then count(*) filter (where status = 'resolved_win')::numeric / count(*) * 100
+            else null
+          end as copyable_win_rate_pct_30d,
+          count(realized_roi)::integer as copyable_pnl_trade_count_30d,
+          coalesce(sum(pnl_usd), 0)::numeric as copyable_profit_usd_30d,
+          coalesce(sum(usd_size), 0)::numeric as copyable_deployed_capital_usd_30d,
+          coalesce(sum(pnl_usd) filter (where pnl_usd > 0), 0)::numeric as copyable_gross_winning_pnl_usd_30d,
+          abs(coalesce(sum(pnl_usd) filter (where pnl_usd < 0), 0))::numeric as copyable_gross_losing_pnl_usd_30d,
+          (max(pnl_usd) filter (where pnl_usd > 0))::numeric as copyable_largest_win_usd_30d,
+          (percentile_cont(0.5) within group (order by price * 100))::numeric as copyable_median_entry_cents_30d,
+          (sum(usd_size) / nullif(sum(shares), 0) * 100)::numeric as copyable_avg_entry_price_cents_30d,
+          avg(realized_roi)::numeric as copyable_avg_edge_ratio_30d,
+          stddev_samp(realized_roi)::numeric as copyable_edge_stddev_30d
+        from copyable_resolved
+        group by wallet
+      ),
+      copyable_stats as (
+        select
+          wallet,
+          copyable_resolved_markets_30d,
+          copyable_win_count_30d,
+          copyable_win_rate_pct_30d,
+          copyable_pnl_trade_count_30d,
+          copyable_profit_usd_30d,
+          case when copyable_deployed_capital_usd_30d > 0
+            then copyable_profit_usd_30d / copyable_deployed_capital_usd_30d * 100
+            else null
+          end as copyable_roi_pct_30d,
+          case
+            when copyable_gross_winning_pnl_usd_30d > 0 and copyable_gross_losing_pnl_usd_30d > 0
+              then copyable_gross_winning_pnl_usd_30d / copyable_gross_losing_pnl_usd_30d
+            when copyable_gross_winning_pnl_usd_30d > 0 and copyable_gross_losing_pnl_usd_30d = 0
+              then 5::numeric
+            else null
+          end as copyable_profit_factor_30d,
+          case when copyable_gross_winning_pnl_usd_30d > 0
+            then copyable_largest_win_usd_30d / copyable_gross_winning_pnl_usd_30d * 100
+            else null
+          end as copyable_top_win_share_pct_30d,
+          copyable_median_entry_cents_30d,
+          copyable_avg_entry_price_cents_30d,
+          (copyable_avg_edge_ratio_30d * 100)::numeric as copyable_avg_edge_pct_30d,
+          (case when copyable_pnl_trade_count_30d > 0
+            then (
+              copyable_avg_edge_ratio_30d
+              - (1.28 * coalesce(copyable_edge_stddev_30d, 0) / nullif(power(copyable_pnl_trade_count_30d::numeric, 0.5), 0))
+            ) * 100
+            else null
+          end)::numeric as copyable_edge_lower_bound_pct_30d
+        from copyable_stats_raw
+      ),
       drawdown_curve as (
         select
           wallet,
@@ -1169,7 +1271,7 @@ async function getRealCopyQualityMetricRows(pool, {
             order by coalesce(resolved_at, trade_timestamp), id
             rows between unbounded preceding and current row
           ))::numeric as cumulative_pnl_usd
-        from resolved_30d
+        from distinct_resolved
       ),
       drawdown_points as (
         select
@@ -1189,6 +1291,54 @@ async function getRealCopyQualityMetricRows(pool, {
         from drawdown_points
         group by wallet
       ),
+      copyable_drawdown_curve as (
+        select
+          wallet,
+          coalesce(resolved_at, trade_timestamp) as close_ts,
+          id,
+          (sum(pnl_usd) over (
+            partition by wallet
+            order by coalesce(resolved_at, trade_timestamp), id
+            rows between unbounded preceding and current row
+          ))::numeric as cumulative_pnl_usd
+        from copyable_resolved
+      ),
+      copyable_drawdown_points as (
+        select
+          wallet,
+          cumulative_pnl_usd - greatest(
+            0::numeric,
+            max(cumulative_pnl_usd) over (
+              partition by wallet
+              order by close_ts, id
+              rows between unbounded preceding and current row
+            )
+          ) as drawdown_usd
+        from copyable_drawdown_curve
+      ),
+      copyable_drawdown_stats as (
+        select wallet, min(drawdown_usd)::numeric as copyable_max_drawdown_usd_30d
+        from copyable_drawdown_points
+        group by wallet
+      ),
+      execution_stats as (
+        select
+          lower(ro.trader_wallet)::text as wallet,
+          count(*)::integer as real_attempt_count_30d,
+          count(*) filter (where lower(ro.status) in ('would_fill', 'filled', 'live_filled'))::integer as real_fill_count_30d,
+          case when count(*) > 0
+            then count(*) filter (where lower(ro.status) in ('would_fill', 'filled', 'live_filled'))::numeric / count(*) * 100
+            else null
+          end as real_fill_rate_pct_30d,
+          avg(ro.vwap_cents)::numeric as real_avg_fill_price_cents_30d,
+          (avg(ro.vwap_cents - ro.source_price_cents) filter (
+            where ro.vwap_cents is not null and ro.source_price_cents is not null
+          ))::numeric as real_avg_slippage_cents_30d
+        from real_orders ro
+        join scope_wallets sw on sw.wallet = lower(ro.trader_wallet)
+        where ro.checked_at >= now() - interval '30 days'
+        group by lower(ro.trader_wallet)
+      ),
       recent_form as (
         select wallet, jsonb_agg(status order by resolved_at desc, trade_timestamp desc) as recent_form_results
         from (
@@ -1198,7 +1348,7 @@ async function getRealCopyQualityMetricRows(pool, {
             resolved_at,
             trade_timestamp,
             row_number() over (partition by wallet order by resolved_at desc nulls last, trade_timestamp desc) as rn
-          from resolved_30d
+          from distinct_resolved
         ) ranked_form
         where rn <= 10
         group by wallet
@@ -1220,6 +1370,26 @@ async function getRealCopyQualityMetricRows(pool, {
         drs.win_rate_pct_30d,
         ps.top_win_share_pct_30d,
         es.avg_trade_size_usd_30d,
+        coalesce(cps.copyable_profit_usd_30d, 0)::numeric as copyable_profit_usd_30d,
+        cps.copyable_roi_pct_30d,
+        cps.copyable_profit_factor_30d,
+        coalesce(cds.copyable_max_drawdown_usd_30d, 0)::numeric as copyable_max_drawdown_usd_30d,
+        cps.copyable_median_entry_cents_30d,
+        cps.copyable_avg_entry_price_cents_30d,
+        coalesce(cps.copyable_resolved_markets_30d, 0)::integer as copyable_resolved_markets_30d,
+        coalesce(cps.copyable_pnl_trade_count_30d, 0)::integer as copyable_pnl_trade_count_30d,
+        coalesce(cps.copyable_win_count_30d, 0)::integer as copyable_win_count_30d,
+        cps.copyable_win_rate_pct_30d,
+        cps.copyable_top_win_share_pct_30d,
+        cps.copyable_avg_edge_pct_30d,
+        cps.copyable_edge_lower_bound_pct_30d,
+        coalesce(xs.real_attempt_count_30d, 0)::integer as real_attempt_count_30d,
+        coalesce(xs.real_fill_count_30d, 0)::integer as real_fill_count_30d,
+        xs.real_fill_rate_pct_30d,
+        xs.real_avg_slippage_cents_30d,
+        xs.real_avg_fill_price_cents_30d,
+        $4::numeric as copyable_max_entry_cents,
+        $5::numeric as copy_stake_usd,
         coalesce(rf.recent_form_results, '[]'::jsonb) as recent_form_results
       from scope_wallets sw
       left join candidate_traders t on t.wallet = sw.wallet
@@ -1227,11 +1397,14 @@ async function getRealCopyQualityMetricRows(pool, {
       left join distinct_stats drs on drs.wallet = sw.wallet
       left join pnl_stats ps on ps.wallet = sw.wallet
       left join drawdown_stats ds on ds.wallet = sw.wallet
+      left join copyable_stats cps on cps.wallet = sw.wallet
+      left join copyable_drawdown_stats cds on cds.wallet = sw.wallet
+      left join execution_stats xs on xs.wallet = sw.wallet
       left join recent_form rf on rf.wallet = sw.wallet
       where sw.wallet is not null
       order by coalesce(ps.profit_usd_30d, 0) desc, sw.wallet asc
     `,
-    [scope, normalizedWallet || '', normalizedBaseline]
+    [scope, normalizedWallet || '', normalizedBaseline, REAL_MAX_ENTRY_PRICE_CENTS, REAL_STAKE_USD]
   );
   return result.rows;
 }
@@ -2039,6 +2212,11 @@ function mapLeaderboardRow(row) {
 }
 
 function mapRealCopyQualityRow(row) {
+  const payloadInput = row.payload?.input || {};
+  const payloadScore = row.payload?.score || {};
+  const hasCopyableMetrics = Object.prototype.hasOwnProperty.call(payloadInput, 'copyable_resolved_markets_30d');
+  const hasExecutionMetrics = Object.prototype.hasOwnProperty.call(payloadInput, 'real_attempt_count_30d') ||
+    Object.prototype.hasOwnProperty.call(payloadScore, 'realAttemptCount30d');
   return {
     wallet: row.wallet,
     displayName: row.display_name,
@@ -2051,6 +2229,8 @@ function mapRealCopyQualityRow(row) {
     explanation: row.explanation,
     flags: Array.isArray(row.flags) ? row.flags : [],
     conservativeCopyEdgePct: nullableNumberFromPg(row.conservative_copy_edge_pct),
+    edgeAfterSlippagePct: nullableNumberFromPg(payloadScore.edgeAfterSlippagePct),
+    expectedCopyProfitUsd: nullableNumberFromPg(payloadScore.expectedCopyProfitUsd),
     conservativeWinRatePct: nullableNumberFromPg(row.conservative_win_rate_pct),
     drawdownToProfitRatio: nullableNumberFromPg(row.drawdown_to_profit_ratio),
     profitUsd30d: numberFromPg(row.profit_usd_30d),
@@ -2064,6 +2244,27 @@ function mapRealCopyQualityRow(row) {
     winCount30d: Number(row.win_count_30d || 0),
     winRatePct30d: nullableNumberFromPg(row.win_rate_pct_30d),
     topWinSharePct30d: nullableNumberFromPg(row.top_win_share_pct_30d),
+    copyableProfitUsd30d: hasCopyableMetrics ? numberFromPg(payloadInput.copyable_profit_usd_30d) : null,
+    copyableRoiPct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_roi_pct_30d) : null,
+    copyableProfitFactor30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_profit_factor_30d) : null,
+    copyableMaxDrawdownUsd30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_max_drawdown_usd_30d) : null,
+    copyableMedianEntryCents30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_median_entry_cents_30d) : null,
+    copyableAvgEntryPriceCents30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_avg_entry_price_cents_30d) : null,
+    copyableResolvedMarkets30d: hasCopyableMetrics ? Number(payloadInput.copyable_resolved_markets_30d || 0) : null,
+    copyablePnlTradeCount30d: hasCopyableMetrics ? Number(payloadInput.copyable_pnl_trade_count_30d || 0) : null,
+    copyableWinCount30d: hasCopyableMetrics ? Number(payloadInput.copyable_win_count_30d || 0) : null,
+    copyableWinRatePct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_win_rate_pct_30d) : null,
+    copyableTopWinSharePct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_top_win_share_pct_30d) : null,
+    copyableAvgEdgePct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_avg_edge_pct_30d) : null,
+    copyableEdgeLowerBoundPct30d: hasCopyableMetrics ? nullableNumberFromPg(payloadInput.copyable_edge_lower_bound_pct_30d) : null,
+    realAttemptCount30d: hasExecutionMetrics ? Number(payloadScore.realAttemptCount30d ?? payloadInput.real_attempt_count_30d ?? 0) : null,
+    realFillCount30d: hasExecutionMetrics ? Number(payloadScore.realFillCount30d ?? payloadInput.real_fill_count_30d ?? 0) : null,
+    realFillRatePct30d: hasExecutionMetrics ? nullableNumberFromPg(payloadScore.realFillRatePct30d ?? payloadInput.real_fill_rate_pct_30d) : null,
+    realAvgSlippageCents30d: hasExecutionMetrics ? nullableNumberFromPg(payloadScore.realAvgSlippageCents30d ?? payloadInput.real_avg_slippage_cents_30d) : null,
+    realAvgFillPriceCents30d: hasExecutionMetrics ? nullableNumberFromPg(payloadInput.real_avg_fill_price_cents_30d) : null,
+    copyableMaxEntryCents: nullableNumberFromPg(payloadInput.copyable_max_entry_cents),
+    copyStakeUsd: nullableNumberFromPg(payloadInput.copy_stake_usd),
+    fillFactor: nullableNumberFromPg(payloadScore.fillFactor),
     recentFormResults: Array.isArray(row.recent_form_results)
       ? row.recent_form_results
       : Array.isArray(row.payload?.input?.recent_form_results)
@@ -2161,9 +2362,13 @@ function shouldUseSsl(databaseUrl) {
 
 function copyQualitySortColumn(sort) {
   const key = String(sort || 'score').toLowerCase();
-  if (key === 'profit') return 's.profit_usd_30d';
-  if (key === 'edge') return 's.conservative_copy_edge_pct';
-  if (key === 'entry') return 's.median_entry_cents_30d';
+  if (key === 'profit') return "coalesce(nullif(s.payload->'input'->>'copyable_profit_usd_30d', '')::numeric, s.profit_usd_30d)";
+  if (key === 'expectedprofit' || key === 'expected_profit' || key === 'ecp') {
+    return "coalesce(nullif(s.payload->'score'->>'expectedCopyProfitUsd', '')::numeric, 0)";
+  }
+  if (key === 'edge') return "coalesce(nullif(s.payload->'score'->>'edgeAfterSlippagePct', '')::numeric, s.conservative_copy_edge_pct)";
+  if (key === 'fill') return "coalesce(nullif(s.payload->'score'->>'realFillRatePct30d', '')::numeric, 0)";
+  if (key === 'entry') return "coalesce(nullif(s.payload->'input'->>'copyable_median_entry_cents_30d', '')::numeric, s.median_entry_cents_30d)";
   if (key === 'drawdown') return 's.drawdown_to_profit_ratio';
   if (key === 'updated') return 's.scored_at';
   return 's.score';

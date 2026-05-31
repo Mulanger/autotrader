@@ -64,6 +64,30 @@ describe('real memory storage', () => {
     expect(state.follows[0].metrics.attemptedCount).toBe(1);
   });
 
+  it('does not let a closed position block a future copy of the same market', async () => {
+    const storage = createMemoryRealStorage();
+    const first = await storage.recordOrderAttempt(attempt({
+      conditionId: 'condition-1',
+      marketSlug: 'same-market',
+      sourceTradeId: 'trade-1',
+    }));
+
+    expect(await storage.findPositionByMarketKeys({
+      marketKeys: ['condition-1'],
+      traderWallet: wallet,
+    })).toBeTruthy();
+
+    await storage.updatePosition(first.position.id, {
+      status: 'closed',
+      closedAt: '2026-05-28T12:00:00.000Z',
+    });
+
+    expect(await storage.findPositionByMarketKeys({
+      marketKeys: ['condition-1'],
+      traderWallet: wallet,
+    })).toBeNull();
+  });
+
   it('upserts and reads the latest worker and account snapshot', async () => {
     const storage = createMemoryRealStorage();
     await storage.upsertRuntimeSnapshot({

@@ -100,7 +100,7 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
       if (!keys.length) return null;
       const wallet = normalizeWallet(traderWallet);
       return [...positions.values()]
-        .filter((position) => position.status)
+        .filter((position) => position.status === 'open')
         .find((position) => {
           if (wallet && position.traderWallet !== wallet) return false;
           return positionMarketKeys(position).some((key) => keys.includes(key));
@@ -402,6 +402,7 @@ async function findPositionByMarketKeys(pool, { marketKeys, traderWallet = null 
         or lower(coalesce(market_slug, '')) = any($1::text[])
         or lower(coalesce(market_title, '')) = any($1::text[])
       )
+      and status = 'open'
       ${walletClause}
       order by opened_at asc nulls last, created_at asc
       limit 1

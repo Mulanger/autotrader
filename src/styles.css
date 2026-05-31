@@ -1063,7 +1063,7 @@ button {
 }
 
 .realQualityRow {
-  grid-template-columns: 52px 34px minmax(220px, 1.25fr) repeat(5, minmax(82px, 0.36fr)) minmax(132px, 0.55fr) minmax(92px, auto);
+  grid-template-columns: 52px 34px minmax(220px, 1.25fr) repeat(7, minmax(76px, 0.34fr)) minmax(132px, 0.55fr) minmax(92px, auto);
 }
 
 .realQualityRow.eligible {

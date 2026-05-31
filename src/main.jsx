@@ -800,7 +800,7 @@ function RealMetricStrip({ summary, real }) {
 function RealScoredTradersView({ realState }) {
   const [tier, setTier] = React.useState('all');
   const [eligibleOnly, setEligibleOnly] = React.useState(true);
-  const [sort, setSort] = React.useState('score');
+  const [sort, setSort] = React.useState('expectedProfit');
   const [query, setQuery] = React.useState('');
   const [metricsHelpOpen, setMetricsHelpOpen] = React.useState(false);
   const [pinRequest, setPinRequest] = React.useState(null);
@@ -947,8 +947,10 @@ function RealScoredTradersView({ realState }) {
         <label>
           <span>Sort</span>
           <select value={sort} onChange={(event) => setSort(event.target.value)}>
+            <option value="expectedProfit">expected profit</option>
             <option value="score">score</option>
             <option value="edge">copy edge</option>
+            <option value="fill">fill rate</option>
             <option value="entry">entry</option>
             <option value="profit">profit</option>
             <option value="drawdown">drawdown</option>
@@ -1009,15 +1011,23 @@ function RealScoredTradersView({ realState }) {
 const SCORE_METRIC_HELP = [
   {
     term: 'Score',
-    text: 'A 0-100 fit score for copying this wallet. Higher means the wallet looks better after entry price, profit, risk, and sample-size checks.',
+    text: 'A 0-100 fit score for copying this wallet. Higher means the wallet looks better after copyable entry price, expected edge, execution quality, risk, and sample-size checks.',
   },
   {
     term: 'Eligible',
     text: 'The wallet currently passes the basic copy-quality gates. It is still decision support, not an automatic trade signal.',
   },
   {
+    term: 'ECP',
+    text: 'Expected copy profit per next trade at the configured stake, after the conservative edge estimate and real fill rate adjustment.',
+  },
+  {
     term: 'Edge / Med',
-    text: 'Edge is the estimated copy advantage from the resolved trades we track. Med is the typical buy price; lower entries are usually easier to copy safely.',
+    text: 'Edge is the conservative copy advantage from resolved trades at or below the copyable price cap. Med is the typical buy price in that subset.',
+  },
+  {
+    term: 'Fill / Slip',
+    text: 'Fill is how often real quote checks would have filled. Slip is the average price difference between the source trade and our quoted fill.',
   },
   {
     term: 'PF',
@@ -1108,6 +1118,16 @@ function CopyQualityStat({ icon: Icon, label, value }) {
 function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const active = row.realFollowStatus === 'active';
+  const copyableProfit = row.copyableProfitUsd30d ?? row.profitUsd30d;
+  const copyableRoi = row.copyableRoiPct30d ?? row.roiPct30d;
+  const copyableProfitFactor = row.copyableProfitFactor30d ?? row.profitFactor30d;
+  const copyableDrawdown = row.copyableMaxDrawdownUsd30d ?? row.maxDrawdownUsd30d;
+  const copyableMedian = row.copyableMedianEntryCents30d ?? row.medianEntryCents30d;
+  const copyableMarkets = row.copyableResolvedMarkets30d ?? row.distinctResolvedMarkets30d ?? 0;
+  const copyableTrades = row.copyablePnlTradeCount30d ?? row.pnlTradeCount30d ?? 0;
+  const copyableWinRate = row.copyableWinRatePct30d ?? row.winRatePct30d;
+  const copyableTopWinShare = row.copyableTopWinSharePct30d ?? row.topWinSharePct30d;
+  const edgeAfterSlippage = row.edgeAfterSlippagePct ?? row.conservativeCopyEdgePct;
   return (
     <article className={`candidateRow realQualityRow ${row.eligible ? 'eligible' : 'ineligible'}`}>
       <div className="candidateRank scoreRank">
@@ -1128,27 +1148,39 @@ function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
         <RecentForm results={row.recentFormResults || []} className="identityRecentForm" />
       </div>
       <div className="candidateMetric">
-        <span>Edge / Med</span>
-        <strong className={pnlTone(row.conservativeCopyEdgePct)}>
-          {formatNullableSignedPct(row.conservativeCopyEdgePct)} / {formatNullableCents(row.medianEntryCents30d)}
+        <span>ECP / Edge</span>
+        <strong className={pnlTone(row.expectedCopyProfitUsd)}>
+          {formatNullableSignedCompactUsd(row.expectedCopyProfitUsd)} / {formatNullableSignedPct(edgeAfterSlippage)}
+        </strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Med / Fill</span>
+        <strong>
+          {formatNullableCents(copyableMedian)} / {formatNullablePct(row.realFillRatePct30d)}
+        </strong>
+      </div>
+      <div className="candidateMetric">
+        <span>Slip / Attempts</span>
+        <strong className={pnlTone(-Number(row.realAvgSlippageCents30d || 0))}>
+          {formatNullableCents(row.realAvgSlippageCents30d)} / {row.realFillCount30d || 0}:{row.realAttemptCount30d || 0}
         </strong>
       </div>
       <div className="candidateMetric">
         <span>PF / ROI</span>
-        <strong>{formatPlainProfitFactor(row.profitFactor30d)} / {formatNullableSignedPct(row.roiPct30d)}</strong>
+        <strong>{formatPlainProfitFactor(copyableProfitFactor)} / {formatNullableSignedPct(copyableRoi)}</strong>
       </div>
       <div className="candidateMetric">
         <span>Markets / Trades</span>
-        <strong>{row.distinctResolvedMarkets30d || 0} / {row.pnlTradeCount30d || 0}</strong>
+        <strong>{copyableMarkets} / {copyableTrades}</strong>
       </div>
       <div className="candidateMetric">
         <span>Win / Top win</span>
-        <strong>{formatNullablePct(row.winRatePct30d)} / {formatNullablePct(row.topWinSharePct30d)}</strong>
+        <strong>{formatNullablePct(copyableWinRate)} / {formatNullablePct(copyableTopWinShare)}</strong>
       </div>
       <div className="candidateMetric">
         <span>Profit / DD</span>
-        <strong className={pnlTone(row.profitUsd30d)}>
-          {formatNullableSignedCompactUsd(row.profitUsd30d)} / {formatDrawdownUsd(row.maxDrawdownUsd30d)}
+        <strong className={pnlTone(copyableProfit)}>
+          {formatNullableSignedCompactUsd(copyableProfit)} / {formatDrawdownUsd(copyableDrawdown)}
         </strong>
       </div>
       <div className="qualityFlags">
@@ -1910,7 +1942,7 @@ function useRealState() {
   return { real, loading, error, refresh, setReal };
 }
 
-function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'score', query = '' } = {}) {
+function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'expectedProfit', query = '' } = {}) {
   const [payload, setPayload] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -1920,7 +1952,7 @@ function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'score',
     params.set('limit', '100');
     params.set('tier', tier || 'all');
     params.set('eligible', eligibleOnly ? 'true' : 'all');
-    params.set('sort', sort || 'score');
+    params.set('sort', sort || 'expectedProfit');
     params.set('order', ['entry', 'drawdown'].includes(sort) ? 'asc' : 'desc');
     if (query.trim()) params.set('q', query.trim());
     try {
