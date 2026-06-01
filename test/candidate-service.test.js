@@ -172,6 +172,38 @@ describe('candidate tracker service', () => {
     expect(row.score).toBe(91);
   });
 
+  it('reuses the real copy quality leaderboard query briefly between page loads', async () => {
+    const state = createAppState();
+    let queryCount = 0;
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => {
+        queryCount += 1;
+        return {
+          ok: true,
+          summary: { total: 1, scored: 1, eligible: 1 },
+          rows: [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', score: 91 }],
+        };
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => [],
+      realCopyQualityLeaderboardCacheMs: 60_000,
+    });
+
+    await tracker.start();
+    queryCount = 0;
+    const first = await tracker.getRealCopyQualityLeaderboard({ eligible: true, sort: 'expectedProfit' });
+    const second = await tracker.getRealCopyQualityLeaderboard({ eligible: true, sort: 'expectedProfit' });
+    await tracker.close();
+
+    expect(queryCount).toBe(1);
+    expect(first.cacheHit).toBeUndefined();
+    expect(second.cacheHit).toBe(true);
+    expect(second.rows).toHaveLength(1);
+  });
+
   it('runs low-cost maintenance while global candidate polling is disabled', async () => {
     const state = createAppState();
     const calls = {

@@ -99,6 +99,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let maintenanceRunning = false;
   let shadowPollRunning = false;
   let pollBootstrapped = false;
+  const realCopyQualityLeaderboardCache = new Map();
+  const realCopyQualityLeaderboardCacheMs = Number(options.realCopyQualityLeaderboardCacheMs ?? 60_000);
 
   state.service.candidates = {
     enabled,
@@ -1106,6 +1108,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       return { ok: false, error: state.service.realCopyQuality.lastError || 'Candidate storage is unavailable' };
     }
     realCopyQualityRunning = true;
+    realCopyQualityLeaderboardCache.clear();
     try {
       state.service.realCopyQuality.status = 'scoring';
       broadcast();
@@ -1114,6 +1117,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         wallet,
         baselineWallets: WATCHED_WALLETS,
       });
+      realCopyQualityLeaderboardCache.clear();
       applyRealCopyQualitySummary(result?.summary, result?.summary?.total || result?.scored || 0);
       state.service.realCopyQuality.status = 'ready';
       state.service.realCopyQuality.lastScoredAt = new Date().toISOString();
@@ -1165,15 +1169,22 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
   async function getRealCopyQualityLeaderboard(params = {}) {
     if (!storage) return inactiveRealCopyQualityPayload(state.service.realCopyQuality?.status || 'starting');
+    const cacheKey = realCopyQualityLeaderboardCacheKey(params);
+    const cached = realCopyQualityLeaderboardCache.get(cacheKey);
+    if (cached && Date.now() - cached.storedAt < realCopyQualityLeaderboardCacheMs) {
+      return { ...cached.payload, updatedAt: new Date().toISOString(), cacheHit: true };
+    }
     const payload = await storage.getRealCopyQualityLeaderboard(params);
     applyRealCopyQualitySummary(payload.summary, payload.summary?.total || 0);
-    return {
+    const response = {
       ...payload,
       enabled: realCopyQualityActive,
       cached: !realCopyQualityActive,
       status: realCopyQualityActive ? state.service.realCopyQuality.status : 'cached',
       updatedAt: new Date().toISOString(),
     };
+    realCopyQualityLeaderboardCache.set(cacheKey, { payload: response, storedAt: Date.now() });
+    return response;
   }
 
   async function getRealCopyQualityScore(wallet) {
@@ -1349,6 +1360,18 @@ function normalizeMaintenanceScope(scope) {
   if (text === 'all_candidates') return 'all_candidates';
   if (text === 'active_copy_pool') return 'active_copy_pool';
   return 'active_scored';
+}
+
+function realCopyQualityLeaderboardCacheKey(params = {}) {
+  return JSON.stringify({
+    limit: params.limit ?? 100,
+    offset: params.offset ?? 0,
+    q: String(params.q || '').trim().toLowerCase(),
+    tier: params.tier || 'all',
+    eligible: params.eligible === true ? true : params.eligible === false ? false : null,
+    sort: params.sort || 'expectedProfit',
+    order: params.order || 'desc',
+  });
 }
 
 function hasScoringSummary(summary = {}) {
