@@ -13,10 +13,10 @@ afterEach(async () => {
   server = null;
 });
 
-function startApp(realService) {
+function startApp(realService, candidateTracker = null) {
   const app = express();
   app.use(express.json());
-  app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService));
+  app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService, candidateTracker));
   return new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       resolve(`http://127.0.0.1:${server.address().port}`);
@@ -37,6 +37,7 @@ function fakeService(snapshot = null) {
     }),
     followTrader: async () => ({ ok: true }),
     unfollowTrader: async () => ({ ok: true }),
+    unfollowAllTraders: async () => ({ ok: true, removedCount: 1 }),
   };
 }
 
@@ -96,5 +97,90 @@ describe('real routes', () => {
     expect(payload.runtime.role).toBe('worker');
     expect(payload.runtime.liveExecutionReady).toBe(true);
     expect(payload.account.collateral.balanceUsd).toBe(12.5);
+  });
+
+  it('passes all-candidate copy-quality recalculation through by default', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    let requestedScope = null;
+    const candidateTracker = {
+      recalculateRealCopyQuality: async ({ scope }) => {
+        requestedScope = scope;
+        return { ok: true, scope };
+      },
+    };
+    const base = await startApp(fakeService(), candidateTracker);
+
+    const response = await fetch(`${base}/api/real/copy-quality/recalculate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token' },
+      body: JSON.stringify({ pin: '1993' }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(requestedScope).toBe('all_candidates');
+    expect(payload.scope).toBe('all_candidates');
+  });
+
+  it('passes score page sort and eligibility filters to copy-quality storage', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    let requestedParams = null;
+    const candidateTracker = {
+      getRealCopyQualityLeaderboard: async (params) => {
+        requestedParams = params;
+        return { ok: true, summary: {}, rows: [] };
+      },
+    };
+    const base = await startApp(fakeService(), candidateTracker);
+
+    const response = await fetch(`${base}/api/real/copy-quality?eligible=true&sort=expectedProfit`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestedParams).toMatchObject({ eligible: true, sort: 'expectedProfit' });
+  });
+
+  it('defaults copy-quality leaderboard sorting to expected profit', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    let requestedParams = null;
+    const candidateTracker = {
+      getRealCopyQualityLeaderboard: async (params) => {
+        requestedParams = params;
+        return { ok: true, summary: {}, rows: [] };
+      },
+    };
+    const base = await startApp(fakeService(), candidateTracker);
+
+    const response = await fetch(`${base}/api/real/copy-quality`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    });
+
+    expect(response.status).toBe(200);
+    expect(requestedParams.sort).toBe('expectedProfit');
+  });
+
+  it('exposes a PIN-gated bulk unfollow route', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    let requestBody = null;
+    const service = {
+      ...fakeService(),
+      unfollowAllTraders: async (body) => {
+        requestBody = body;
+        return { ok: true, removedCount: 2 };
+      },
+    };
+    const base = await startApp(service);
+
+    const response = await fetch(`${base}/api/real/unfollow-all`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token' },
+      body: JSON.stringify({ pin: '1993', confirmation: 'REMOVE ALL' }),
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(requestBody).toEqual({ pin: '1993', confirmation: 'REMOVE ALL' });
+    expect(payload.removedCount).toBe(2);
   });
 });

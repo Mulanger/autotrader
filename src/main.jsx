@@ -87,7 +87,10 @@ function DesktopApp() {
   const [tab, setTab] = React.useState('overview');
 
   React.useEffect(() => {
-    if (mode === 'real' && !['overview', 'following', 'real-traders', 'shadow', 'positions', 'orders'].includes(tab)) setTab('overview');
+    const validTabs = mode === 'real'
+      ? ['overview', 'following', 'real-traders', 'positions', 'orders']
+      : ['overview', 'profit', 'positions', 'traders', 'candidates'];
+    if (!validTabs.includes(tab)) setTab('overview');
   }, [mode, tab]);
 
   const data = state || emptyState();
@@ -263,7 +266,9 @@ function storageLabel(storage) {
 }
 
 function Topbar({ mode, tab, setTab, refresh, service, real }) {
-  const tabs = mode === 'demo' ? ['overview', 'shadow', 'profit', 'positions', 'traders', 'candidates'] : ['overview', 'following', 'real-traders', 'shadow', 'positions', 'orders'];
+  const tabs = mode === 'demo'
+    ? ['overview', 'profit', 'positions', 'traders', 'candidates']
+    : ['overview', 'following', 'real-traders', 'positions', 'orders'];
   const runtime = mode === 'real' ? real?.runtime || null : null;
   const lastPollAt = mode === 'real' ? runtime?.lastPollAt || service?.real?.lastPollAt : service?.pollLastRunAt;
   const realLiveRequested = runtime
@@ -299,7 +304,6 @@ function Topbar({ mode, tab, setTab, refresh, service, real }) {
 }
 
 function DemoWorkspace({ data, metrics, tab }) {
-  if (tab === 'shadow') return <ShadowTraderView shadowTrader={data.shadowTrader} />;
   if (tab === 'profit') return <ProfitView metrics={metrics} closedPositions={data.demo.closedPositions} />;
   if (tab === 'positions') {
     return (
@@ -320,7 +324,6 @@ function DemoWorkspace({ data, metrics, tab }) {
         <LiveFeed events={data.copiedFeed} />
       </section>
       <section className="sideColumn">
-        <ShadowTraderCard shadowTrader={data.shadowTrader} />
         <OpenPositionsCard positions={data.demo.openPositions} />
         <TraderGrid traders={data.traders} compact />
       </section>
@@ -332,7 +335,6 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
   const realState = useRealState();
   const mobileLayout = useMobileLayoutQuery();
   const real = realState.real;
-  const shadowTrader = data?.shadowTrader;
 
   if (realState.error) {
     return (
@@ -356,7 +358,6 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
   let desktopView = <RealOverview real={real} />;
   if (tab === 'following') desktopView = <RealFollowingView real={real} realState={realState} />;
   if (tab === 'real-traders') desktopView = <RealScoredTradersView realState={realState} />;
-  if (tab === 'shadow') desktopView = <ShadowTraderView shadowTrader={shadowTrader} />;
   if (tab === 'positions') desktopView = <RealPositionsView real={real} />;
   if (tab === 'orders') desktopView = <RealOrdersView real={real} />;
 
@@ -368,7 +369,6 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
         tab={tab}
         setTab={setTab}
         setMode={setMode}
-        shadowTrader={shadowTrader}
         mobileLayout={mobileLayout}
       />
       <div className="realDesktopWorkspace">{desktopView}</div>
@@ -376,7 +376,7 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
   );
 }
 
-function RealMobileDashboard({ real, realState, tab, setTab, setMode, shadowTrader, mobileLayout }) {
+function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayout }) {
   const [orderFilter, setOrderFilter] = React.useState('all');
   const runtime = real.runtime || {};
   const service = real.service || {};
@@ -418,12 +418,6 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, shadowTrad
     mobileMain = (
       <div className="realMobileInlinePanel realMobileScoresPanel">
         <RealScoredTradersView realState={realState} />
-      </div>
-    );
-  } else if (mobileLayout && tab === 'shadow') {
-    mobileMain = (
-      <div className="realMobileInlinePanel realMobileShadowPanel">
-        <ShadowTraderView shadowTrader={shadowTrader} />
       </div>
     );
   }
@@ -602,7 +596,6 @@ function RealMobileBottomNav({ tab, setTab }) {
     { id: 'following', label: 'Follows', icon: Users },
     { id: 'positions', label: 'Positions', icon: Layers3 },
     { id: 'real-traders', label: 'Scores', icon: Trophy },
-    { id: 'shadow', label: 'Shadow', icon: Eye },
   ];
   return (
     <nav className="realMobileBottomNav" aria-label="Mobile real dashboard tabs">
@@ -755,7 +748,7 @@ function RealRiskPanel({ real }) {
         <RealMiniStat label="Source age" value={`${Number(maxAge)}s`} />
       </div>
       <div className="adapterList compactRules">
-        <StatusLine active label="Manual real follow list only" />
+        <StatusLine active label="Manual picks from ECP score page only" />
         <StatusLine active label="One copied position per market" />
         <StatusLine active label="Duplicate source trades ignored" />
         <StatusLine active label="FOK order must fully fill" />
@@ -887,7 +880,7 @@ function RealScoredTradersView({ realState }) {
     setActionError(null);
     setPinRequest({
       title: 'Recalculate copy quality',
-      description: 'Scores will refresh from the latest resolved candidate history and active copy-pool wallets.',
+      description: 'Scores will refresh from all stored candidate history using the production ECP copy-quality model.',
       confirmLabel: 'Recalculate',
       onSubmit: async (pin) => {
         setPendingWallet('__recalculate__');
@@ -895,7 +888,7 @@ function RealScoredTradersView({ realState }) {
           const response = await fetch(`${API_BASE}/api/real/copy-quality/recalculate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeaders() },
-            body: JSON.stringify({ pin, scope: 'active_copy_pool' }),
+            body: JSON.stringify({ pin, scope: 'all_candidates' }),
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || 'Recalculate failed');
@@ -914,14 +907,14 @@ function RealScoredTradersView({ realState }) {
     <section className="panel fullPanel realScoredPanel">
       <div className="sectionHead">
         <div>
-          <p className="eyebrow">Copy quality</p>
+          <p className="eyebrow">Production ECP model</p>
           <h2>Scored real candidates</h2>
         </div>
         <div className="sectionActions">
           <button type="button" className="iconButton" onClick={() => setMetricsHelpOpen(true)} aria-label="Explain score metrics">
             <Info size={16} />
           </button>
-          <button className="textButton" onClick={requestRecalculate} disabled={cachedScores || pendingWallet === '__recalculate__'}>
+          <button className="textButton" onClick={requestRecalculate} disabled={pendingWallet === '__recalculate__'}>
             <RefreshCcw size={14} /> {pendingWallet === '__recalculate__' ? 'Scoring' : 'Recalculate'}
           </button>
           <button type="button" className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
@@ -930,8 +923,8 @@ function RealScoredTradersView({ realState }) {
 
       <p className="panelCopy">
         {cachedScores
-          ? 'Candidate tracking is disabled. Showing the last saved Copy Quality scores without running polling, backfill, or resolution workers.'
-          : 'Copy Quality ranks wallets by how suitable they are for this copier, not by raw trader leaderboard performance.'}
+          ? 'Production ECP scores are served from saved candidate history while global discovery stays disabled.'
+          : 'Production ECP scores rank wallets by expected copy profit, conservative edge, execution quality, risk, and sample reliability.'}
       </p>
 
       <div className="candidateSummary">
@@ -1216,6 +1209,7 @@ function RealFollowingView({ real, realState }) {
   const [pinRequest, setPinRequest] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
   const [pendingWallet, setPendingWallet] = React.useState(null);
+  const activeFollows = (real.follows || []).filter((follow) => follow.status === 'active');
 
   const requestRemove = React.useCallback((follow) => {
     setActionError(null);
@@ -1244,6 +1238,36 @@ function RealFollowingView({ real, realState }) {
     });
   }, [realState]);
 
+  const requestRemoveAll = React.useCallback(() => {
+    setActionError(null);
+    setPinRequest({
+      title: 'Remove all real follows',
+      description: 'Every active Real follow will stop being tracked for new entries. Existing orders and positions stay in history.',
+      confirmLabel: 'Remove all',
+      confirmationText: 'REMOVE ALL',
+      confirmationLabel: 'Type REMOVE ALL to confirm',
+      confirmationPlaceholder: 'Type REMOVE ALL',
+      onSubmit: async (pin, confirmation) => {
+        setPendingWallet('__remove_all__');
+        try {
+          const response = await fetch(`${API_BASE}/api/real/unfollow-all`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeaders() },
+            body: JSON.stringify({ pin, confirmation }),
+          });
+          const payload = await response.json();
+          if (!response.ok) throw new Error(payload.error || 'Bulk remove failed');
+          realState.setReal(payload.real);
+          setPinRequest(null);
+        } catch (submitError) {
+          setActionError(submitError.message);
+        } finally {
+          setPendingWallet(null);
+        }
+      },
+    });
+  }, [realState]);
+
   return (
     <section className="panel fullPanel realFollowPanel">
       <div className="sectionHead">
@@ -1251,7 +1275,17 @@ function RealFollowingView({ real, realState }) {
           <p className="eyebrow">Real follows</p>
           <h2>Manual copy list</h2>
         </div>
-        <button className="iconButton" onClick={realState.refresh} aria-label="Refresh real follows"><RefreshCcw size={16} /></button>
+        <div className="sectionActions">
+          <button
+            type="button"
+            className="textButton realRemoveButton"
+            onClick={requestRemoveAll}
+            disabled={!activeFollows.length || pendingWallet === '__remove_all__'}
+          >
+            <UserMinus size={14} /> Remove all
+          </button>
+          <button className="iconButton" onClick={realState.refresh} aria-label="Refresh real follows"><RefreshCcw size={16} /></button>
+        </div>
       </div>
       {actionError && <div className="candidateTradeMessage negative">{actionError}</div>}
       <RealFollowList follows={real.follows || []} onRemove={requestRemove} pendingWallet={pendingWallet} />
@@ -2437,12 +2471,16 @@ function CopyPoolCard({ title, icon: Icon, empty, events, tone }) {
 
 function PinPromptModal({ request, error, pending, onCancel }) {
   const [pin, setPin] = React.useState('');
+  const [confirmation, setConfirmation] = React.useState('');
 
   React.useEffect(() => {
     setPin('');
+    setConfirmation('');
   }, [request]);
 
   if (!request) return null;
+  const confirmationRequired = Boolean(request.confirmationText);
+  const confirmationMatches = !confirmationRequired || confirmation.trim() === request.confirmationText;
 
   return (
     <div className="modalBackdrop" role="presentation">
@@ -2450,7 +2488,8 @@ function PinPromptModal({ request, error, pending, onCancel }) {
         className="pinModal"
         onSubmit={(event) => {
           event.preventDefault();
-          request.onSubmit(pin);
+          if (!confirmationMatches) return;
+          request.onSubmit(pin, confirmation);
         }}
       >
         <div>
@@ -2467,10 +2506,19 @@ function PinPromptModal({ request, error, pending, onCancel }) {
           placeholder="PIN"
           aria-label="Real action PIN"
         />
+        {confirmationRequired && (
+          <input
+            type="text"
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            placeholder={request.confirmationPlaceholder || request.confirmationText}
+            aria-label={request.confirmationLabel || 'Confirmation text'}
+          />
+        )}
         {error && <strong className="negative">{error}</strong>}
         <div className="pinModalActions">
           <button type="button" className="textButton" onClick={onCancel} disabled={pending}>Cancel</button>
-          <button type="submit" className="textButton primaryAction" disabled={pending || !pin}>
+          <button type="submit" className="textButton primaryAction" disabled={pending || !pin || !confirmationMatches}>
             {pending ? 'Working...' : request.confirmLabel || 'Confirm'}
           </button>
         </div>

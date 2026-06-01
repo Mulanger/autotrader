@@ -25,6 +25,7 @@ export async function createRealStorage() {
     migrateError: null,
     followTrader: (profile) => followTrader(pool, profile),
     unfollowTrader: (wallet) => unfollowTrader(pool, wallet),
+    unfollowAllTraders: () => unfollowAllTraders(pool),
     listActiveFollows: () => listActiveFollows(pool),
     hasOrderAttempt: (id) => hasOrderAttempt(pool, id),
     findPositionByMarketKeys: (params) => findPositionByMarketKeys(pool, params),
@@ -88,6 +89,18 @@ export function createMemoryRealStorage(mode = 'memory_only', migrateError = nul
       follows.set(wallet, entry);
       addEvent({ wallet, action: 'removed', reason: 'Manual real follow removed', payload: entry });
       return entry;
+    },
+    async unfollowAllTraders() {
+      const now = new Date().toISOString();
+      const entries = [];
+      for (const [wallet, existing] of follows.entries()) {
+        if (existing.status !== 'active') continue;
+        const entry = { ...existing, status: 'removed', removedAt: now, updatedAt: now };
+        follows.set(wallet, entry);
+        entries.push(entry);
+        addEvent({ wallet, action: 'removed', reason: 'Bulk real follow reset', payload: entry });
+      }
+      return { removedCount: entries.length, entries };
     },
     async listActiveFollows() {
       return [...follows.values()].filter((follow) => follow.status === 'active');
@@ -364,6 +377,37 @@ async function unfollowTrader(pool, walletInput) {
     await insertEvent(client, { wallet, action: 'removed', reason: 'Manual real follow removed', payload: entry });
     await client.query('commit');
     return entry;
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function unfollowAllTraders(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const result = await client.query(
+      `
+        update real_followed_traders
+        set status = 'removed', removed_at = now(), updated_at = now()
+        where status = 'active'
+        returning *
+      `
+    );
+    const entries = result.rows.map(mapFollowRow);
+    for (const entry of entries) {
+      await insertEvent(client, {
+        wallet: entry.wallet,
+        action: 'removed',
+        reason: 'Bulk real follow reset',
+        payload: entry,
+      });
+    }
+    await client.query('commit');
+    return { removedCount: entries.length, entries };
   } catch (error) {
     await client.query('rollback').catch(() => {});
     throw error;

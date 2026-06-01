@@ -65,9 +65,9 @@ The `$1k-$10k` candidate trader tracker is isolated behind `CANDIDATE_TRACKER_EN
 
 For low-cost ongoing maintenance, keep global discovery disabled and enable `CANDIDATE_MAINTENANCE_ENABLED=true` on the Railway app service. The server then refreshes only active copy-pool, scored, and baseline wallets on a daily interval using wallet-scoped Data API requests with a 48-hour overlap. This updates `candidate_trades` and resolves due markets daily without scanning the full Polymarket trade feed. Real copy-quality scores are recalculated on a separate, slower scoring interval so Railway compute is not spent rescoring the full trader pool every day.
 
-The Real dashboard has a scored traders tab backed by cached `real_copy_quality_scores`. It ranks active copy-pool and baseline wallets by copier-specific Copy Quality Score using median entry, conservative copy edge, profit factor, drawdown/profit ratio, sample size, and top-win concentration. This is decision support only; it does not auto-add wallets to Real follows.
+The Real dashboard has a scored traders tab backed by cached `real_copy_quality_scores`. It is the production trader-selection surface and ranks wallets by copier-specific ECP, conservative copy edge, execution quality, profit factor, drawdown/profit ratio, sample size, and top-win concentration. Trader selection remains manual; the app does not auto-add wallets to Real follows.
 
-Shadow trading is independent of global candidate discovery. With `SHADOW_POLLING_ENABLED=true`, the server polls only the current shadow top-20 wallets and paper-copies qualifying BUY trades into the shadow portfolio while keeping Real follows and Real orders untouched.
+Shadow trading is disabled by default. The old shadow state is kept for rollback compatibility, but production selection happens from the Real scored traders page.
 
 ## Environment
 
@@ -103,10 +103,10 @@ Optional:
 - `CANDIDATE_BACKFILL_PAGE_LIMIT`: defaults to `500`.
 - `CANDIDATE_BACKFILL_MAX_OFFSET`: defaults to `10000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: defaults to `250`.
-- `SHADOW_POLLING_ENABLED`: enables low-cost live polling for only the current shadow top-20 wallets, defaults to `true`.
+- `SHADOW_POLLING_ENABLED`: enables low-cost live polling for only the current shadow top-20 wallets, defaults to `false`.
 - `SHADOW_FOLLOW_POLL_INTERVAL_MS`: shadow selected-wallet poll interval, defaults to `30000`.
 - `SHADOW_FOLLOW_POLL_LIMIT`: per-wallet shadow poll trade limit, defaults to `100`.
-- `AUTO_COPY_POOL_ENABLED`: enables automated candidate promotion/removal, defaults to `true`.
+- `AUTO_COPY_POOL_ENABLED`: enables legacy automated win-rate candidate promotion/removal, defaults to `false`.
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: promotion and retention minimum resolved distinct BUY markets, defaults to `15`.
 - `AUTO_COPY_MIN_WIN_RATE_PCT`: promotion win-rate threshold, defaults to `75`.
 - `AUTO_COPY_REMOVE_MIN_WIN_RATE_PCT`: lower retention/removal win-rate threshold, defaults to `70`.

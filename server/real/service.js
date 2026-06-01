@@ -115,6 +115,20 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     return { ok: true, entry, real: state.real };
   }
 
+  async function unfollowAllTraders({ pin, confirmation } = {}) {
+    assertPin(pin);
+    if (String(confirmation || '').trim() !== 'REMOVE ALL') {
+      const error = new Error('Type REMOVE ALL to confirm removing every active Real follow');
+      error.status = 400;
+      throw error;
+    }
+    if (!storage) throw new Error('Real trader service is not ready');
+    const result = await storage.unfollowAllTraders();
+    await refreshState();
+    broadcast();
+    return { ok: true, ...result, real: state.real };
+  }
+
   async function runPoll() {
     if (!storage || pollRunning) return { checked: 0, inserted: 0, skippedStale: 0 };
     pollRunning = true;
@@ -417,6 +431,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     getState,
     followTrader,
     unfollowTrader,
+    unfollowAllTraders,
     runPoll,
     runReconciliation,
     buildDryRunAttempt: buildExecutionAttempt,

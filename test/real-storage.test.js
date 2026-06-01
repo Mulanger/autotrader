@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createMemoryRealStorage } from '../server/real/storage.js';
 
 const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const wallet2 = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 function attempt(overrides = {}) {
   return {
@@ -62,6 +63,27 @@ describe('real memory storage', () => {
     expect(state.positions).toHaveLength(1);
     expect(state.summary.wouldFillCount).toBe(1);
     expect(state.follows[0].metrics.attemptedCount).toBe(1);
+  });
+
+  it('bulk removes active follows without deleting orders or positions', async () => {
+    const storage = createMemoryRealStorage();
+    await storage.followTrader({ wallet });
+    await storage.followTrader({ wallet: wallet2 });
+    const afterFollow = new Date(Date.now() + 1_000).toISOString();
+    await storage.recordOrderAttempt(attempt({
+      checkedAt: afterFollow,
+      sourceTradeTimestamp: afterFollow,
+    }));
+
+    const result = await storage.unfollowAllTraders();
+    const state = await storage.getState();
+
+    expect(result.removedCount).toBe(2);
+    expect(state.summary.activeFollowCount).toBe(0);
+    expect(state.summary.removedFollowCount).toBe(2);
+    expect(state.orders).toHaveLength(1);
+    expect(state.positions).toHaveLength(1);
+    expect(state.events.filter((event) => event.reason === 'Bulk real follow reset')).toHaveLength(2);
   });
 
   it('does not let a closed position block a future copy of the same market', async () => {

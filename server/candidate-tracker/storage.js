@@ -1020,7 +1020,7 @@ async function getSummary(pool) {
 }
 
 async function recalculateRealCopyQuality(pool, {
-  scope = 'active_copy_pool',
+  scope = 'all_candidates',
   wallet = null,
   baselineWallets = [],
 } = {}) {
@@ -1044,7 +1044,7 @@ async function recalculateRealCopyQuality(pool, {
 }
 
 async function getRealCopyQualityMetricRows(pool, {
-  scope = 'active_copy_pool',
+  scope = 'all_candidates',
   wallet = null,
   baselineWallets = [],
 } = {}) {

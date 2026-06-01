@@ -98,13 +98,13 @@ export const CANDIDATE_STALE_BACKFILL_MS = Number(process.env.CANDIDATE_STALE_BA
 
 export const CANDIDATE_RESOLUTION_BATCH_SIZE = Number(process.env.CANDIDATE_RESOLUTION_BATCH_SIZE || 250);
 
-export const SHADOW_POLLING_ENABLED = parseBoolean(process.env.SHADOW_POLLING_ENABLED, true);
+export const SHADOW_POLLING_ENABLED = parseBoolean(process.env.SHADOW_POLLING_ENABLED, false);
 
 export const SHADOW_FOLLOW_POLL_INTERVAL_MS = Number(process.env.SHADOW_FOLLOW_POLL_INTERVAL_MS || 30_000);
 
 export const SHADOW_FOLLOW_POLL_LIMIT = Number(process.env.SHADOW_FOLLOW_POLL_LIMIT || 100);
 
-export const AUTO_COPY_POOL_ENABLED = parseBoolean(process.env.AUTO_COPY_POOL_ENABLED, true);
+export const AUTO_COPY_POOL_ENABLED = parseBoolean(process.env.AUTO_COPY_POOL_ENABLED, false);
 
 export const AUTO_COPY_POOL_INTERVAL_MS = Number(process.env.AUTO_COPY_POOL_INTERVAL_MS || 300_000);
 

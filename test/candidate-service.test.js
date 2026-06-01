@@ -265,7 +265,7 @@ describe('candidate tracker service', () => {
     expect(calls.upserts[0].source).toBe('maintenance');
     expect(calls.upserts[0].usdSize).toBe(1500);
     expect(calls.resolutionLimits).toEqual([25]);
-    expect(calls.copyPoolRuns).toBe(1);
+    expect(calls.copyPoolRuns).toBe(0);
     expect(calls.scoringScopes).toEqual(['active_scored']);
     expect(calls.serviceState.map(([key]) => key)).toEqual([
       'maintenance:last_fetch',
@@ -487,6 +487,66 @@ describe('candidate tracker service', () => {
     expect(state.real.follows).toHaveLength(0);
     expect(state.real.orders).toHaveLength(0);
     expect(state.real.positions).toHaveLength(0);
+  });
+
+  it('does not fetch selected shadow wallets when shadow polling is disabled', async () => {
+    const state = createAppState();
+    const wallet = '0xcccccccccccccccccccccccccccccccccccccccc';
+    applyShadowTraderSnapshot(state, {
+      selectedWallets: {
+        [wallet]: { wallet, status: 'active', selectedAt: new Date().toISOString(), shadowRank: 1 },
+      },
+    });
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+    });
+    let fetchCount = 0;
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      shadowPollingEnabled: false,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => {
+        fetchCount += 1;
+        return [];
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runShadowPoll();
+    await tracker.close();
+
+    expect(summary).toMatchObject({ ok: true, status: 'disabled', checked: 0, copied: 0 });
+    expect(fetchCount).toBe(0);
+    expect(state.service.candidates.shadowPollStatus).toBe('disabled');
+  });
+
+  it('does not run legacy copy-pool promotion when copy-pool evaluation is disabled', async () => {
+    const state = createAppState();
+    let evaluateCount = 0;
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      evaluateCopyPool: async () => {
+        evaluateCount += 1;
+        throw new Error('copy pool should be disabled');
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      shadowPollingEnabled: false,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => [],
+    });
+
+    await tracker.start();
+    await tracker.runCopyPoolEvaluation();
+    await tracker.close();
+
+    expect(evaluateCount).toBe(0);
+    expect(state.service.candidates.copyPoolStatus).toBe('disabled');
   });
 
   it('skips startup maintenance when the last successful run is still fresh', async () => {
@@ -767,7 +827,7 @@ describe('candidate tracker service', () => {
     await tracker.close();
 
     expect(calls.fetches).toBe(0);
-    expect(calls.copyPoolRuns).toBe(1);
+    expect(calls.copyPoolRuns).toBe(0);
     expect(calls.scoringRuns).toBe(1);
     expect(calls.serviceState.map(([key]) => key)).toEqual(['maintenance:last_score', 'maintenance:last_run']);
     expect(summary).toMatchObject({

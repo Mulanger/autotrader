@@ -42,7 +42,7 @@ export function createRealRoutes(realService, candidateTracker = null) {
         q: request.query.q || '',
         tier: request.query.tier || 'all',
         eligible: parseOptionalBoolean(request.query.eligible),
-        sort: request.query.sort || 'score',
+        sort: request.query.sort || 'expectedProfit',
         order: request.query.order || 'desc',
       });
       const follows = await realFollowMap(realService);
@@ -130,6 +130,15 @@ export function createRealRoutes(realService, candidateTracker = null) {
     }
   });
 
+  router.post('/unfollow-all', async (request, response) => {
+    try {
+      const result = await realService.unfollowAllTraders(request.body || {});
+      response.json(result);
+    } catch (error) {
+      response.status(statusCode(error)).json({ ok: false, error: error.message });
+    }
+  });
+
   return router;
 }
 
@@ -160,7 +169,8 @@ function normalizeCopyQualityScope(value) {
   const text = String(value || '').trim().toLowerCase();
   if (text === 'all_candidates') return 'all_candidates';
   if (text === 'active_copy_pool') return 'active_copy_pool';
-  return 'active_scored';
+  if (text === 'active_scored') return 'active_scored';
+  return 'all_candidates';
 }
 
 function statusCode(error) {

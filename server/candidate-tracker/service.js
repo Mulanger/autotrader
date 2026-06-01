@@ -1100,7 +1100,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
-  async function runRealCopyQualityScoring({ scope = 'active_copy_pool', wallet = null } = {}) {
+  async function runRealCopyQualityScoring({ scope = 'all_candidates', wallet = null } = {}) {
     if (realCopyQualityRunning) return state.service.realCopyQuality;
     if (!storage && !(await ensureStorageAvailable())) {
       return { ok: false, error: state.service.realCopyQuality.lastError || 'Candidate storage is unavailable' };
