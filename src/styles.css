@@ -489,10 +489,11 @@ button {
 .shadowPanel {
   display: grid;
   gap: 14px;
+  min-width: 0;
 }
 
 .shadowSummary {
-  grid-template-columns: repeat(4, minmax(130px, 1fr));
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
 .shadowCriteria {
@@ -516,16 +517,30 @@ button {
 
 .shadowColumns {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(270px, 0.45fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.55fr);
   gap: 14px;
   align-items: start;
 }
 
 .shadowScoreGrid {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(320px, 0.55fr);
+  grid-template-columns: minmax(360px, 0.9fr) minmax(360px, 1fr);
   gap: 14px;
   align-items: start;
+}
+
+.shadowWorkspace {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+}
+
+.shadowWorkspace > .feedPanel {
+  min-height: auto;
+}
+
+.shadowScoreGrid > section,
+.shadowColumns > section {
+  min-width: 0;
 }
 
 .compactHead {
@@ -535,6 +550,12 @@ button {
 .shadowWalletList {
   display: grid;
   gap: 8px;
+}
+
+.shadowColumns .shadowWalletList {
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 3px;
 }
 
 .shadowWalletRow {
@@ -631,6 +652,10 @@ button {
   display: grid;
   justify-items: end;
   gap: 2px;
+}
+
+.shadowCandidateNumbers b {
+  white-space: nowrap;
 }
 
 .shadowCandidateNumbers small {
@@ -2979,6 +3004,182 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .realMobileShadowPanel {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .realMobileShadowPanel .shadowWorkspace {
+    gap: 10px;
+  }
+
+  .realMobileShadowPanel .shadowPanel,
+  .realMobileShadowPanel .feedPanel {
+    padding: 12px;
+    border-radius: 8px;
+  }
+
+  .realMobileShadowPanel .sectionHead {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .realMobileShadowPanel .sectionActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px;
+    max-width: 176px;
+  }
+
+  .realMobileShadowPanel .sectionActions .statusBadge {
+    max-width: 132px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .realMobileShadowPanel .metricStrip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .realMobileShadowPanel .metric {
+    min-height: 82px;
+    padding: 11px;
+  }
+
+  .realMobileShadowPanel .metric strong {
+    font-size: 1.12rem;
+  }
+
+  .realMobileShadowPanel .shadowSummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .realMobileShadowPanel .positionStat {
+    min-height: 58px;
+    padding: 10px;
+  }
+
+  .realMobileShadowPanel .shadowCriteria {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .realMobileShadowPanel .shadowCriteria span {
+    flex: 0 0 auto;
+    min-height: 28px;
+    font-size: 0.74rem;
+  }
+
+  .realMobileShadowPanel .shadowScoreGrid,
+  .realMobileShadowPanel .shadowColumns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .realMobileShadowPanel .shadowRankedList {
+    max-height: 438px;
+    overflow: auto;
+    padding-right: 0;
+  }
+
+  .realMobileShadowPanel .shadowCandidateRow {
+    min-height: 58px;
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+    gap: 6px 8px;
+    padding: 9px;
+  }
+
+  .realMobileShadowPanel .shadowRankBadge {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    font-size: 0.8rem;
+  }
+
+  .realMobileShadowPanel .shadowCandidateRow strong {
+    font-size: 0.86rem;
+  }
+
+  .realMobileShadowPanel .shadowCandidateRow span {
+    font-size: 0.68rem;
+  }
+
+  .realMobileShadowPanel .shadowCandidateNumbers b {
+    font-size: 0.88rem;
+  }
+
+  .realMobileShadowPanel .shadowCandidateNumbers small {
+    display: none;
+  }
+
+  .realMobileShadowPanel .shadowCandidateRow .shadowProgress {
+    grid-column: 1 / -1;
+  }
+
+  .realMobileShadowPanel .shadowDetail {
+    padding: 10px;
+    gap: 10px;
+  }
+
+  .realMobileShadowPanel .shadowDetailHead {
+    display: grid;
+    justify-items: start;
+  }
+
+  .realMobileShadowPanel .shadowDetailHead code {
+    max-width: 100%;
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+
+  .realMobileShadowPanel .shadowScoreBar div {
+    gap: 8px;
+  }
+
+  .realMobileShadowPanel .shadowScoreBar strong {
+    font-size: 0.82rem;
+    text-align: right;
+  }
+
+  .realMobileShadowPanel .shadowDetailStats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
+  .realMobileShadowPanel .shadowFlags {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .realMobileShadowPanel .shadowColumns .shadowWalletList {
+    max-height: 420px;
+  }
+
+  .realMobileShadowPanel .shadowWalletRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 9px;
+  }
+
+  .realMobileShadowPanel .shadowWalletRow strong {
+    font-size: 0.86rem;
+  }
+
+  .realMobileShadowPanel .shadowWalletRow small {
+    grid-column: 1 / -1;
+    line-height: 1.3;
+  }
+
+  .realMobileShadowPanel .positionList,
+  .realMobileShadowPanel .feedList {
+    gap: 8px;
+  }
+
   .candidateSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3161,6 +3362,19 @@ button {
   .realOrderStats .realMiniStat,
   .realRiskGrid .realMiniStat {
     grid-column: auto;
+  }
+
+  .realMobileShadowPanel .shadowDetailHead,
+  .realMobileShadowPanel .shadowBars,
+  .realMobileShadowPanel .shadowDetailStats,
+  .realMobileShadowPanel .shadowFlags {
+    grid-column: 1 / -1;
+  }
+
+  .realMobileShadowPanel .shadowDetailStats .realMiniStat {
+    grid-column: auto;
+    justify-self: stretch;
+    justify-items: start;
   }
 
   .realOrderStatus small {
