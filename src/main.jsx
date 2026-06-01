@@ -801,18 +801,24 @@ function RealMetricStrip({ summary, real }) {
 }
 
 function RealScoredTradersView({ realState }) {
-  const [tier, setTier] = React.useState('all');
-  const [eligibleOnly, setEligibleOnly] = React.useState(true);
+  const [scoreView, setScoreView] = React.useState('eligible');
   const [sort, setSort] = React.useState('expectedProfit');
   const [query, setQuery] = React.useState('');
   const [metricsHelpOpen, setMetricsHelpOpen] = React.useState(false);
   const [pinRequest, setPinRequest] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
   const [pendingWallet, setPendingWallet] = React.useState(null);
-  const quality = useRealCopyQuality({ tier, eligibleOnly, sort, query });
+  const scoreViewConfig = SCORE_PAGE_VIEWS[scoreView] || SCORE_PAGE_VIEWS.eligible;
+  const quality = useRealCopyQuality({
+    tier: scoreViewConfig.tier,
+    eligibleOnly: scoreViewConfig.eligibleOnly,
+    sort,
+    query,
+  });
   const rows = quality.payload?.rows || [];
   const summary = quality.payload?.summary || {};
   const cachedScores = Boolean(quality.payload?.cached);
+  const topPickCount = Number(summary.core || 0) + Number(summary.candidate || 0);
 
   const requestRealAdd = React.useCallback((row) => {
     setActionError(null);
@@ -930,21 +936,21 @@ function RealScoredTradersView({ realState }) {
       <div className="candidateSummary">
         <CopyQualityStat icon={Users} label="Scored" value={summary.scored || 0} />
         <CopyQualityStat icon={ShieldCheck} label="Eligible" value={summary.eligible || 0} />
-        <CopyQualityStat icon={Trophy} label="Core" value={summary.core || 0} />
-        <CopyQualityStat icon={Eye} label="Watchlist" value={summary.watchlist || 0} />
+        <CopyQualityStat icon={Trophy} label="Top picks" value={topPickCount} />
         <CopyQualityStat icon={Clock3} label="Last scored" value={formatTimeAgo(summary.lastScoredAt)} />
       </div>
 
       <div className="candidateToolbar realQualityToolbar">
         <label>
-          <span>Tier</span>
-          <select value={tier} onChange={(event) => setTier(event.target.value)}>
-            <option value="all">all</option>
-            <option value="core">core</option>
-            <option value="candidate">candidate</option>
-            <option value="watchlist">watchlist</option>
+          <span>View</span>
+          <select value={scoreView} onChange={(event) => setScoreView(event.target.value)}>
+            <option value="eligible">eligible picks</option>
+            <option value="top">strongest</option>
+            <option value="candidate">good candidates</option>
+            <option value="review">review list</option>
             <option value="manual_review">manual review</option>
-            <option value="ignore">ignore</option>
+            <option value="rejected">rejected</option>
+            <option value="all">all scored</option>
           </select>
         </label>
         <label>
@@ -959,10 +965,6 @@ function RealScoredTradersView({ realState }) {
             <option value="drawdown">drawdown</option>
             <option value="updated">updated</option>
           </select>
-        </label>
-        <label className="toggleLine">
-          <input type="checkbox" checked={eligibleOnly} onChange={(event) => setEligibleOnly(event.target.checked)} />
-          <span>Eligible only</span>
         </label>
         <input
           className="searchInput"
@@ -1010,6 +1012,16 @@ function RealScoredTradersView({ realState }) {
     </section>
   );
 }
+
+const SCORE_PAGE_VIEWS = {
+  eligible: { tier: 'all', eligibleOnly: true },
+  top: { tier: 'core', eligibleOnly: true },
+  candidate: { tier: 'candidate', eligibleOnly: true },
+  review: { tier: 'watchlist', eligibleOnly: false },
+  manual_review: { tier: 'manual_review', eligibleOnly: false },
+  rejected: { tier: 'ignore', eligibleOnly: false },
+  all: { tier: 'all', eligibleOnly: false },
+};
 
 const SCORE_METRIC_HELP = [
   {
