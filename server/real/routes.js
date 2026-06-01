@@ -143,9 +143,11 @@ export function createRealRoutes(realService, candidateTracker = null) {
 }
 
 async function realFollowMap(realService) {
-  const state = await realService.getState();
+  const followRows = typeof realService.listActiveFollows === 'function'
+    ? await realService.listActiveFollows()
+    : (await realService.getState())?.follows || [];
   const follows = {};
-  for (const follow of state?.follows || []) {
+  for (const follow of followRows || []) {
     follows[String(follow.wallet || '').toLowerCase()] = follow;
   }
   return follows;

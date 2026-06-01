@@ -97,6 +97,11 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     return refreshState();
   }
 
+  async function listActiveFollows() {
+    if (!storage) return state.real?.follows?.filter((follow) => follow.status === 'active') || [];
+    return storage.listActiveFollows();
+  }
+
   async function followTrader(profile) {
     assertPin(profile?.pin);
     if (!storage) throw new Error('Real trader service is not ready');
@@ -429,6 +434,7 @@ export function createRealTraderService(state, broadcast = () => {}, options = {
     start,
     close,
     getState,
+    listActiveFollows,
     followTrader,
     unfollowTrader,
     unfollowAllTraders,

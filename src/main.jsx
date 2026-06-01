@@ -40,6 +40,8 @@ const API_BASE = '';
 const CANDIDATE_TRADE_PAGE_SIZE = 80;
 const DASHBOARD_TOKEN_KEY = 'AUTOTRADER_DASHBOARD_TOKEN';
 const EMPTY_METRIC = '\u2014';
+const REAL_COPY_QUALITY_CACHE_MS = 60_000;
+const realCopyQualitySessionCache = new Map();
 
 function dashboardAuthToken() {
   const params = new URLSearchParams(window.location.search);
@@ -843,7 +845,7 @@ function RealScoredTradersView({ realState }) {
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || 'Real follow failed');
           realState.setReal(payload.real);
-          await quality.refresh();
+          await quality.refresh({ force: true });
           setPinRequest(null);
         } catch (submitError) {
           setActionError(submitError.message);
@@ -871,7 +873,7 @@ function RealScoredTradersView({ realState }) {
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || 'Real remove failed');
           realState.setReal(payload.real);
-          await quality.refresh();
+          await quality.refresh({ force: true });
           setPinRequest(null);
         } catch (submitError) {
           setActionError(submitError.message);
@@ -898,7 +900,7 @@ function RealScoredTradersView({ realState }) {
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error || 'Recalculate failed');
-          await quality.refresh();
+          await quality.refresh({ force: true });
           setPinRequest(null);
         } catch (submitError) {
           setActionError(submitError.message);
@@ -2211,37 +2213,59 @@ function useRealState() {
 }
 
 function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'expectedProfit', query = '' } = {}) {
-  const [payload, setPayload] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
+  const params = React.useMemo(() => {
+    const nextParams = new URLSearchParams();
+    nextParams.set('limit', '100');
+    nextParams.set('tier', tier || 'all');
+    nextParams.set('eligible', eligibleOnly ? 'true' : 'all');
+    nextParams.set('sort', sort || 'expectedProfit');
+    nextParams.set('order', ['entry', 'drawdown'].includes(sort) ? 'asc' : 'desc');
+    if (query.trim()) nextParams.set('q', query.trim());
+    return nextParams.toString();
+  }, [eligibleOnly, query, sort, tier]);
+  const cached = realCopyQualitySessionCache.get(params);
+  const cachedFresh = cached && Date.now() - cached.storedAt < REAL_COPY_QUALITY_CACHE_MS;
+  const [payload, setPayload] = React.useState(cachedFresh ? cached.payload : null);
+  const [loading, setLoading] = React.useState(!cachedFresh);
   const [error, setError] = React.useState(null);
 
-  const refresh = React.useCallback(async () => {
-    const params = new URLSearchParams();
-    params.set('limit', '100');
-    params.set('tier', tier || 'all');
-    params.set('eligible', eligibleOnly ? 'true' : 'all');
-    params.set('sort', sort || 'expectedProfit');
-    params.set('order', ['entry', 'drawdown'].includes(sort) ? 'asc' : 'desc');
-    if (query.trim()) params.set('q', query.trim());
+  const refresh = React.useCallback(async ({ force = false } = {}) => {
+    const nextCached = realCopyQualitySessionCache.get(params);
+    if (!force && nextCached && Date.now() - nextCached.storedAt < REAL_COPY_QUALITY_CACHE_MS) {
+      setPayload(nextCached.payload);
+      setError(null);
+      setLoading(false);
+      return nextCached.payload;
+    }
     try {
       const response = await fetch(`${API_BASE}/api/real/copy-quality?${params.toString()}`, { headers: authHeaders() });
       const nextPayload = await response.json();
       if (!response.ok) throw new Error(nextPayload.error || 'Copy quality request failed');
+      realCopyQualitySessionCache.set(params, { payload: nextPayload, storedAt: Date.now() });
       setPayload(nextPayload);
       setError(null);
+      return nextPayload;
     } catch (fetchError) {
       setError(fetchError.message);
+      return null;
     } finally {
       setLoading(false);
     }
-  }, [eligibleOnly, query, sort, tier]);
+  }, [params]);
 
   React.useEffect(() => {
-    setLoading(true);
+    const nextCached = realCopyQualitySessionCache.get(params);
+    if (nextCached && Date.now() - nextCached.storedAt < REAL_COPY_QUALITY_CACHE_MS) {
+      setPayload(nextCached.payload);
+      setLoading(false);
+      setError(null);
+    } else {
+      setLoading(true);
+    }
     refresh();
     const timer = window.setInterval(refresh, 30_000);
     return () => window.clearInterval(timer);
-  }, [refresh]);
+  }, [params, refresh]);
 
   return { payload, loading, error, refresh };
 }

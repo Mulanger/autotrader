@@ -25,16 +25,18 @@ function startApp(realService, candidateTracker = null) {
 }
 
 function fakeService(snapshot = null) {
+  const follows = [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', status: 'active' }];
   return {
     getState: async () => ({
       ok: true,
       summary: { activeFollowCount: 1 },
-      follows: [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', status: 'active' }],
+      follows,
       orders: [],
       positions: [],
       runtime: snapshot?.runtime || null,
       account: snapshot?.account || null,
     }),
+    listActiveFollows: async () => follows,
     followTrader: async () => ({ ok: true }),
     unfollowTrader: async () => ({ ok: true }),
     unfollowAllTraders: async () => ({ ok: true, removedCount: 1 }),
@@ -158,6 +160,36 @@ describe('real routes', () => {
 
     expect(response.status).toBe(200);
     expect(requestedParams.sort).toBe('expectedProfit');
+  });
+
+  it('annotates copy-quality rows from active follows without loading full real state', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    let getStateCalled = false;
+    const service = {
+      ...fakeService(),
+      getState: async () => {
+        getStateCalled = true;
+        throw new Error('full real state should not be loaded');
+      },
+      listActiveFollows: async () => [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', status: 'active' }],
+    };
+    const candidateTracker = {
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: {},
+        rows: [{ wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', score: 90 }],
+      }),
+    };
+    const base = await startApp(service, candidateTracker);
+
+    const response = await fetch(`${base}/api/real/copy-quality`, {
+      headers: { Authorization: 'Bearer secret-token' },
+    });
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(getStateCalled).toBe(false);
+    expect(payload.rows[0].realFollowStatus).toBe('active');
   });
 
   it('exposes a PIN-gated bulk unfollow route', async () => {
