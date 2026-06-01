@@ -496,6 +496,22 @@ button {
   grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
+.shadowTrackingGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.shadowTrackingGrid .positionStat strong {
+  overflow-wrap: anywhere;
+}
+
+.shadowPollError {
+  grid-column: 1 / -1;
+  border-color: #f4c8cf;
+  background: #fff8f9;
+}
+
 .shadowCriteria {
   display: flex;
   flex-wrap: wrap;
@@ -3000,6 +3016,7 @@ button {
 
   .shadowCardStats,
   .shadowSummary,
+  .shadowTrackingGrid,
   .shadowScoreGrid {
     grid-template-columns: 1fr;
   }
@@ -3057,6 +3074,15 @@ button {
   .realMobileShadowPanel .shadowSummary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+  }
+
+  .realMobileShadowPanel .shadowTrackingGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .realMobileShadowPanel .shadowPollError {
+    grid-column: 1 / -1;
   }
 
   .realMobileShadowPanel .positionStat {

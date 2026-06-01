@@ -312,6 +312,7 @@ describe('candidate tracker service', () => {
       enabled: false,
       maintenanceEnabled: true,
       maintenanceRunOnStart: false,
+      shadowPollingEnabled: false,
       maintenancePageLimit: 10,
       copyPoolEnabled: false,
       storageFactory: async () => storage,
@@ -337,6 +338,155 @@ describe('candidate tracker service', () => {
     expect(state.shadowTrader.feed).toHaveLength(1);
     expect(state.shadowTrader.feed[0].source).toBe('shadow-maintenance');
     expect(state.shadowTrader.portfolio.openPositions).toHaveLength(1);
+  });
+
+  it('polls only selected shadow wallets while global candidate polling is disabled', async () => {
+    const state = createAppState();
+    state.watchedWallets = [];
+    const walletA = '0xcccccccccccccccccccccccccccccccccccccccc';
+    const walletB = '0xdddddddddddddddddddddddddddddddddddddddd';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const selectedAt = new Date((nowSeconds - 60 * 60) * 1000).toISOString();
+    applyShadowTraderSnapshot(state, {
+      lastEvaluatedAt: selectedAt,
+      selectedWallets: {
+        [walletA]: { wallet: walletA, status: 'active', selectedAt, shadowRank: 1 },
+        [walletB]: { wallet: walletB, status: 'active', selectedAt, shadowRank: 2 },
+      },
+    });
+
+    const calls = { fetches: [], upserts: [] };
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      getServiceState: async () => null,
+      upsertTrade: async (trade) => {
+        calls.upserts.push(trade);
+        return { insertedTrade: true };
+      },
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      shadowPollingEnabled: true,
+      shadowRunOnStart: false,
+      shadowPollLimit: 5,
+      setInterval: () => 'shadow-timer',
+      clearInterval: () => {},
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        if (params.user === walletA) {
+          return [rawTrade(30, { proxyWallet: walletA, timestamp: nowSeconds, price: 0.5, size: 3_000 })];
+        }
+        if (params.user === walletB) {
+          return [rawTrade(31, { proxyWallet: walletB, timestamp: nowSeconds, price: 0.5, size: 3_000 })];
+        }
+        throw new Error(`unexpected wallet ${params.user}`);
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runShadowPoll();
+    await tracker.close();
+
+    expect(state.service.candidates.status).toBe('disabled');
+    expect(state.service.candidates.shadowPollingEnabled).toBe(true);
+    expect(calls.fetches.map((call) => call.user)).toEqual([walletA, walletB]);
+    expect(calls.fetches.every((call) => call.side === 'BUY')).toBe(true);
+    expect(calls.fetches.every((call) => call.limit === 5)).toBe(true);
+    expect(calls.fetches.every((call) => call.filterType === 'CASH' && call.filterAmount === 1000)).toBe(true);
+    expect(summary).toMatchObject({ ok: true, walletCount: 2, checked: 2, copied: 2 });
+    expect(calls.upserts).toHaveLength(2);
+    expect(state.shadowTrader.feed).toHaveLength(2);
+    expect(state.shadowTrader.portfolio.openPositions).toHaveLength(2);
+  });
+
+  it('ignores selected shadow wallet trades before selectedAt', async () => {
+    const state = createAppState();
+    state.watchedWallets = [];
+    const wallet = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const selectedAt = new Date((nowSeconds - 60 * 60) * 1000).toISOString();
+    applyShadowTraderSnapshot(state, {
+      lastEvaluatedAt: selectedAt,
+      selectedWallets: {
+        [wallet]: { wallet, status: 'active', selectedAt, shadowRank: 1 },
+      },
+    });
+
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      getServiceState: async () => null,
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      shadowPollingEnabled: true,
+      shadowRunOnStart: false,
+      setInterval: () => 'shadow-timer',
+      clearInterval: () => {},
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => [
+        rawTrade(40, { proxyWallet: wallet, timestamp: nowSeconds - 2 * 60 * 60, price: 0.5, size: 3_000 }),
+      ],
+    });
+
+    await tracker.start();
+    const summary = await tracker.runShadowPoll();
+    await tracker.close();
+
+    expect(summary).toMatchObject({ ok: true, walletCount: 1, checked: 0, copied: 0, skippedOld: 1 });
+    expect(state.service.candidates.shadowLastPollChecked).toBe(0);
+    expect(state.service.candidates.shadowLastPollCopied).toBe(0);
+    expect(state.shadowTrader.feed).toHaveLength(0);
+    expect(state.shadowTrader.portfolio.openPositions).toHaveLength(0);
+  });
+
+  it('paper-copies new selected-wallet BUY trades without creating real follows or orders', async () => {
+    const state = createAppState();
+    state.watchedWallets = [];
+    const wallet = '0xffffffffffffffffffffffffffffffffffffffff';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const selectedAt = new Date((nowSeconds - 60 * 60) * 1000).toISOString();
+    applyShadowTraderSnapshot(state, {
+      lastEvaluatedAt: selectedAt,
+      selectedWallets: {
+        [wallet]: { wallet, status: 'active', selectedAt, shadowRank: 1 },
+      },
+    });
+
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      getServiceState: async () => null,
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      shadowPollingEnabled: true,
+      shadowRunOnStart: false,
+      setInterval: () => 'shadow-timer',
+      clearInterval: () => {},
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async () => [
+        rawTrade(50, { proxyWallet: wallet, timestamp: nowSeconds, price: 0.5, size: 3_000 }),
+      ],
+    });
+
+    await tracker.start();
+    const summary = await tracker.runShadowPoll();
+    await tracker.close();
+
+    expect(summary).toMatchObject({ ok: true, walletCount: 1, checked: 1, copied: 1 });
+    expect(state.shadowTrader.feed).toHaveLength(1);
+    expect(state.shadowTrader.feed[0].source).toBe('shadow-live');
+    expect(state.shadowTrader.feed[0].shadowDecision.action).toBe('copied');
+    expect(state.shadowTrader.portfolio.openPositions).toHaveLength(1);
+    expect(state.real.follows).toHaveLength(0);
+    expect(state.real.orders).toHaveLength(0);
+    expect(state.real.positions).toHaveLength(0);
   });
 
   it('skips startup maintenance when the last successful run is still fresh', async () => {

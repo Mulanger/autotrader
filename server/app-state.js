@@ -309,7 +309,7 @@ export function snapshotState(state, options = {}) {
       decisions: state.demo.decisions.slice(0, 250),
     },
     real: state.real,
-    shadowTrader: shadowTraderView(state.shadowTrader),
+    shadowTrader: shadowTraderView(state.shadowTrader, state.service.candidates),
     ...(includeAllTrades ? { allTrades: state.allTrades } : {}),
     copiedFeed: state.copiedFeed,
   };
@@ -331,7 +331,7 @@ function serializeShadowTrader(shadowTrader) {
   };
 }
 
-function shadowTraderView(shadowTrader) {
+function shadowTraderView(shadowTrader, candidateService = {}) {
   const shadow = shadowTrader || createShadowTraderState();
   const portfolio = normalizeShadowPortfolio(shadow.portfolio);
   return {
@@ -347,6 +347,13 @@ function shadowTraderView(shadowTrader) {
     lastEvaluatedAt: shadow.lastEvaluatedAt || null,
     lastChangedCount: Number(shadow.lastChangedCount || 0),
     lastCopiedCount: Number(shadow.lastCopiedCount || 0),
+    shadowPollingEnabled: Boolean(candidateService.shadowPollingEnabled),
+    shadowPollIntervalMs: Number(candidateService.shadowPollIntervalMs || 0),
+    shadowPollStatus: candidateService.shadowPollStatus || null,
+    shadowLastPollAt: candidateService.shadowLastPollAt || null,
+    shadowLastPollChecked: Number(candidateService.shadowLastPollChecked || 0),
+    shadowLastPollCopied: Number(candidateService.shadowLastPollCopied || 0),
+    shadowLastPollError: candidateService.shadowLastPollError || null,
     metrics: markToMarket(portfolio),
     openPositions: portfolio.openPositions,
     closedPositions: portfolio.closedPositions.slice(0, 250),

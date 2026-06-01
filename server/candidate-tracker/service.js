@@ -27,6 +27,9 @@ import {
   CANDIDATE_RESOLUTION_POLL_INTERVAL_MS,
   CANDIDATE_STALE_BACKFILL_MS,
   CANDIDATE_TRACKER_ENABLED,
+  SHADOW_FOLLOW_POLL_INTERVAL_MS,
+  SHADOW_FOLLOW_POLL_LIMIT,
+  SHADOW_POLLING_ENABLED,
   WATCHED_WALLETS,
 } from '../config.js';
 import { ingestTrade } from '../app-state.js';
@@ -64,10 +67,16 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     options.maintenanceResolutionMaxTrades ?? CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES
   );
   const maintenanceRunOnStart = options.maintenanceRunOnStart ?? true;
+  const shadowPollingEnabled = options.shadowPollingEnabled ?? SHADOW_POLLING_ENABLED;
+  const shadowPollIntervalMs = Number(options.shadowPollIntervalMs ?? SHADOW_FOLLOW_POLL_INTERVAL_MS);
+  const shadowPollLimit = Number(options.shadowPollLimit ?? SHADOW_FOLLOW_POLL_LIMIT);
+  const shadowRunOnStart = options.shadowRunOnStart ?? true;
   const onStateChanged = options.onStateChanged || (() => {});
   const copyPoolEnabled = options.copyPoolEnabled ?? AUTO_COPY_POOL_ENABLED;
   const storageFactory = options.storageFactory || createCandidateStorage;
   const fetchTrades = options.fetchDataApiTrades || fetchDataApiTrades;
+  const setTimer = options.setInterval || setInterval;
+  const clearTimer = options.clearInterval || clearInterval;
   const copyPoolThresholds = defaultCopyPoolThresholds({
     minDistinctResolvedMarkets: AUTO_COPY_MIN_DISTINCT_MARKETS,
     minWinRatePct: AUTO_COPY_MIN_WIN_RATE_PCT,
@@ -81,12 +90,14 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let resolutionTimer = null;
   let copyPoolTimer = null;
   let maintenanceTimer = null;
+  let shadowPollTimer = null;
   let pollRunning = false;
   let backfillRunning = false;
   let resolutionRunning = false;
   let copyPoolRunning = false;
   let realCopyQualityRunning = false;
   let maintenanceRunning = false;
+  let shadowPollRunning = false;
   let pollBootstrapped = false;
 
   state.service.candidates = {
@@ -121,6 +132,13 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     shadowTraderLastRunAt: null,
     shadowTraderSelectedWalletCount: 0,
     shadowTraderLastCopiedCount: 0,
+    shadowPollingEnabled: Boolean(shadowPollingEnabled),
+    shadowPollIntervalMs,
+    shadowPollStatus: shadowPollingEnabled ? 'starting' : 'disabled',
+    shadowLastPollAt: null,
+    shadowLastPollChecked: 0,
+    shadowLastPollCopied: 0,
+    shadowLastPollError: null,
     maintenanceEnabled,
     maintenanceStatus: maintenanceEnabled ? 'starting' : 'disabled',
     maintenanceScope,
@@ -161,6 +179,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!enabled) {
       await startCachedRealCopyQuality();
       await startMaintenanceTimer();
+      await startShadowPollingTimer();
       return;
     }
 
@@ -197,6 +216,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     resolutionTimer = setInterval(runResolution, CANDIDATE_RESOLUTION_POLL_INTERVAL_MS);
     copyPoolTimer = setInterval(runCopyPoolEvaluation, AUTO_COPY_POOL_INTERVAL_MS);
     await startMaintenanceTimer();
+    await startShadowPollingTimer();
   }
 
   async function startCachedRealCopyQuality() {
@@ -281,7 +301,28 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     clearInterval(resolutionTimer);
     clearInterval(copyPoolTimer);
     clearInterval(maintenanceTimer);
+    if (shadowPollTimer) clearTimer(shadowPollTimer);
     await storage?.close();
+  }
+
+  async function startShadowPollingTimer() {
+    state.service.candidates.shadowPollingEnabled = Boolean(shadowPollingEnabled);
+    state.service.candidates.shadowPollIntervalMs = shadowPollIntervalMs;
+    if (!shadowPollingEnabled) {
+      state.service.candidates.shadowPollStatus = 'disabled';
+      return;
+    }
+    if (!storage && !(await ensureStorageAvailable())) {
+      state.service.candidates.shadowPollStatus = 'unavailable';
+      state.service.candidates.shadowLastPollError = state.service.candidates.lastError || 'Candidate storage is unavailable';
+      return;
+    }
+    state.service.candidates.shadowPollStatus = 'ready';
+    state.service.candidates.shadowTraderStatus = 'ready';
+    if (!shadowPollTimer) {
+      shadowPollTimer = setTimer(runShadowPoll, Math.max(5_000, shadowPollIntervalMs));
+    }
+    if (shadowRunOnStart) await runShadowPoll();
   }
 
   async function runPoll() {
@@ -341,6 +382,113 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     } finally {
       if (completed) pollBootstrapped = true;
       pollRunning = false;
+    }
+  }
+
+  async function runShadowPoll() {
+    if (!shadowPollingEnabled) {
+      state.service.candidates.shadowPollStatus = 'disabled';
+      return { ok: true, status: 'disabled', checked: 0, copied: 0 };
+    }
+    if (shadowPollRunning) {
+      return {
+        ok: true,
+        status: 'running',
+        checked: Number(state.service.candidates.shadowLastPollChecked || 0),
+        copied: Number(state.service.candidates.shadowLastPollCopied || 0),
+      };
+    }
+    if (!storage && !(await ensureStorageAvailable())) {
+      const error = state.service.candidates.lastError || 'Candidate storage is unavailable';
+      state.service.candidates.shadowPollStatus = 'unavailable';
+      state.service.candidates.shadowLastPollError = error;
+      return { ok: false, status: 'unavailable', checked: 0, copied: 0, error };
+    }
+
+    shadowPollRunning = true;
+    const shadowSelections = selectedShadowWalletsForMaintenance(state);
+    const walletList = [...shadowSelections.keys()];
+    let checked = 0;
+    let copied = 0;
+    let observed = 0;
+    let inserted = 0;
+    let skippedOld = 0;
+    const errors = [];
+
+    try {
+      state.service.candidates.shadowPollStatus = 'polling';
+      state.service.candidates.shadowTraderStatus = 'polling';
+      state.service.candidates.shadowLastPollError = null;
+      broadcast();
+
+      for (const wallet of walletList) {
+        try {
+          const rawTrades = await fetchTrades({
+            user: wallet,
+            side: 'BUY',
+            limit: Math.max(1, shadowPollLimit),
+            filterType: 'CASH',
+            filterAmount: CANDIDATE_MIN_USD,
+          });
+          const trades = Array.isArray(rawTrades) ? rawTrades : [];
+          for (const raw of trades.slice().reverse()) {
+            const trade = normalizeCandidateTrade(raw, { source: 'shadow-live' });
+            if (!trade || trade.wallet !== wallet) continue;
+            const selected = shadowSelections.get(wallet);
+            const tradeTimestampMs = Number(trade.timestamp) * 1000;
+            if (!Number.isFinite(tradeTimestampMs) || tradeTimestampMs < selected.selectedAtMs) {
+              skippedOld += 1;
+              continue;
+            }
+            checked += 1;
+            const upsert = await storage.upsertTrade?.(trade);
+            if (upsert?.insertedTrade) inserted += 1;
+            const event = observeShadowTrade(state, trade, shadowSelections, 'shadow-live');
+            if (event?.shadowWatched) {
+              observed += 1;
+              if (event.shadowDecision?.action === 'copied') copied += 1;
+            }
+          }
+        } catch (error) {
+          errors.push({ wallet, error: error.message });
+        }
+      }
+
+      const finishedAt = new Date().toISOString();
+      state.service.candidates.shadowPollStatus = errors.length ? 'partial' : 'ready';
+      state.service.candidates.shadowTraderStatus = 'ready';
+      state.service.candidates.shadowLastPollAt = finishedAt;
+      state.service.candidates.shadowLastPollChecked = checked;
+      state.service.candidates.shadowLastPollCopied = copied;
+      state.service.candidates.shadowLastPollObserved = observed;
+      state.service.candidates.shadowLastPollInserted = inserted;
+      state.service.candidates.shadowLastPollSkippedOld = skippedOld;
+      state.service.candidates.shadowLastPollError = errors[0]?.error || null;
+      state.service.candidates.shadowTraderLastRunAt = finishedAt;
+      state.service.candidates.shadowTraderSelectedWalletCount = walletList.length;
+      state.service.candidates.shadowTraderLastCopiedCount = copied;
+      if (observed > 0) onStateChanged();
+      broadcast();
+      return {
+        ok: errors.length === 0,
+        status: errors.length ? 'partial' : 'ready',
+        walletCount: walletList.length,
+        checked,
+        observed,
+        copied,
+        inserted,
+        skippedOld,
+        errors: errors.slice(0, 10),
+        updatedAt: finishedAt,
+      };
+    } catch (error) {
+      state.service.candidates.shadowPollStatus = 'error';
+      state.service.candidates.shadowTraderStatus = 'error';
+      state.service.candidates.shadowLastPollError = error.message;
+      broadcast();
+      return { ok: false, status: 'error', checked, copied, error: error.message, updatedAt: new Date().toISOString() };
+    } finally {
+      shadowPollRunning = false;
     }
   }
 
@@ -839,7 +987,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
             result.normalizedTradeCount += 1;
             const upsert = await storage.upsertTrade(trade);
             if (upsert.insertedTrade) result.insertedTradeCount += 1;
-            const shadowEvent = observeShadowMaintenanceTrade(state, trade, shadowSelections);
+            const shadowEvent = observeShadowTrade(state, trade, shadowSelections, 'shadow-maintenance');
             if (shadowEvent?.shadowWatched) {
               result.shadowObservedTradeCount += 1;
               if (shadowEvent.shadowDecision?.action === 'copied') result.shadowCopiedTradeCount += 1;
@@ -1082,6 +1230,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runBackfill,
     runResolution,
     runMaintenance,
+    runShadowPoll,
     runShadowObservation,
     runCopyPoolEvaluation,
     runShadowTraderEvaluation,
@@ -1108,14 +1257,14 @@ function selectedShadowWalletsForMaintenance(state) {
   return selected;
 }
 
-function observeShadowMaintenanceTrade(state, trade, shadowSelections) {
+function observeShadowTrade(state, trade, shadowSelections, source = 'shadow-maintenance') {
   const wallet = normalizeWallet(trade?.wallet);
   if (!wallet || !shadowSelections?.has(wallet)) return null;
   const selected = shadowSelections.get(wallet);
   const tradeTimestampMs = Number(trade.timestamp) * 1000;
   if (!Number.isFinite(tradeTimestampMs) || tradeTimestampMs < selected.selectedAtMs) return null;
   const demoTrade = candidateTradeToDemoTrade(trade);
-  return demoTrade ? ingestTrade(state, demoTrade, 'shadow-maintenance') : null;
+  return demoTrade ? ingestTrade(state, demoTrade, source) : null;
 }
 
 function emptyMaintenanceFetchResult() {

@@ -1542,11 +1542,15 @@ function ShadowTraderView({ shadowTrader }) {
   const [activeWallet, setActiveWallet] = React.useState(null);
   const [shadowRefreshPending, setShadowRefreshPending] = React.useState(false);
   const [shadowRefreshError, setShadowRefreshError] = React.useState(null);
+  const [shadowObservePending, setShadowObservePending] = React.useState(false);
+  const [shadowObserveError, setShadowObserveError] = React.useState(null);
   const activeCandidate = rankedCandidates.find((candidate) => candidate.wallet === activeWallet) || rankedCandidates[0] || null;
   const maxEcp = Math.max(0.01, ...rankedCandidates.map((candidate) => Number(candidate.expectedCopyProfitUsd || 0)));
   const avgSelectedEcp = selectedWallets.length
     ? selectedWallets.reduce((sum, item) => sum + Number(item.expectedCopyProfitUsd || 0), 0) / selectedWallets.length
     : null;
+  const trackingMode = shadow.shadowPollingEnabled ? 'Live shadow poll' : 'Manual catch-up';
+  const pollIntervalLabel = shadow.shadowPollIntervalMs ? formatDuration(shadow.shadowPollIntervalMs) : EMPTY_METRIC;
 
   React.useEffect(() => {
     if (!rankedCandidates.length) {
@@ -1575,6 +1579,23 @@ function ShadowTraderView({ shadowTrader }) {
     }
   }, []);
 
+  const observeShadow = React.useCallback(async () => {
+    setShadowObservePending(true);
+    setShadowObserveError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/candidates/shadow/observe?lookbackHours=48`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) throw new Error(payload.error || 'Shadow observation failed');
+    } catch (error) {
+      setShadowObserveError(error.message);
+    } finally {
+      setShadowObservePending(false);
+    }
+  }, []);
+
   return (
     <div className="shadowWorkspace">
       <section className="panel fullPanel shadowPanel">
@@ -1585,13 +1606,17 @@ function ShadowTraderView({ shadowTrader }) {
           </div>
           <div className="sectionActions">
             <span className="statusBadge neutral">{shadow.strategy || 'ecp_top20_v1'}</span>
-            <span className="statusBadge neutral">{shadow.status || 'starting'}</span>
+            <span className="statusBadge neutral">{shadow.shadowPollStatus || shadow.status || 'starting'}</span>
+            <button type="button" className="textButton" onClick={observeShadow} disabled={shadowObservePending} aria-label="Run shadow observation now">
+              <Clock3 size={14} /> Catch up
+            </button>
             <button type="button" className="iconButton" onClick={refreshShadow} disabled={shadowRefreshPending} aria-label="Recalculate shadow trader">
               <RefreshCcw size={16} />
             </button>
           </div>
         </div>
         {shadowRefreshError && <div className="candidateTradeMessage negative">{shadowRefreshError}</div>}
+        {shadowObserveError && <div className="candidateTradeMessage negative">{shadowObserveError}</div>}
         <MetricStrip metrics={metrics} />
         <div className="shadowSummary">
           <div className="positionStat">
@@ -1614,6 +1639,30 @@ function ShadowTraderView({ shadowTrader }) {
             <span>Closed</span>
             <strong>{metrics.closedPositionCount || 0}</strong>
           </div>
+        </div>
+        <div className="shadowTrackingGrid">
+          <div className="positionStat">
+            <span>Tracking mode</span>
+            <strong>{trackingMode}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Poll interval</span>
+            <strong>{pollIntervalLabel}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Last poll</span>
+            <strong>{formatTimeAgo(shadow.shadowLastPollAt)}</strong>
+          </div>
+          <div className="positionStat">
+            <span>Checked / copied</span>
+            <strong>{shadow.shadowLastPollChecked || 0} / {shadow.shadowLastPollCopied || 0}</strong>
+          </div>
+          {shadow.shadowLastPollError && (
+            <div className="positionStat shadowPollError">
+              <span>Poll error</span>
+              <strong>{shadow.shadowLastPollError}</strong>
+            </div>
+          )}
         </div>
         <div className="shadowCriteria">
           <span>top {shadow.criteria?.selectionLimit ?? 20} by ECP</span>
@@ -1851,6 +1900,8 @@ function sourceLabel(source) {
   if (source === 'websocket') return 'live stream';
   if (source === 'poll') return 'poll sync';
   if (source === 'candidate-live') return 'candidate live';
+  if (source === 'shadow-live') return 'shadow live poll';
+  if (source === 'shadow-maintenance') return 'shadow catch-up';
   return source || 'unknown source';
 }
 
@@ -2803,6 +2854,13 @@ function emptyState() {
       selectedWalletCount: 0,
       candidatesScoredCount: 0,
       lastEvaluatedAt: null,
+      shadowPollingEnabled: false,
+      shadowPollIntervalMs: 0,
+      shadowPollStatus: null,
+      shadowLastPollAt: null,
+      shadowLastPollChecked: 0,
+      shadowLastPollCopied: 0,
+      shadowLastPollError: null,
       metrics: {
         equityUsd: 1000,
         cashUsd: 1000,
@@ -3347,6 +3405,18 @@ function formatTimeAgo(value) {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+function formatDuration(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms) || ms <= 0) return EMPTY_METRIC;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
 }
 
 createRoot(document.getElementById('root')).render(<App />);

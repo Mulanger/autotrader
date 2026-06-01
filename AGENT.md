@@ -23,6 +23,7 @@ https://github.com/Mulanger/autotrader.git
 - Persistence: Postgres when `DATABASE_URL` exists, memory fallback otherwise.
 - Live source data: Polywhale whale API at `https://whaleserver-production.up.railway.app`.
 - Real dashboard: dry-run by default. Manual follows can be added/removed behind dashboard auth + PIN, and copied BUY entries are quote-audited as fixed-stake FOK dry-runs. Live CLOB order submission is available only when `REAL_TRADING_MODE=live`, `REAL_LIVE_TRADING_ENABLED=true`, and Polymarket signing/funder variables are configured.
+- Shadow trader: paper-only top-20 ECP tracker. `SHADOW_POLLING_ENABLED=true` polls only the selected shadow wallets and never creates Real follows or Real orders.
 
 The dashboard is a demo/paper-trading system right now:
 
@@ -139,6 +140,9 @@ Production/Railway:
 - `CANDIDATE_BACKFILL_PAGE_LIMIT`: candidate wallet backfill page size. Defaults to `500`.
 - `CANDIDATE_BACKFILL_MAX_OFFSET`: deepest candidate backfill Data API offset before marking a partial backfill. Defaults to `10000`.
 - `CANDIDATE_RESOLUTION_BATCH_SIZE`: minimum candidate resolution worker batch size. Defaults to `250`.
+- `SHADOW_POLLING_ENABLED`: enables low-cost live polling for only the current shadow top-20 wallets. Defaults to `true`.
+- `SHADOW_FOLLOW_POLL_INTERVAL_MS`: shadow selected-wallet Data API poll interval. Defaults to `30000`.
+- `SHADOW_FOLLOW_POLL_LIMIT`: per-wallet shadow poll trade limit. Defaults to `100`.
 - `AUTO_COPY_POOL_ENABLED`: enables automated promotion/removal from the demo copy pool. Defaults to `true`.
 - `AUTO_COPY_POOL_INTERVAL_MS`: copy-pool evaluator interval. Defaults to `300000`.
 - `AUTO_COPY_MIN_DISTINCT_MARKETS`: minimum trailing 30-day resolved distinct BUY markets. Defaults to `15`.
