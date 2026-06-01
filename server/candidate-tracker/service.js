@@ -514,7 +514,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
-  async function runMaintenance({ force = false, forceScoring = false } = {}) {
+  async function runMaintenance({ force = false, forceFetch = false, forceScoring = false } = {}) {
     if (!maintenanceEnabled || maintenanceRunning) return null;
     if (!storage && !(await ensureStorageAvailable())) return null;
     maintenanceRunning = true;
@@ -525,7 +525,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       broadcast();
 
       const runWithDueCheck = async () => {
-        const plan = await planMaintenanceRun({ force, forceScoring });
+        const plan = await planMaintenanceRun({ force, forceFetch, forceScoring });
         if (!plan.fetchDue && !plan.scoringDue) {
           state.service.candidates.maintenanceStatus = 'ready';
           return {
@@ -571,7 +571,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
-  async function planMaintenanceRun({ force = false, forceScoring = false } = {}) {
+  async function planMaintenanceRun({ force = false, forceFetch = false, forceScoring = false } = {}) {
     if (force) {
       return {
         fetchDue: true,
@@ -583,9 +583,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
     const [fetchDue, scoringDue] = await Promise.all([isMaintenanceFetchDue(), isMaintenanceScoringDue()]);
     return {
-      fetchDue: fetchDue.due,
+      fetchDue: forceFetch || fetchDue.due,
       scoringDue: forceScoring || scoringDue.due,
-      fetchReason: fetchDue.reason,
+      fetchReason: forceFetch ? 'Forced maintenance fetch' : fetchDue.reason,
       scoringReason: forceScoring ? 'Forced scoring run' : scoringDue.reason,
       lookbackHours: fetchDue.lookbackHours || maintenanceLookbackHours,
       nextFetchAt: fetchDue.nextRunAt,
@@ -657,18 +657,22 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     const runLookbackHours = Math.max(1, Number(lookbackHours) || maintenanceLookbackHours);
     const maxPagesForRun = maintenancePagesForLookback(runLookbackHours);
     const cutoff = new Date(Date.now() - runLookbackHours * 60 * 60_000);
+    const shadowSelections = selectedShadowWalletsForMaintenance(state);
+    const shadowSelectedWallets = [...shadowSelections.keys()];
     const wallets = runFetch
       ? await storage.getMaintenanceWallets?.({
           scope: maintenanceScope,
           baselineWallets: WATCHED_WALLETS,
         })
       : [];
-    const walletList = runFetch && Array.isArray(wallets) ? wallets.map(normalizeWallet).filter(Boolean) : [];
+    const walletList = runFetch && Array.isArray(wallets) ? uniqueWallets([...wallets, ...shadowSelectedWallets]) : [];
     const errors = [];
     let requestCount = 0;
     let rawTradeCount = 0;
     let normalizedTradeCount = 0;
     let insertedTradeCount = 0;
+    let shadowObservedTradeCount = 0;
+    let shadowCopiedTradeCount = 0;
 
     if (runFetch) {
       for (const wallet of walletList) {
@@ -698,6 +702,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
               normalizedTradeCount += 1;
               const result = await storage.upsertTrade(trade);
               if (result.insertedTrade) insertedTradeCount += 1;
+              const shadowEvent = observeShadowMaintenanceTrade(state, trade, shadowSelections);
+              if (shadowEvent?.shadowWatched) {
+                shadowObservedTradeCount += 1;
+                if (shadowEvent.shadowDecision?.action === 'copied') shadowCopiedTradeCount += 1;
+              }
             }
           }
         } catch (error) {
@@ -743,6 +752,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       resolvedTradeCount: Number(resolution?.settled || 0),
       resolutionCheckedCount: Number(resolution?.checked || 0),
       copyPoolChangedCount: Array.isArray(copyPoolResult?.changed) ? copyPoolResult.changed.length : 0,
+      shadowSelectedWalletCount: shadowSelectedWallets.length,
+      shadowObservedTradeCount,
+      shadowCopiedTradeCount,
       scoredWalletCount,
       scoredAt: runScoring ? finishedAt : state.service.candidates.maintenanceLastScoringAt,
       errorCount: errors.length,
@@ -967,6 +979,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     state.service.candidates.maintenanceLastRequestCount = Number(summary.requestCount || 0);
     state.service.candidates.maintenanceLastInsertedTradeCount = Number(summary.insertedTradeCount || 0);
     state.service.candidates.maintenanceLastResolvedTradeCount = Number(summary.resolvedTradeCount || 0);
+    state.service.candidates.shadowTraderLastCopiedCount = Number(summary.shadowCopiedTradeCount || 0);
     if (hasScoringSummary(summary)) applyMaintenanceScoringSummary(summary);
     state.service.candidates.maintenanceLastErrorCount = Number(summary.errorCount || 0);
     state.service.candidates.maintenanceLastError = Array.isArray(summary.errors) && summary.errors.length
@@ -996,6 +1009,41 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     getRealCopyQualityScore,
     recalculateRealCopyQuality,
   };
+}
+
+function selectedShadowWalletsForMaintenance(state) {
+  const shadow = state?.shadowTrader || {};
+  const fallbackSelectedAt = timestampMs(shadow.lastEvaluatedAt) ?? Date.now();
+  const selected = new Map();
+  for (const [walletKey, row] of Object.entries(shadow.selectedWallets || {})) {
+    if (row?.status && row.status !== 'active') continue;
+    const wallet = normalizeWallet(row?.wallet || walletKey);
+    if (!wallet) continue;
+    selected.set(wallet, {
+      wallet,
+      selectedAtMs: timestampMs(row?.selectedAt || row?.lastEvaluatedAt) ?? fallbackSelectedAt,
+    });
+  }
+  return selected;
+}
+
+function observeShadowMaintenanceTrade(state, trade, shadowSelections) {
+  const wallet = normalizeWallet(trade?.wallet);
+  if (!wallet || !shadowSelections?.has(wallet)) return null;
+  const selected = shadowSelections.get(wallet);
+  const tradeTimestampMs = Number(trade.timestamp) * 1000;
+  if (!Number.isFinite(tradeTimestampMs) || tradeTimestampMs < selected.selectedAtMs) return null;
+  const demoTrade = candidateTradeToDemoTrade(trade);
+  return demoTrade ? ingestTrade(state, demoTrade, 'shadow-maintenance') : null;
+}
+
+function uniqueWallets(wallets = []) {
+  return [...new Set((wallets || []).map(normalizeWallet).filter(Boolean))];
+}
+
+function timestampMs(value) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function inactivePayload(status) {

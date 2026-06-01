@@ -90,4 +90,23 @@ describe('candidate routes', () => {
     expect(called).toBe(true);
     expect(payload.selectedWalletCount).toBe(20);
   });
+
+  it('triggers a forced maintenance run', async () => {
+    let params = null;
+    const base = await startApp({
+      getLeaderboard: async () => ({ ok: true, enabled: true, rows: [], summary: {} }),
+      getTrader: async () => null,
+      runMaintenance: async (input) => {
+        params = input;
+        return { ok: true, status: 'done', shadowObservedTradeCount: 2 };
+      },
+    });
+
+    const response = await fetch(`${base}/api/candidates/maintenance/run?forceScoring=false`, { method: 'POST' });
+    const payload = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(params).toEqual({ force: false, forceFetch: true, forceScoring: false });
+    expect(payload.shadowObservedTradeCount).toBe(2);
+  });
 });

@@ -1755,12 +1755,14 @@ async function evaluateShadowTrader(pool, { windowDays = 30, criteria = SHADOW_T
     .filter((candidate) => candidate.shadowEligible)
     .slice(0, Math.max(1, Number(normalizedCriteria.selectionLimit || 20)));
   const selectedWallets = {};
+  const selectedAt = new Date().toISOString();
 
   for (const metrics of selected) {
     selectedWallets[metrics.wallet] = {
       ...metrics,
       status: 'active',
       strategy: SHADOW_TRADER_STRATEGY,
+      selectedAt,
       reason: 'Selected by ECP top-20 shadow rank',
     };
   }
@@ -1775,7 +1777,7 @@ async function evaluateShadowTrader(pool, { windowDays = 30, criteria = SHADOW_T
     selectedWalletCount: Object.keys(selectedWallets).length,
     rankedCandidates: rankedCandidates.slice(0, Math.max(20, Number(normalizedCriteria.rankedCandidateLimit || 80))),
     candidatesScoredCount: rows.length,
-    lastEvaluatedAt: new Date().toISOString(),
+    lastEvaluatedAt: selectedAt,
   };
 }
 

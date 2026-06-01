@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createAppState } from '../server/app-state.js';
 import { createCandidateTracker, resolutionBatchSize } from '../server/candidate-tracker/service.js';
+import { applyShadowTraderSnapshot } from '../server/shadow-trader.js';
 
 function rawTrade(offset, overrides = {}) {
   return {
@@ -277,6 +278,65 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.maintenanceLastWalletCount).toBe(2);
     expect(state.service.candidates.maintenanceLastInsertedTradeCount).toBe(1);
     expect(state.service.candidates.maintenanceLastScoredWalletCount).toBe(2);
+  });
+
+  it('observes selected shadow wallets during maintenance fetches', async () => {
+    const state = createAppState();
+    const wallet = '0xcccccccccccccccccccccccccccccccccccccccc';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    applyShadowTraderSnapshot(state, {
+      lastEvaluatedAt: new Date((nowSeconds - 60 * 60) * 1000).toISOString(),
+      selectedWallets: {
+        [wallet]: { wallet, status: 'active', shadowRank: 1, expectedCopyProfitUsd: 1.5 },
+      },
+    });
+
+    const calls = { fetches: [], upserts: [] };
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: { total: 0, scored: 0, eligible: 0 },
+        rows: [],
+      }),
+      getServiceState: async () => null,
+      saveServiceState: async () => {},
+      getMaintenanceWallets: async () => [],
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertTrade: async (trade) => {
+        calls.upserts.push(trade);
+        return { insertedTrade: false };
+      },
+      recalculateRealCopyQuality: async () => ({ ok: true, scored: 0, summary: { scored: 0 } }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: true,
+      maintenanceRunOnStart: false,
+      maintenancePageLimit: 10,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        if (params.offset > 0) return [];
+        return [
+          rawTrade(20, { proxyWallet: wallet, timestamp: nowSeconds, price: 0.5, size: 3_000 }),
+          rawTrade(21, { proxyWallet: wallet, timestamp: nowSeconds - 2 * 60 * 60, price: 0.5, size: 3_000 }),
+        ];
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runMaintenance({ force: true });
+    await tracker.close();
+
+    expect(calls.fetches.map((call) => [call.user, call.offset])).toEqual([[wallet, 0], [wallet, 10]]);
+    expect(calls.upserts).toHaveLength(2);
+    expect(summary.shadowSelectedWalletCount).toBe(1);
+    expect(summary.shadowObservedTradeCount).toBe(1);
+    expect(summary.shadowCopiedTradeCount).toBe(1);
+    expect(state.shadowTrader.feed).toHaveLength(1);
+    expect(state.shadowTrader.feed[0].source).toBe('shadow-maintenance');
+    expect(state.shadowTrader.portfolio.openPositions).toHaveLength(1);
   });
 
   it('skips startup maintenance when the last successful run is still fresh', async () => {
