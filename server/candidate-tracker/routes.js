@@ -42,6 +42,25 @@ export function createCandidateRoutes(candidateTracker) {
     }
   });
 
+  router.post('/shadow/observe', async (request, response) => {
+    try {
+      if (!candidateTracker?.runShadowObservation) {
+        response.status(503).json({ ok: false, error: 'Shadow observation is unavailable' });
+        return;
+      }
+      const payload = await candidateTracker.runShadowObservation({
+        lookbackHours: boundedInteger(request.query.lookbackHours ?? request.body?.lookbackHours, 48, 1, 168),
+      });
+      if (!payload) {
+        response.status(503).json({ ok: false, error: 'Shadow observation is disabled or already running' });
+        return;
+      }
+      response.status(payload?.ok === false ? 500 : 200).json(payload);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   router.post('/maintenance/run', async (request, response) => {
     try {
       if (!candidateTracker?.runMaintenance) {

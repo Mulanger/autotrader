@@ -667,52 +667,11 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       : [];
     const walletList = runFetch && Array.isArray(wallets) ? uniqueWallets([...wallets, ...shadowSelectedWallets]) : [];
     const errors = [];
-    let requestCount = 0;
-    let rawTradeCount = 0;
-    let normalizedTradeCount = 0;
-    let insertedTradeCount = 0;
-    let shadowObservedTradeCount = 0;
-    let shadowCopiedTradeCount = 0;
 
+    let fetchResult = emptyMaintenanceFetchResult();
     if (runFetch) {
-      for (const wallet of walletList) {
-        try {
-          let reachedCutoff = false;
-          for (let page = 0; page < maxPagesForRun && !reachedCutoff; page += 1) {
-            const offset = page * Math.max(1, maintenancePageLimit);
-            requestCount += 1;
-            const rawTrades = await fetchTrades({
-              user: wallet,
-              limit: Math.max(1, maintenancePageLimit),
-              offset,
-              filterType: 'CASH',
-              filterAmount: CANDIDATE_MIN_USD,
-            });
-            if (!rawTrades.length) break;
-            rawTradeCount += rawTrades.length;
-
-            for (const raw of rawTrades.slice().reverse()) {
-              const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
-              if (rawTimestamp && rawTimestamp * 1000 < cutoff.getTime()) {
-                reachedCutoff = true;
-                continue;
-              }
-              const trade = normalizeCandidateTrade(raw, { source: 'maintenance' });
-              if (!trade) continue;
-              normalizedTradeCount += 1;
-              const result = await storage.upsertTrade(trade);
-              if (result.insertedTrade) insertedTradeCount += 1;
-              const shadowEvent = observeShadowMaintenanceTrade(state, trade, shadowSelections);
-              if (shadowEvent?.shadowWatched) {
-                shadowObservedTradeCount += 1;
-                if (shadowEvent.shadowDecision?.action === 'copied') shadowCopiedTradeCount += 1;
-              }
-            }
-          }
-        } catch (error) {
-          errors.push({ wallet, error: error.message });
-        }
-      }
+      fetchResult = await fetchMaintenanceTradesForWallets({ walletList, cutoff, maxPagesForRun, shadowSelections });
+      errors.push(...fetchResult.errors);
     }
 
     const resolution = await runResolution({
@@ -745,16 +704,16 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       startedAt,
       finishedAt,
       walletCount: walletList.length,
-      requestCount,
-      rawTradeCount,
-      normalizedTradeCount,
-      insertedTradeCount,
+      requestCount: fetchResult.requestCount,
+      rawTradeCount: fetchResult.rawTradeCount,
+      normalizedTradeCount: fetchResult.normalizedTradeCount,
+      insertedTradeCount: fetchResult.insertedTradeCount,
       resolvedTradeCount: Number(resolution?.settled || 0),
       resolutionCheckedCount: Number(resolution?.checked || 0),
       copyPoolChangedCount: Array.isArray(copyPoolResult?.changed) ? copyPoolResult.changed.length : 0,
       shadowSelectedWalletCount: shadowSelectedWallets.length,
-      shadowObservedTradeCount,
-      shadowCopiedTradeCount,
+      shadowObservedTradeCount: fetchResult.shadowObservedTradeCount,
+      shadowCopiedTradeCount: fetchResult.shadowCopiedTradeCount,
       scoredWalletCount,
       scoredAt: runScoring ? finishedAt : state.service.candidates.maintenanceLastScoringAt,
       errorCount: errors.length,
@@ -771,6 +730,127 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!enabled) state.service.candidates.status = candidateStatusBefore || 'disabled';
     state.service.candidates.lastError = null;
     return summary;
+  }
+
+  async function runShadowObservation({ lookbackHours = maintenanceLookbackHours } = {}) {
+    if (!storage && !(await ensureStorageAvailable())) return null;
+    const startedAt = new Date().toISOString();
+    const shadowSelections = selectedShadowWalletsForMaintenance(state);
+    const walletList = [...shadowSelections.keys()];
+    const runLookbackHours = Math.max(1, Number(lookbackHours) || maintenanceLookbackHours);
+    const maxPagesForRun = maintenancePagesForLookback(runLookbackHours);
+    const cutoff = new Date(Date.now() - runLookbackHours * HOUR_MS);
+
+    if (!walletList.length) {
+      return {
+        ok: true,
+        status: 'skipped',
+        reason: 'No selected shadow wallets to observe',
+        scope: 'shadow_selected',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        walletCount: 0,
+      };
+    }
+
+    const runWithLock = async () => {
+      state.service.candidates.shadowTraderStatus = 'observing';
+      broadcast();
+      const fetchResult = await fetchMaintenanceTradesForWallets({ walletList, cutoff, maxPagesForRun, shadowSelections });
+      const finishedAt = new Date().toISOString();
+      const summary = {
+        ok: fetchResult.errors.length === 0,
+        status: fetchResult.errors.length ? 'partial' : 'done',
+        scope: 'shadow_selected',
+        lookbackHours: runLookbackHours,
+        maxPagesPerWallet: maxPagesForRun,
+        cutoffAt: cutoff.toISOString(),
+        startedAt,
+        finishedAt,
+        walletCount: walletList.length,
+        requestCount: fetchResult.requestCount,
+        rawTradeCount: fetchResult.rawTradeCount,
+        normalizedTradeCount: fetchResult.normalizedTradeCount,
+        insertedTradeCount: fetchResult.insertedTradeCount,
+        shadowSelectedWalletCount: walletList.length,
+        shadowObservedTradeCount: fetchResult.shadowObservedTradeCount,
+        shadowCopiedTradeCount: fetchResult.shadowCopiedTradeCount,
+        errorCount: fetchResult.errors.length,
+        errors: fetchResult.errors.slice(0, 10),
+        updatedAt: finishedAt,
+      };
+      state.service.candidates.shadowTraderStatus = 'ready';
+      state.service.candidates.shadowTraderLastRunAt = finishedAt;
+      state.service.candidates.shadowTraderLastCopiedCount = fetchResult.shadowCopiedTradeCount;
+      state.service.candidates.lastError = null;
+      if (fetchResult.shadowObservedTradeCount > 0) onStateChanged();
+      broadcast();
+      return summary;
+    };
+
+    try {
+      const lockResult = storage.withMaintenanceLock
+        ? await storage.withMaintenanceLock(runWithLock)
+        : { acquired: true, result: await runWithLock() };
+      if (!lockResult.acquired) {
+        state.service.candidates.shadowTraderStatus = 'locked';
+        return {
+          ok: true,
+          status: 'locked',
+          reason: 'Another candidate maintenance run is already active',
+          updatedAt: new Date().toISOString(),
+        };
+      }
+      return lockResult.result;
+    } catch (error) {
+      state.service.candidates.shadowTraderStatus = 'error';
+      state.service.candidates.lastError = error.message;
+      broadcast();
+      return { ok: false, status: 'error', error: error.message, updatedAt: new Date().toISOString() };
+    }
+  }
+
+  async function fetchMaintenanceTradesForWallets({ walletList, cutoff, maxPagesForRun, shadowSelections }) {
+    const result = emptyMaintenanceFetchResult();
+    for (const wallet of walletList) {
+      try {
+        let reachedCutoff = false;
+        for (let page = 0; page < maxPagesForRun && !reachedCutoff; page += 1) {
+          const offset = page * Math.max(1, maintenancePageLimit);
+          result.requestCount += 1;
+          const rawTrades = await fetchTrades({
+            user: wallet,
+            limit: Math.max(1, maintenancePageLimit),
+            offset,
+            filterType: 'CASH',
+            filterAmount: CANDIDATE_MIN_USD,
+          });
+          if (!rawTrades.length) break;
+          result.rawTradeCount += rawTrades.length;
+
+          for (const raw of rawTrades.slice().reverse()) {
+            const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
+            if (rawTimestamp && rawTimestamp * 1000 < cutoff.getTime()) {
+              reachedCutoff = true;
+              continue;
+            }
+            const trade = normalizeCandidateTrade(raw, { source: 'maintenance' });
+            if (!trade) continue;
+            result.normalizedTradeCount += 1;
+            const upsert = await storage.upsertTrade(trade);
+            if (upsert.insertedTrade) result.insertedTradeCount += 1;
+            const shadowEvent = observeShadowMaintenanceTrade(state, trade, shadowSelections);
+            if (shadowEvent?.shadowWatched) {
+              result.shadowObservedTradeCount += 1;
+              if (shadowEvent.shadowDecision?.action === 'copied') result.shadowCopiedTradeCount += 1;
+            }
+          }
+        }
+      } catch (error) {
+        result.errors.push({ wallet, error: error.message });
+      }
+    }
+    return result;
   }
 
   function maintenancePagesForLookback(lookbackHours) {
@@ -1002,6 +1082,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runBackfill,
     runResolution,
     runMaintenance,
+    runShadowObservation,
     runCopyPoolEvaluation,
     runShadowTraderEvaluation,
     runRealCopyQualityScoring,
@@ -1035,6 +1116,18 @@ function observeShadowMaintenanceTrade(state, trade, shadowSelections) {
   if (!Number.isFinite(tradeTimestampMs) || tradeTimestampMs < selected.selectedAtMs) return null;
   const demoTrade = candidateTradeToDemoTrade(trade);
   return demoTrade ? ingestTrade(state, demoTrade, 'shadow-maintenance') : null;
+}
+
+function emptyMaintenanceFetchResult() {
+  return {
+    requestCount: 0,
+    rawTradeCount: 0,
+    normalizedTradeCount: 0,
+    insertedTradeCount: 0,
+    shadowObservedTradeCount: 0,
+    shadowCopiedTradeCount: 0,
+    errors: [],
+  };
 }
 
 function uniqueWallets(wallets = []) {
