@@ -9,6 +9,12 @@ import {
   CANDIDATE_BACKFILL_MAX_PAGES,
   CANDIDATE_BACKFILL_MAX_OFFSET,
   CANDIDATE_BACKFILL_PAGE_LIMIT,
+  CANDIDATE_DISCOVERY_ENABLED,
+  CANDIDATE_DISCOVERY_GLOBAL_PAGES,
+  CANDIDATE_DISCOVERY_INTERVAL_MS,
+  CANDIDATE_DISCOVERY_MAX_DEEP_BACKFILLS,
+  CANDIDATE_DISCOVERY_MAX_STAGE1_WALLETS,
+  CANDIDATE_DISCOVERY_REQUEST_BUDGET,
   CANDIDATE_MAINTENANCE_ENABLED,
   CANDIDATE_MAINTENANCE_INTERVAL_MS,
   CANDIDATE_MAINTENANCE_LOOKBACK_HOURS,
@@ -27,6 +33,7 @@ import {
   CANDIDATE_RESOLUTION_POLL_INTERVAL_MS,
   CANDIDATE_STALE_BACKFILL_MS,
   CANDIDATE_TRACKER_ENABLED,
+  REAL_MAX_ENTRY_PRICE_CENTS,
   SHADOW_FOLLOW_POLL_INTERVAL_MS,
   SHADOW_FOLLOW_POLL_LIMIT,
   SHADOW_POLLING_ENABLED,
@@ -44,12 +51,14 @@ import { createCandidateStorage } from './storage.js';
 const MAINTENANCE_STATE_KEY = 'maintenance:last_run';
 const MAINTENANCE_FETCH_STATE_KEY = 'maintenance:last_fetch';
 const MAINTENANCE_SCORING_STATE_KEY = 'maintenance:last_score';
+const DISCOVERY_STATE_KEY = 'discovery:last_run';
 const HOUR_MS = 60 * 60_000;
 
 export function createCandidateTracker(state, broadcast, options = {}) {
   const enabled = options.enabled ?? CANDIDATE_TRACKER_ENABLED;
   const maintenanceEnabled = options.maintenanceEnabled ?? CANDIDATE_MAINTENANCE_ENABLED;
-  const realCopyQualityActive = enabled || maintenanceEnabled;
+  const discoveryEnabled = options.discoveryEnabled ?? CANDIDATE_DISCOVERY_ENABLED;
+  const realCopyQualityActive = enabled || maintenanceEnabled || discoveryEnabled;
   const maintenanceIntervalMs = Number(options.maintenanceIntervalMs ?? CANDIDATE_MAINTENANCE_INTERVAL_MS);
   const maintenanceScoringIntervalMs = Number(
     options.maintenanceScoringIntervalMs ?? CANDIDATE_MAINTENANCE_SCORING_INTERVAL_MS
@@ -67,6 +76,28 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     options.maintenanceResolutionMaxTrades ?? CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES
   );
   const maintenanceRunOnStart = options.maintenanceRunOnStart ?? true;
+  const discoveryIntervalMs = Number(options.discoveryIntervalMs ?? CANDIDATE_DISCOVERY_INTERVAL_MS);
+  const discoveryGlobalPages = boundedNumber(options.discoveryGlobalPages ?? CANDIDATE_DISCOVERY_GLOBAL_PAGES, 2, 1, 25);
+  const discoveryMaxStage1Wallets = boundedNumber(
+    options.discoveryMaxStage1Wallets ?? CANDIDATE_DISCOVERY_MAX_STAGE1_WALLETS,
+    25,
+    1,
+    500
+  );
+  const discoveryMaxDeepBackfills = boundedNumber(
+    options.discoveryMaxDeepBackfills ?? CANDIDATE_DISCOVERY_MAX_DEEP_BACKFILLS,
+    5,
+    0,
+    100
+  );
+  const discoveryRequestBudget = boundedNumber(
+    options.discoveryRequestBudget ?? CANDIDATE_DISCOVERY_REQUEST_BUDGET,
+    75,
+    1,
+    10_000
+  );
+  const discoveryRunOnStart = options.discoveryRunOnStart ?? true;
+  const discoveryCooldownMs = Number(options.discoveryCooldownMs ?? 7 * 24 * HOUR_MS);
   const shadowPollingEnabled = options.shadowPollingEnabled ?? SHADOW_POLLING_ENABLED;
   const shadowPollIntervalMs = Number(options.shadowPollIntervalMs ?? SHADOW_FOLLOW_POLL_INTERVAL_MS);
   const shadowPollLimit = Number(options.shadowPollLimit ?? SHADOW_FOLLOW_POLL_LIMIT);
@@ -90,6 +121,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let resolutionTimer = null;
   let copyPoolTimer = null;
   let maintenanceTimer = null;
+  let discoveryTimer = null;
   let shadowPollTimer = null;
   let pollRunning = false;
   let backfillRunning = false;
@@ -97,6 +129,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   let copyPoolRunning = false;
   let realCopyQualityRunning = false;
   let maintenanceRunning = false;
+  let discoveryRunning = false;
   let shadowPollRunning = false;
   let pollBootstrapped = false;
   const realCopyQualityLeaderboardCache = new Map();
@@ -159,6 +192,25 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceLastScoredWalletCount: 0,
     maintenanceLastErrorCount: 0,
     maintenanceLastError: null,
+    discoveryEnabled: Boolean(discoveryEnabled),
+    discoveryStatus: discoveryEnabled ? 'starting' : 'disabled',
+    discoveryIntervalMs,
+    discoveryGlobalPages,
+    discoveryMaxStage1Wallets,
+    discoveryMaxDeepBackfills,
+    discoveryRequestBudget,
+    discoveryLastRunAt: null,
+    discoveryLastStartedAt: null,
+    discoveryLastFinishedAt: null,
+    discoveryNextRunAt: null,
+    discoveryLastRequestCount: 0,
+    discoveryLastWalletsSeen: 0,
+    discoveryLastWalletsHeld: 0,
+    discoveryLastStage1Promoted: 0,
+    discoveryLastDeepPromoted: 0,
+    discoveryLastScored: 0,
+    discoveryLastRejected: 0,
+    discoveryLastError: null,
     lastError: null,
   };
   state.service.realCopyQuality = {
@@ -181,6 +233,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     if (!enabled) {
       await startCachedRealCopyQuality();
       await startMaintenanceTimer();
+      await startDiscoveryTimer();
       await startShadowPollingTimer();
       return;
     }
@@ -218,6 +271,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     resolutionTimer = setInterval(runResolution, CANDIDATE_RESOLUTION_POLL_INTERVAL_MS);
     copyPoolTimer = setInterval(runCopyPoolEvaluation, AUTO_COPY_POOL_INTERVAL_MS);
     await startMaintenanceTimer();
+    await startDiscoveryTimer();
     await startShadowPollingTimer();
   }
 
@@ -269,14 +323,22 @@ export function createCandidateTracker(state, broadcast, options = {}) {
 
   async function hydrateMaintenanceState() {
     if (!storage?.getServiceState) return;
-    const [lastRun, lastFetch, lastScoring] = await Promise.all([
+    const [lastRun, lastFetch, lastScoring, lastDiscovery] = await Promise.all([
       storage.getServiceState(MAINTENANCE_STATE_KEY).catch(() => null),
       storage.getServiceState(MAINTENANCE_FETCH_STATE_KEY).catch(() => null),
       storage.getServiceState(MAINTENANCE_SCORING_STATE_KEY).catch(() => null),
+      storage.getServiceState(DISCOVERY_STATE_KEY).catch(() => null),
     ]);
     const legacyPayload = lastRun?.payload;
     applyMaintenanceSummary(lastFetch?.payload || legacyPayload);
     applyMaintenanceScoringSummary(lastScoring?.payload || (hasScoringSummary(legacyPayload) ? legacyPayload : null));
+    applyDiscoverySummary(lastDiscovery?.payload);
+  }
+
+  async function hydrateDiscoveryState() {
+    if (!storage?.getServiceState) return;
+    const lastDiscovery = await storage.getServiceState(DISCOVERY_STATE_KEY).catch(() => null);
+    applyDiscoverySummary(lastDiscovery?.payload);
   }
 
   async function startMaintenanceTimer() {
@@ -297,12 +359,38 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
+  async function startDiscoveryTimer() {
+    state.service.candidates.discoveryEnabled = Boolean(discoveryEnabled);
+    state.service.candidates.discoveryIntervalMs = discoveryIntervalMs;
+    state.service.candidates.discoveryGlobalPages = discoveryGlobalPages;
+    state.service.candidates.discoveryMaxStage1Wallets = discoveryMaxStage1Wallets;
+    state.service.candidates.discoveryMaxDeepBackfills = discoveryMaxDeepBackfills;
+    state.service.candidates.discoveryRequestBudget = discoveryRequestBudget;
+    if (!discoveryEnabled) {
+      state.service.candidates.discoveryStatus = 'disabled';
+      return;
+    }
+    if (!storage && !(await ensureStorageAvailable())) {
+      state.service.candidates.discoveryStatus = 'unavailable';
+      state.service.candidates.discoveryLastError = state.service.candidates.lastError || 'Candidate storage is unavailable';
+      return;
+    }
+
+    await hydrateDiscoveryState();
+    state.service.candidates.discoveryStatus = 'ready';
+    if (discoveryRunOnStart) await runDiscovery();
+    if (!discoveryTimer) {
+      discoveryTimer = setTimer(runDiscovery, Math.max(60_000, discoveryIntervalMs));
+    }
+  }
+
   async function close() {
     clearInterval(pollTimer);
     clearInterval(backfillTimer);
     clearInterval(resolutionTimer);
     clearInterval(copyPoolTimer);
     clearInterval(maintenanceTimer);
+    clearInterval(discoveryTimer);
     if (shadowPollTimer) clearTimer(shadowPollTimer);
     await storage?.close();
   }
@@ -721,6 +809,251 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
   }
 
+  async function runDiscovery({ force = false } = {}) {
+    if ((!discoveryEnabled && !force) || discoveryRunning) return null;
+    if (!storage && !(await ensureStorageAvailable())) return null;
+    discoveryRunning = true;
+    state.service.candidates.discoveryStatus = 'running';
+    state.service.candidates.discoveryLastStartedAt = new Date().toISOString();
+    state.service.candidates.discoveryLastError = null;
+    broadcast();
+    try {
+      const due = force ? { due: true, reason: 'Forced discovery run' } : await isDiscoveryDue();
+      if (!due.due) {
+        state.service.candidates.discoveryStatus = 'ready';
+        state.service.candidates.discoveryNextRunAt = due.nextRunAt || state.service.candidates.discoveryNextRunAt;
+        return {
+          ok: true,
+          status: 'skipped',
+          reason: due.reason,
+          nextRunAt: due.nextRunAt,
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      const runWithLock = async () => executeDiscovery({ reason: due.reason });
+      const lockResult = storage.withMaintenanceLock
+        ? await storage.withMaintenanceLock(runWithLock)
+        : { acquired: true, result: await runWithLock() };
+
+      if (!lockResult.acquired) {
+        state.service.candidates.discoveryStatus = 'locked';
+        return {
+          ok: true,
+          status: 'locked',
+          reason: 'Another candidate maintenance or discovery run is already active',
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      return lockResult.result;
+    } catch (error) {
+      state.service.candidates.discoveryStatus = 'error';
+      state.service.candidates.discoveryLastError = error.message;
+      state.service.candidates.lastError = error.message;
+      broadcast();
+      return { ok: false, status: 'error', error: error.message, updatedAt: new Date().toISOString() };
+    } finally {
+      discoveryRunning = false;
+      broadcast();
+    }
+  }
+
+  async function isDiscoveryDue() {
+    if (!storage?.getServiceState) return { due: true, reason: 'No persisted discovery state reader' };
+    const lastRun = await storage.getServiceState(DISCOVERY_STATE_KEY).catch(() => null);
+    applyDiscoverySummary(lastRun?.payload);
+    const payload = lastRun?.payload || {};
+    if (payload.status !== 'done') return { due: true, reason: 'No completed discovery run' };
+    const lastFinishedAt = Date.parse(payload.finishedAt || payload.updatedAt || lastRun?.updatedAt);
+    if (!Number.isFinite(lastFinishedAt)) return { due: true, reason: 'Completed discovery run has no timestamp' };
+    const elapsedMs = Date.now() - lastFinishedAt;
+    if (elapsedMs >= discoveryIntervalMs) return { due: true, reason: 'Discovery interval elapsed' };
+    return {
+      due: false,
+      reason: 'Discovery interval has not elapsed',
+      nextRunAt: new Date(lastFinishedAt + discoveryIntervalMs).toISOString(),
+    };
+  }
+
+  async function executeDiscovery({ reason = null } = {}) {
+    const startedAt = new Date().toISOString();
+    const candidateStatusBefore = state.service.candidates.status;
+    const cutoffStage1 = new Date(Date.now() - maintenanceLookbackHours * HOUR_MS);
+    const cutoffDeep = new Date(Date.now() - CANDIDATE_BACKFILL_DAYS * 24 * HOUR_MS);
+    const requestBudget = Math.max(1, discoveryRequestBudget);
+    let requestCount = 0;
+    let rawTradeCount = 0;
+    let normalizedTradeCount = 0;
+    let insertedTradeCount = 0;
+    const errors = [];
+    const globalTrades = [];
+
+    const canRequest = () => requestCount < requestBudget;
+    const fetchWithBudget = async (params) => {
+      if (!canRequest()) return { skipped: true, trades: [] };
+      requestCount += 1;
+      return { skipped: false, trades: await fetchTrades(params) };
+    };
+
+    for (let page = 0; page < discoveryGlobalPages && canRequest(); page += 1) {
+      const offset = page * CANDIDATE_POLL_LIMIT;
+      const { trades: rawTrades } = await fetchWithBudget({
+        limit: CANDIDATE_POLL_LIMIT,
+        offset,
+        side: 'BUY',
+        filterType: 'CASH',
+        filterAmount: CANDIDATE_MIN_USD,
+      });
+      if (!rawTrades.length) break;
+      rawTradeCount += rawTrades.length;
+      for (const raw of rawTrades.slice().reverse()) {
+        const trade = normalizeCandidateTrade(raw, { source: 'discovery' });
+        if (!isDiscoveryCopyableTrade(trade)) continue;
+        normalizedTradeCount += 1;
+        globalTrades.push(trade);
+        const upsert = await storage.upsertDiscoveryTrade?.(trade);
+        if (upsert?.insertedTrade) insertedTradeCount += 1;
+      }
+    }
+
+    const signals = buildDiscoverySignals(globalTrades);
+    const savedWallets = await storage.saveDiscoverySignals?.(signals);
+    const runnableWallets = new Set(
+      (Array.isArray(savedWallets) ? savedWallets : signals.map((signal) => signal.wallet))
+        .map((entry) => normalizeWallet(entry?.wallet || entry))
+        .filter(Boolean)
+    );
+    const stage1Candidates = signals
+      .filter((signal) => runnableWallets.has(signal.wallet))
+      .filter((signal) => passesDiscoverySignal(signal))
+      .slice(0, discoveryMaxStage1Wallets);
+    const stage1Wallets = stage1Candidates.map((signal) => signal.wallet);
+    if (stage1Wallets.length) await storage.markDiscoveryWallets?.(stage1Wallets, 'stage1_promoted');
+
+    const stage1Results = [];
+    for (const signal of stage1Candidates) {
+      const result = await fetchDiscoveryWalletHistory({
+        wallet: signal.wallet,
+        cutoff: cutoffStage1,
+        maxPages: 1,
+        source: 'discovery_stage1',
+        fetchWithBudget,
+      });
+      rawTradeCount += result.rawTradeCount;
+      normalizedTradeCount += result.normalizedTradeCount;
+      insertedTradeCount += result.insertedTradeCount;
+      errors.push(...result.errors);
+      stage1Results.push({ ...signal, stage1: result });
+    }
+
+    const rejectedStage1 = stage1Results.filter((row) => !passesDiscoveryStage1(row.stage1));
+    if (rejectedStage1.length) {
+      await storage.markDiscoveryWallets?.(
+        rejectedStage1.map((row) => row.wallet),
+        'rejected',
+        {
+          rejectReason: 'Insufficient recent copyable activity in stage 1',
+          cooldownUntil: new Date(Date.now() + discoveryCooldownMs).toISOString(),
+        }
+      );
+    }
+
+    const deepCandidates = stage1Results
+      .filter((row) => passesDiscoveryStage1(row.stage1))
+      .sort((a, b) => b.signalScore - a.signalScore)
+      .slice(0, discoveryMaxDeepBackfills);
+    const deepWallets = deepCandidates.map((row) => row.wallet);
+    if (deepWallets.length) await storage.markDiscoveryWallets?.(deepWallets, 'deep_promoted');
+
+    let resolvedTradeCount = 0;
+    const deepFetchedWallets = [];
+    const rejectedDeep = [];
+    for (let index = 0; index < deepCandidates.length; index += 1) {
+      const row = deepCandidates[index];
+      const remainingWallets = Math.max(1, deepCandidates.length - index);
+      const remainingBudget = Math.max(0, requestBudget - requestCount);
+      const maxPages = Math.max(1, Math.min(CANDIDATE_BACKFILL_MAX_PAGES, Math.floor(remainingBudget / remainingWallets) || 1));
+      const result = await fetchDiscoveryWalletHistory({
+        wallet: row.wallet,
+        cutoff: cutoffDeep,
+        maxPages,
+        source: 'discovery_deep',
+        fetchWithBudget,
+      });
+      rawTradeCount += result.rawTradeCount;
+      normalizedTradeCount += result.normalizedTradeCount;
+      insertedTradeCount += result.insertedTradeCount;
+      errors.push(...result.errors);
+      if (result.normalizedTradeCount <= 0) {
+        rejectedDeep.push(row.wallet);
+        continue;
+      }
+      deepFetchedWallets.push(row.wallet);
+    }
+
+    if (deepFetchedWallets.length) {
+      const resolution = await runResolution({
+        maxTrades: Math.min(maintenanceResolutionMaxTrades, Math.max(100, discoveryMaxDeepBackfills * 100)),
+        evaluateCopyPoolOnSettle: false,
+      });
+      resolvedTradeCount = Number(resolution?.settled || 0);
+      if (!enabled) state.service.candidates.status = candidateStatusBefore || 'disabled';
+    }
+
+    const scoredWallets = [];
+    for (const wallet of deepFetchedWallets) {
+      const scoring = await runRealCopyQualityScoring({ wallet });
+      if (scoring?.ok === false) {
+        errors.push({ wallet, phase: 'scoring', error: scoring.error || 'ECP scoring failed' });
+        rejectedDeep.push(wallet);
+        continue;
+      }
+      scoredWallets.push(wallet);
+    }
+
+    if (scoredWallets.length) await storage.markDiscoveryWallets?.(scoredWallets, 'scored');
+    if (rejectedDeep.length) {
+      await storage.markDiscoveryWallets?.(rejectedDeep, 'rejected', {
+        rejectReason: 'No deep copyable activity available for scoring',
+        cooldownUntil: new Date(Date.now() + discoveryCooldownMs).toISOString(),
+      });
+    }
+
+    const finishedAt = new Date().toISOString();
+    const summary = {
+      ok: errors.length === 0,
+      status: errors.length ? 'partial' : 'done',
+      reason,
+      startedAt,
+      finishedAt,
+      nextRunAt: new Date(Date.parse(finishedAt) + discoveryIntervalMs).toISOString(),
+      requestBudget,
+      requestCount,
+      globalPages: discoveryGlobalPages,
+      rawTradeCount,
+      normalizedTradeCount,
+      insertedTradeCount,
+      resolvedTradeCount,
+      walletsSeen: signals.length,
+      walletsHeld: Array.isArray(savedWallets) ? savedWallets.length : signals.length,
+      stage1Promoted: stage1Wallets.length,
+      deepPromoted: deepWallets.length,
+      scored: scoredWallets.length,
+      rejected: rejectedStage1.length + rejectedDeep.length,
+      errorCount: errors.length,
+      errors: errors.slice(0, 10),
+      updatedAt: finishedAt,
+    };
+    await storage.saveServiceState?.(DISCOVERY_STATE_KEY, summary);
+    applyDiscoverySummary(summary);
+    state.service.candidates.discoveryStatus = errors.length ? 'partial' : 'ready';
+    state.service.candidates.discoveryLastError = errors[0]?.error || null;
+    state.service.candidates.lastError = null;
+    broadcast();
+    return summary;
+  }
+
   async function planMaintenanceRun({ force = false, forceFetch = false, forceScoring = false } = {}) {
     if (force) {
       return {
@@ -1003,6 +1336,60 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     return result;
   }
 
+  async function fetchDiscoveryWalletHistory({ wallet, cutoff, maxPages, source, fetchWithBudget }) {
+    const result = {
+      wallet,
+      rawTradeCount: 0,
+      normalizedTradeCount: 0,
+      insertedTradeCount: 0,
+      distinctMarketCount: 0,
+      distinctEventCount: 0,
+      medianEntryCents: null,
+      errors: [],
+    };
+    const markets = new Set();
+    const events = new Set();
+    const entries = [];
+    let reachedCutoff = false;
+    try {
+      for (let page = 0; page < Math.max(1, maxPages) && !reachedCutoff; page += 1) {
+        const offset = page * Math.max(1, maintenancePageLimit);
+        const { skipped, trades: rawTrades } = await fetchWithBudget({
+          user: wallet,
+          limit: Math.max(1, maintenancePageLimit),
+          offset,
+          side: 'BUY',
+          filterType: 'CASH',
+          filterAmount: CANDIDATE_MIN_USD,
+        });
+        if (skipped || !rawTrades.length) break;
+        result.rawTradeCount += rawTrades.length;
+        for (const raw of rawTrades.slice().reverse()) {
+          const rawTimestamp = toUnixSeconds(raw.timestamp ?? raw.createdAt ?? raw.ts);
+          if (rawTimestamp && rawTimestamp * 1000 < cutoff.getTime()) {
+            reachedCutoff = true;
+            continue;
+          }
+          const trade = normalizeCandidateTrade(raw, { source });
+          if (!isDiscoveryCopyableTrade(trade)) continue;
+          result.normalizedTradeCount += 1;
+          const upsert = await storage.upsertDiscoveryTrade?.(trade);
+          if (upsert?.insertedTrade) result.insertedTradeCount += 1;
+          const marketKey = discoveryMarketKey(trade);
+          if (marketKey) markets.add(marketKey);
+          if (trade.eventSlug || trade.conditionId || trade.marketSlug) events.add(trade.eventSlug || trade.conditionId || trade.marketSlug);
+          if (Number.isFinite(trade.priceCents)) entries.push(trade.priceCents);
+        }
+      }
+    } catch (error) {
+      result.errors.push({ wallet, phase: source, error: error.message });
+    }
+    result.distinctMarketCount = markets.size;
+    result.distinctEventCount = events.size;
+    result.medianEntryCents = median(entries);
+    return result;
+  }
+
   function maintenancePagesForLookback(lookbackHours) {
     const basePages = Math.max(1, maintenanceMaxPagesPerWallet);
     const baseLookback = Math.max(1, maintenanceLookbackHours);
@@ -1226,6 +1613,24 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       : null;
   }
 
+  function applyDiscoverySummary(summary = {}) {
+    if (!summary || typeof summary !== 'object') return;
+    state.service.candidates.discoveryLastRunAt = summary.finishedAt || summary.updatedAt || null;
+    state.service.candidates.discoveryLastStartedAt = summary.startedAt || state.service.candidates.discoveryLastStartedAt;
+    state.service.candidates.discoveryLastFinishedAt = summary.finishedAt || null;
+    state.service.candidates.discoveryNextRunAt = summary.nextRunAt || null;
+    state.service.candidates.discoveryLastRequestCount = Number(summary.requestCount || 0);
+    state.service.candidates.discoveryLastWalletsSeen = Number(summary.walletsSeen || 0);
+    state.service.candidates.discoveryLastWalletsHeld = Number(summary.walletsHeld || 0);
+    state.service.candidates.discoveryLastStage1Promoted = Number(summary.stage1Promoted || 0);
+    state.service.candidates.discoveryLastDeepPromoted = Number(summary.deepPromoted || 0);
+    state.service.candidates.discoveryLastScored = Number(summary.scored || 0);
+    state.service.candidates.discoveryLastRejected = Number(summary.rejected || 0);
+    state.service.candidates.discoveryLastError = Array.isArray(summary.errors) && summary.errors.length
+      ? summary.errors[0]?.error || null
+      : null;
+  }
+
   function applyMaintenanceScoringSummary(summary = {}) {
     if (!hasScoringSummary(summary)) return;
     state.service.candidates.maintenanceLastScoredWalletCount = Number(summary.scoredWalletCount || 0);
@@ -1241,6 +1646,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     runBackfill,
     runResolution,
     runMaintenance,
+    runDiscovery,
     runShadowPoll,
     runShadowObservation,
     runCopyPoolEvaluation,
@@ -1266,6 +1672,127 @@ function selectedShadowWalletsForMaintenance(state) {
     });
   }
   return selected;
+}
+
+function isDiscoveryCopyableTrade(trade) {
+  if (!trade || trade.side !== 'BUY') return false;
+  if (!Number.isFinite(trade.priceCents) || trade.priceCents > REAL_MAX_ENTRY_PRICE_CENTS) return false;
+  return Number.isFinite(trade.usdSize) && trade.usdSize >= CANDIDATE_MIN_USD && trade.usdSize < CANDIDATE_MAX_USD;
+}
+
+function buildDiscoverySignals(trades = []) {
+  const byWallet = new Map();
+  for (const trade of trades) {
+    const wallet = normalizeWallet(trade.wallet);
+    if (!wallet) continue;
+    if (!byWallet.has(wallet)) {
+      byWallet.set(wallet, {
+        wallet,
+        displayName: trade.displayName || null,
+        pseudonym: trade.pseudonym || null,
+        profileImage: trade.profileImage || null,
+        recentBuyCount: 0,
+        markets: new Set(),
+        events: new Set(),
+        entries: [],
+        usdSizes: [],
+        firstSeenMs: null,
+        lastSeenMs: null,
+      });
+    }
+    const signal = byWallet.get(wallet);
+    signal.recentBuyCount += 1;
+    if (!signal.displayName && trade.displayName) signal.displayName = trade.displayName;
+    if (!signal.pseudonym && trade.pseudonym) signal.pseudonym = trade.pseudonym;
+    if (!signal.profileImage && trade.profileImage) signal.profileImage = trade.profileImage;
+    const marketKey = discoveryMarketKey(trade);
+    if (marketKey) signal.markets.add(marketKey);
+    if (trade.eventSlug || trade.conditionId || trade.marketSlug) {
+      signal.events.add(trade.eventSlug || trade.conditionId || trade.marketSlug);
+    }
+    if (Number.isFinite(trade.priceCents)) signal.entries.push(trade.priceCents);
+    if (Number.isFinite(trade.usdSize)) signal.usdSizes.push(trade.usdSize);
+    const seenMs = timestampMs(trade.tradeTimestamp || trade.timestamp);
+    if (seenMs) {
+      signal.firstSeenMs = signal.firstSeenMs ? Math.min(signal.firstSeenMs, seenMs) : seenMs;
+      signal.lastSeenMs = signal.lastSeenMs ? Math.max(signal.lastSeenMs, seenMs) : seenMs;
+    }
+  }
+
+  return [...byWallet.values()]
+    .map((signal) => {
+      const medianEntryCents = median(signal.entries);
+      const maxTradeUsd = signal.usdSizes.length ? Math.max(...signal.usdSizes) : null;
+      const distinctMarketCount = signal.markets.size;
+      const distinctEventCount = signal.events.size;
+      const signalScore = discoverySignalScore({
+        recentBuyCount: signal.recentBuyCount,
+        distinctMarketCount,
+        distinctEventCount,
+        medianEntryCents,
+      });
+      return {
+        wallet: signal.wallet,
+        displayName: signal.displayName,
+        pseudonym: signal.pseudonym,
+        profileImage: signal.profileImage,
+        signalScore,
+        recentBuyCount: signal.recentBuyCount,
+        distinctMarketCount,
+        distinctEventCount,
+        medianEntryCents,
+        maxTradeUsd,
+        firstSeenAt: signal.firstSeenMs ? new Date(signal.firstSeenMs).toISOString() : null,
+        lastSeenAt: signal.lastSeenMs ? new Date(signal.lastSeenMs).toISOString() : null,
+        rawMetrics: {
+          recentBuyCount: signal.recentBuyCount,
+          distinctMarketCount,
+          distinctEventCount,
+          medianEntryCents,
+          maxTradeUsd,
+        },
+      };
+    })
+    .sort((a, b) => b.signalScore - a.signalScore);
+}
+
+function discoverySignalScore({ recentBuyCount, distinctMarketCount, distinctEventCount, medianEntryCents }) {
+  const activity = Math.min(40, Math.max(0, recentBuyCount) * 10);
+  const marketBreadth = Math.min(25, Math.max(0, distinctMarketCount) * 8);
+  const eventBreadth = Math.min(20, Math.max(0, distinctEventCount) * 10);
+  const entryBonus = Number.isFinite(medianEntryCents)
+    ? Math.max(0, Math.min(15, (REAL_MAX_ENTRY_PRICE_CENTS - medianEntryCents) / 5))
+    : 0;
+  return Math.round((activity + marketBreadth + eventBreadth + entryBonus) * 100) / 100;
+}
+
+function passesDiscoverySignal(signal) {
+  return (
+    Number(signal?.recentBuyCount || 0) >= 2
+    && Number(signal?.distinctMarketCount || 0) >= 2
+    && Number(signal?.distinctEventCount || 0) >= 1
+    && Number(signal?.medianEntryCents || 999) <= REAL_MAX_ENTRY_PRICE_CENTS
+  );
+}
+
+function passesDiscoveryStage1(result) {
+  return (
+    Number(result?.normalizedTradeCount || 0) >= 2
+    && Number(result?.distinctMarketCount || 0) >= 2
+    && Number(result?.medianEntryCents || 999) <= REAL_MAX_ENTRY_PRICE_CENTS
+  );
+}
+
+function discoveryMarketKey(trade) {
+  return trade?.conditionId || trade?.marketSlug || trade?.asset || null;
+}
+
+function median(values = []) {
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2) return sorted[middle];
+  return (sorted[middle - 1] + sorted[middle]) / 2;
 }
 
 function observeShadowTrade(state, trade, shadowSelections, source = 'shadow-maintenance') {
@@ -1346,6 +1873,12 @@ export function resolutionBatchSize(queueMetrics = {}) {
   const eligible = Number(queueMetrics?.eligibleOpenTradeCount || 0);
   const dynamic = eligible ? Math.ceil(eligible / 10) : CANDIDATE_RESOLUTION_BATCH_SIZE;
   return Math.min(1_000, Math.max(CANDIDATE_RESOLUTION_BATCH_SIZE, dynamic));
+}
+
+function boundedNumber(value, fallback, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(number)));
 }
 
 function toUnixSeconds(value) {

@@ -2280,6 +2280,8 @@ function CandidatesView({ service, copyPoolState }) {
   const [pinRequest, setPinRequest] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
   const [actionPendingWallet, setActionPendingWallet] = React.useState(null);
+  const [discoveryPending, setDiscoveryPending] = React.useState(false);
+  const [discoveryError, setDiscoveryError] = React.useState(null);
   const rows = leaderboard?.rows || [];
   const summary = leaderboard?.summary || {};
   const copyPool = leaderboard?.copyPool?.wallets ? leaderboard.copyPool : copyPoolState || {};
@@ -2360,6 +2362,24 @@ function CandidatesView({ service, copyPoolState }) {
     });
   }, [realState]);
 
+  const runDiscovery = React.useCallback(async () => {
+    setDiscoveryPending(true);
+    setDiscoveryError(null);
+    try {
+      const response = await fetch(`${API_BASE}/api/candidates/discovery/run`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Discovery run failed');
+      await refresh();
+    } catch (submitError) {
+      setDiscoveryError(submitError.message);
+    } finally {
+      setDiscoveryPending(false);
+    }
+  }, [refresh]);
+
   return (
     <section className="panel fullPanel candidatePanel">
       <div className="sectionHead">
@@ -2370,10 +2390,17 @@ function CandidatesView({ service, copyPoolState }) {
         <button className="iconButton" onClick={refresh} aria-label="Refresh candidates"><RefreshCcw size={16} /></button>
       </div>
 
+      <DiscoveryStatusPanel
+        service={service}
+        pending={discoveryPending}
+        error={discoveryError}
+        onRun={runDiscovery}
+      />
+
       {!enabled ? (
         <EmptyState
           title="Candidate tracker disabled"
-          text="Set CANDIDATE_TRACKER_ENABLED=true on Railway to start polling, backfilling, and resolving candidate trades."
+          text="The old global tracker is off. Low-cost discovery can still run from the panel above when CANDIDATE_DISCOVERY_ENABLED is enabled."
         />
       ) : error ? (
         <EmptyState title="Candidate leaderboard unavailable" text={error} />
@@ -2455,6 +2482,66 @@ function CandidatesView({ service, copyPoolState }) {
       )}
     </section>
   );
+}
+
+function DiscoveryStatusPanel({ service, pending, error, onRun }) {
+  const enabled = Boolean(service?.discoveryEnabled);
+  const status = service?.discoveryStatus || (enabled ? 'ready' : 'disabled');
+  const lastError = error || service?.discoveryLastError;
+  return (
+    <section className="discoveryPanel">
+      <div className="discoveryHead">
+        <div>
+          <p className="eyebrow">Low-cost discovery</p>
+          <h3>Daily bounded trader scan</h3>
+        </div>
+        <div className="sectionActions">
+          <span className={`statusBadge ${enabled ? 'positive' : 'neutral'}`}>
+            {enabled ? discoveryStatusLabel(status) : 'disabled'}
+          </span>
+          <button className="textButton" onClick={onRun} disabled={pending}>
+            <RefreshCcw size={14} /> {pending ? 'Running' : 'Run discovery'}
+          </button>
+        </div>
+      </div>
+      <div className="candidateSummary discoveryStats">
+        <div className="candidateStat">
+          <Cpu size={17} />
+          <span>Requests</span>
+          <strong>{service?.discoveryLastRequestCount || 0} / {service?.discoveryRequestBudget || 0}</strong>
+        </div>
+        <div className="candidateStat">
+          <Users size={17} />
+          <span>Seen / held</span>
+          <strong>{service?.discoveryLastWalletsSeen || 0} / {service?.discoveryLastWalletsHeld || 0}</strong>
+        </div>
+        <div className="candidateStat">
+          <Target size={17} />
+          <span>Stage 1 / deep</span>
+          <strong>{service?.discoveryLastStage1Promoted || 0} / {service?.discoveryLastDeepPromoted || 0}</strong>
+        </div>
+        <div className="candidateStat">
+          <CheckCircle2 size={17} />
+          <span>Scored / rejected</span>
+          <strong>{service?.discoveryLastScored || 0} / {service?.discoveryLastRejected || 0}</strong>
+        </div>
+      </div>
+      <div className="candidateToolbar discoveryToolbar">
+        <span className="muted">Last run {formatTimeAgo(service?.discoveryLastRunAt)} · next {formatTimeAgo(service?.discoveryNextRunAt)}</span>
+        <span className="muted">Global pages {service?.discoveryGlobalPages || 0} · stage cap {service?.discoveryMaxStage1Wallets || 0} · deep cap {service?.discoveryMaxDeepBackfills || 0}</span>
+        {lastError && <span className="negative">{lastError}</span>}
+      </div>
+    </section>
+  );
+}
+
+function discoveryStatusLabel(status) {
+  if (status === 'running') return 'running';
+  if (status === 'partial') return 'partial';
+  if (status === 'locked') return 'locked';
+  if (status === 'unavailable') return 'unavailable';
+  if (status === 'error') return 'error';
+  return 'ready';
 }
 
 function CopyPoolCards({ copyPool }) {

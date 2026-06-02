@@ -37,6 +37,9 @@ export async function createCandidateStorage() {
 
   return {
     upsertTrade: (trade) => upsertTrade(pool, trade),
+    upsertDiscoveryTrade: (trade) => upsertDiscoveryTrade(pool, trade),
+    saveDiscoverySignals: (signals) => saveDiscoverySignals(pool, signals),
+    markDiscoveryWallets: (wallets, status, options) => markDiscoveryWallets(pool, wallets, status, options),
     seedActiveCopyPoolBackfill: (baselineWallets, options) => seedActiveCopyPoolBackfill(pool, baselineWallets, options),
     getQueuedBackfillTraders: (limit) => getQueuedBackfillTraders(pool, limit),
     recoverStaleBackfills: (staleMs) => recoverStaleBackfills(pool, staleMs),
@@ -125,6 +128,30 @@ async function migrate(pool) {
     create index if not exists candidate_trades_resolution_due_idx on candidate_trades (status, next_resolution_check_at, trade_timestamp);
     create index if not exists candidate_trades_usd_ts_idx on candidate_trades (usd_size, trade_timestamp desc);
     create index if not exists candidate_traders_backfill_idx on candidate_traders (backfill_status, first_seen_at);
+
+    create table if not exists candidate_discovery_wallets (
+      wallet text primary key references candidate_traders(wallet) on delete cascade,
+      status text not null default 'held',
+      signal_score numeric not null default 0,
+      recent_buy_count integer not null default 0,
+      distinct_market_count integer not null default 0,
+      distinct_event_count integer not null default 0,
+      median_entry_cents numeric,
+      max_trade_usd numeric,
+      first_seen_at timestamptz,
+      last_seen_at timestamptz,
+      discovered_at timestamptz not null default now(),
+      last_discovered_at timestamptz not null default now(),
+      stage1_at timestamptz,
+      deep_at timestamptz,
+      scored_at timestamptz,
+      cooldown_until timestamptz,
+      reject_reason text,
+      raw_metrics jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists candidate_discovery_status_idx on candidate_discovery_wallets (status, cooldown_until, signal_score desc);
 
     create table if not exists candidate_market_resolutions (
       condition_id text primary key,
@@ -222,6 +249,14 @@ async function migrate(pool) {
 }
 
 async function upsertTrade(pool, trade) {
+  return upsertTradeWithInitialBackfillStatus(pool, trade, 'queued');
+}
+
+async function upsertDiscoveryTrade(pool, trade) {
+  return upsertTradeWithInitialBackfillStatus(pool, trade, 'hold');
+}
+
+async function upsertTradeWithInitialBackfillStatus(pool, trade, initialBackfillStatus) {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -233,7 +268,7 @@ async function upsertTrade(pool, trade) {
         insert into candidate_traders (
           wallet, display_name, pseudonym, profile_image, first_seen_at, last_seen_at, backfill_status, updated_at
         )
-        values ($1, $2, $3, $4, $5, $5, 'queued', now())
+        values ($1, $2, $3, $4, $5, $5, $6, now())
         on conflict (wallet)
         do update set
           display_name = coalesce(excluded.display_name, candidate_traders.display_name),
@@ -242,7 +277,7 @@ async function upsertTrade(pool, trade) {
           last_seen_at = greatest(coalesce(candidate_traders.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
           updated_at = now()
       `,
-      [trade.wallet, trade.displayName, trade.pseudonym, trade.profileImage, trade.tradeTimestamp]
+      [trade.wallet, trade.displayName, trade.pseudonym, trade.profileImage, trade.tradeTimestamp, initialBackfillStatus]
     );
 
     const insertResult = await client.query(
@@ -290,6 +325,138 @@ async function upsertTrade(pool, trade) {
   } finally {
     client.release();
   }
+}
+
+async function saveDiscoverySignals(pool, signals = []) {
+  const rows = Array.isArray(signals) ? signals : [];
+  if (!rows.length) return [];
+  const client = await pool.connect();
+  const saved = [];
+  try {
+    await client.query('begin');
+    for (const signal of rows) {
+      const wallet = normalizeWallet(signal.wallet);
+      if (!wallet) continue;
+      const firstSeenAt = isoOrNull(signal.firstSeenAt) || isoOrNull(signal.lastSeenAt) || new Date().toISOString();
+      const lastSeenAt = isoOrNull(signal.lastSeenAt) || firstSeenAt;
+      await client.query(
+        `
+          insert into candidate_traders (
+            wallet, display_name, pseudonym, profile_image, first_seen_at, last_seen_at, backfill_status, updated_at
+          )
+          values ($1, $2, $3, $4, $5, $6, 'hold', now())
+          on conflict (wallet)
+          do update set
+            display_name = coalesce(excluded.display_name, candidate_traders.display_name),
+            pseudonym = coalesce(excluded.pseudonym, candidate_traders.pseudonym),
+            profile_image = coalesce(excluded.profile_image, candidate_traders.profile_image),
+            last_seen_at = greatest(coalesce(candidate_traders.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
+            updated_at = now()
+        `,
+        [wallet, signal.displayName || null, signal.pseudonym || null, signal.profileImage || null, firstSeenAt, lastSeenAt]
+      );
+      const discoveryResult = await client.query(
+        `
+          insert into candidate_discovery_wallets (
+            wallet, status, signal_score, recent_buy_count, distinct_market_count, distinct_event_count,
+            median_entry_cents, max_trade_usd, first_seen_at, last_seen_at, last_discovered_at,
+            reject_reason, raw_metrics, updated_at
+          )
+          values (
+            $1, 'held', $2, $3, $4, $5,
+            $6, $7, $8, $9, now(),
+            null, $10::jsonb, now()
+          )
+          on conflict (wallet)
+          do update set
+            status = case
+              when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
+                then candidate_discovery_wallets.status
+              when candidate_discovery_wallets.status in ('deep_promoted', 'scored')
+                then candidate_discovery_wallets.status
+              else 'held'
+            end,
+            signal_score = excluded.signal_score,
+            recent_buy_count = excluded.recent_buy_count,
+            distinct_market_count = excluded.distinct_market_count,
+            distinct_event_count = excluded.distinct_event_count,
+            median_entry_cents = excluded.median_entry_cents,
+            max_trade_usd = excluded.max_trade_usd,
+            first_seen_at = coalesce(candidate_discovery_wallets.first_seen_at, excluded.first_seen_at),
+            last_seen_at = greatest(coalesce(candidate_discovery_wallets.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
+            last_discovered_at = now(),
+            reject_reason = case
+              when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
+                then candidate_discovery_wallets.reject_reason
+              else null
+            end,
+            raw_metrics = excluded.raw_metrics,
+            updated_at = now()
+          returning wallet, status
+        `,
+        [
+          wallet,
+          numberOrNull(signal.signalScore) ?? 0,
+          boundedInteger(signal.recentBuyCount, 0, 0, 1_000_000),
+          boundedInteger(signal.distinctMarketCount, 0, 0, 1_000_000),
+          boundedInteger(signal.distinctEventCount, 0, 0, 1_000_000),
+          numberOrNull(signal.medianEntryCents),
+          numberOrNull(signal.maxTradeUsd),
+          firstSeenAt,
+          lastSeenAt,
+          JSON.stringify(signal.rawMetrics || signal),
+        ]
+      );
+      if (discoveryResult.rows[0]?.status === 'held') saved.push(wallet);
+    }
+    await client.query('commit');
+    return saved;
+  } catch (error) {
+    await client.query('rollback').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function markDiscoveryWallets(pool, wallets = [], status = 'held', options = {}) {
+  const normalized = [...new Set((wallets || []).map(normalizeWallet).filter(Boolean))];
+  if (!normalized.length) return [];
+  const cooldownUntil = options.cooldownUntil ? isoOrNull(options.cooldownUntil) : null;
+  const rejectReason = options.rejectReason || null;
+  const result = await pool.query(
+    `
+      insert into candidate_discovery_wallets (
+        wallet, status, signal_score, last_discovered_at, stage1_at, deep_at, scored_at,
+        cooldown_until, reject_reason, raw_metrics, updated_at
+      )
+      select
+        wallet,
+        $2::text,
+        0,
+        now(),
+        case when $2::text = 'stage1_promoted' then now() else null end,
+        case when $2::text = 'deep_promoted' then now() else null end,
+        case when $2::text = 'scored' then now() else null end,
+        $3::timestamptz,
+        $4::text,
+        '{}'::jsonb,
+        now()
+      from unnest($1::text[]) as wallet
+      on conflict (wallet)
+      do update set
+        status = excluded.status,
+        stage1_at = case when excluded.status = 'stage1_promoted' then now() else candidate_discovery_wallets.stage1_at end,
+        deep_at = case when excluded.status = 'deep_promoted' then now() else candidate_discovery_wallets.deep_at end,
+        scored_at = case when excluded.status = 'scored' then now() else candidate_discovery_wallets.scored_at end,
+        cooldown_until = excluded.cooldown_until,
+        reject_reason = excluded.reject_reason,
+        updated_at = now()
+      returning wallet
+    `,
+    [normalized, String(status || 'held'), cooldownUntil, rejectReason]
+  );
+  return result.rows.map((row) => row.wallet);
 }
 
 export async function seedActiveCopyPoolBackfill(pool, baselineWallets = [], { historyDays = 30 } = {}) {

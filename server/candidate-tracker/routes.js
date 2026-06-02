@@ -82,6 +82,25 @@ export function createCandidateRoutes(candidateTracker) {
     }
   });
 
+  router.post('/discovery/run', async (request, response) => {
+    try {
+      if (!candidateTracker?.runDiscovery) {
+        response.status(503).json({ ok: false, error: 'Candidate discovery is unavailable' });
+        return;
+      }
+      const payload = await candidateTracker.runDiscovery({
+        force: optionalBoolean(request.query.force ?? request.body?.force, true),
+      });
+      if (!payload) {
+        response.status(503).json({ ok: false, error: 'Candidate discovery is disabled or already running' });
+        return;
+      }
+      response.status(payload?.ok === false ? 500 : 200).json(payload);
+    } catch (error) {
+      response.status(500).json({ ok: false, error: error.message });
+    }
+  });
+
   return router;
 }
 

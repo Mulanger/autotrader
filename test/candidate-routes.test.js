@@ -110,6 +110,26 @@ describe('candidate routes', () => {
     expect(payload.shadowObservedTradeCount).toBe(2);
   });
 
+  it('triggers a forced discovery run', async () => {
+    let params = null;
+    const base = await startApp({
+      getLeaderboard: async () => ({ ok: true, enabled: true, rows: [], summary: {} }),
+      getTrader: async () => null,
+      runDiscovery: async (input) => {
+        params = input;
+        return { ok: true, status: 'done', walletsSeen: 12, scored: 2 };
+      },
+    });
+
+    const response = await fetch(`${base}/api/candidates/discovery/run`, { method: 'POST' });
+    const payload = await response.json();
+
+    expect(response.ok).toBe(true);
+    expect(params).toEqual({ force: true });
+    expect(payload.walletsSeen).toBe(12);
+    expect(payload.scored).toBe(2);
+  });
+
   it('triggers shadow-only observation', async () => {
     let params = null;
     const base = await startApp({
