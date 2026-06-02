@@ -20,6 +20,7 @@ import {
   CANDIDATE_MAINTENANCE_INTERVAL_MS,
   CANDIDATE_MAINTENANCE_LOOKBACK_HOURS,
   CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET,
+  CANDIDATE_MAINTENANCE_OBSERVED_LIMIT,
   CANDIDATE_MAINTENANCE_PAGE_LIMIT,
   CANDIDATE_MAINTENANCE_REQUEST_BUDGET,
   CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES,
@@ -74,6 +75,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   const maintenanceTopLimit = boundedNumber(
     options.maintenanceTopLimit ?? CANDIDATE_MAINTENANCE_TOP_LIMIT,
     100,
+    0,
+    10_000
+  );
+  const maintenanceObservedLimit = boundedNumber(
+    options.maintenanceObservedLimit ?? CANDIDATE_MAINTENANCE_OBSERVED_LIMIT,
+    25,
     0,
     10_000
   );
@@ -196,6 +203,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceStatus: maintenanceEnabled ? 'starting' : 'disabled',
     maintenanceScope,
     maintenanceTopLimit,
+    maintenanceObservedLimit,
     maintenanceRequestBudget,
     maintenanceIntervalMs,
     maintenanceScoringIntervalMs,
@@ -1189,6 +1197,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
           scope: maintenanceScope,
           baselineWallets: WATCHED_WALLETS,
           topLimit: maintenanceTopLimit,
+          observedLimit: maintenanceObservedLimit,
         })
       : [];
     const walletList = runFetch && Array.isArray(wallets) ? uniqueWallets([...wallets, ...shadowSelectedWallets]) : [];
@@ -1558,6 +1567,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         wallet,
         baselineWallets: WATCHED_WALLETS,
         topLimit: maintenanceTopLimit,
+        observedLimit: maintenanceObservedLimit,
       });
       realCopyQualityLeaderboardCache.clear();
       applyRealCopyQualitySummary(result?.summary, result?.summary?.total || result?.scored || 0);

@@ -775,21 +775,23 @@ export async function getMaintenanceWallets(pool, {
   baselineWallets = [],
   limit = 10_000,
   topLimit = 100,
+  observedLimit = 25,
 } = {}) {
   const normalizedScope = normalizeMaintenanceScope(scope);
   const normalizedBaseline = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
   const boundedLimit = boundedInteger(limit, 10_000, 1, 100_000);
   const boundedTopLimit = boundedInteger(topLimit, 100, 0, boundedLimit);
+  const boundedObservedLimit = boundedInteger(observedLimit, 25, 0, boundedLimit);
   if (normalizedScope === 'followed_plus_top') {
     const hasRealFollows = await tableExists(pool, 'real_followed_traders');
     const activeFollowSql = hasRealFollows
       ? `
-        select wallet
+        select wallet, 0::integer as priority, 0::bigint as priority_rank
         from real_followed_traders
         where status = 'active'
       `
       : `
-        select null::text as wallet
+        select null::text as wallet, 0::integer as priority, 0::bigint as priority_rank
         where false
       `;
     const result = await pool.query(
@@ -798,33 +800,56 @@ export async function getMaintenanceWallets(pool, {
           ${activeFollowSql}
         ),
         top_scores as (
-          select wallet
-          from real_copy_quality_scores
-          where eligible = true
-          order by
-            coalesce(nullif(payload->'score'->>'expectedCopyProfitUsd', '')::numeric, 0) desc,
-            score desc,
-            wallet asc
-          limit $2
+          select wallet, 3::integer as priority, row_number() over (
+            order by
+              coalesce(nullif(payload->'score'->>'expectedCopyProfitUsd', '')::numeric, 0) desc,
+              score desc,
+              wallet asc
+          ) as priority_rank
+          from (
+            select *
+            from real_copy_quality_scores
+            where eligible = true
+            order by
+              coalesce(nullif(payload->'score'->>'expectedCopyProfitUsd', '')::numeric, 0) desc,
+              score desc,
+              wallet asc
+            limit $2
+          ) scored
+        ),
+        observed_discovery as (
+          select wallet, 2::integer as priority, row_number() over (
+            order by signal_score desc, last_discovered_at desc, wallet asc
+          ) as priority_rank
+          from (
+            select wallet, signal_score, last_discovered_at
+            from candidate_discovery_wallets
+            where status = 'observe'
+            order by signal_score desc, last_discovered_at desc, wallet asc
+            limit $3
+          ) observed
         ),
         baseline as (
-          select lower(baseline_wallet.wallet)::text as wallet
+          select lower(baseline_wallet.wallet)::text as wallet, 1::integer as priority, 0::bigint as priority_rank
           from unnest($1::text[]) as baseline_wallet(wallet)
         ),
         scope_wallets as (
-          select wallet from active_follows
+          select wallet, priority, priority_rank from active_follows
           union
-          select wallet from top_scores
+          select wallet, priority, priority_rank from baseline
           union
-          select wallet from baseline
+          select wallet, priority, priority_rank from observed_discovery
+          union
+          select wallet, priority, priority_rank from top_scores
         )
-        select distinct lower(trim(wallet)) as wallet
+        select lower(trim(wallet)) as wallet
         from scope_wallets
         where wallet is not null and trim(wallet) <> ''
-        order by wallet asc
-        limit $3
+        group by lower(trim(wallet))
+        order by min(priority) asc, min(priority_rank) asc, wallet asc
+        limit $4
       `,
-      [normalizedBaseline, boundedTopLimit, boundedLimit]
+      [normalizedBaseline, boundedTopLimit, boundedObservedLimit, boundedLimit]
     );
     return result.rows.map((row) => row.wallet);
   }
@@ -1289,6 +1314,7 @@ async function recalculateRealCopyQuality(pool, {
   wallet = null,
   baselineWallets = [],
   topLimit = 100,
+  observedLimit = 25,
 } = {}) {
   const requestedScope = wallet ? 'wallet' : normalizeMaintenanceScope(scope);
   let metricScope = requestedScope;
@@ -1299,6 +1325,7 @@ async function recalculateRealCopyQuality(pool, {
       scope: requestedScope,
       baselineWallets,
       topLimit,
+      observedLimit,
     });
   }
   const rows = await getRealCopyQualityMetricRows(pool, {

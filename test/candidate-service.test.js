@@ -224,9 +224,10 @@ describe('candidate tracker service', () => {
       }),
       getServiceState: async () => null,
       saveServiceState: async (...args) => calls.serviceState.push(args),
-      getMaintenanceWallets: async ({ scope, baselineWallets }) => {
+      getMaintenanceWallets: async ({ scope, baselineWallets, observedLimit }) => {
         calls.scope = scope;
         calls.baselineCount = baselineWallets.length;
+        calls.observedLimit = observedLimit;
         return [
           '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
@@ -257,6 +258,7 @@ describe('candidate tracker service', () => {
       enabled: false,
       maintenanceEnabled: true,
       maintenanceRunOnStart: false,
+      maintenanceObservedLimit: 11,
       maintenancePageLimit: 3,
       maintenanceMaxPagesPerWallet: 2,
       maintenanceResolutionMaxTrades: 25,
@@ -284,6 +286,7 @@ describe('candidate tracker service', () => {
     expect(calls.locked).toBe(true);
     expect(calls.scope).toBe('followed_plus_top');
     expect(calls.baselineCount).toBeGreaterThan(0);
+    expect(calls.observedLimit).toBe(11);
     expect(calls.fetches).toHaveLength(2);
     expect(calls.fetches.every((call) => call.user)).toBe(true);
     expect(calls.fetches[0]).toMatchObject({
