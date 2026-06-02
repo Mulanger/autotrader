@@ -21,6 +21,7 @@ import {
   CANDIDATE_MAINTENANCE_LOOKBACK_HOURS,
   CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET,
   CANDIDATE_MAINTENANCE_PAGE_LIMIT,
+  CANDIDATE_MAINTENANCE_REQUEST_BUDGET,
   CANDIDATE_MAINTENANCE_RESOLUTION_MAX_TRADES,
   CANDIDATE_MAINTENANCE_SCORING_INTERVAL_MS,
   CANDIDATE_MAINTENANCE_SCOPE,
@@ -77,6 +78,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     10_000
   );
   const maintenancePageLimit = Number(options.maintenancePageLimit ?? CANDIDATE_MAINTENANCE_PAGE_LIMIT);
+  const maintenanceRequestBudget = boundedNumber(
+    options.maintenanceRequestBudget ?? CANDIDATE_MAINTENANCE_REQUEST_BUDGET,
+    250,
+    1,
+    10_000
+  );
   const maintenanceMaxPagesPerWallet = Number(
     options.maintenanceMaxPagesPerWallet ?? CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET
   );
@@ -189,6 +196,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceStatus: maintenanceEnabled ? 'starting' : 'disabled',
     maintenanceScope,
     maintenanceTopLimit,
+    maintenanceRequestBudget,
     maintenanceIntervalMs,
     maintenanceScoringIntervalMs,
     maintenanceLookbackHours,
@@ -199,6 +207,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceLastScoringAt: null,
     maintenanceLastWalletCount: 0,
     maintenanceLastRequestCount: 0,
+    maintenanceLastRequestBudgetExhausted: false,
     maintenanceLastInsertedTradeCount: 0,
     maintenanceLastResolvedTradeCount: 0,
     maintenanceLastScoredWalletCount: 0,
@@ -1221,6 +1230,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       startedAt,
       finishedAt,
       walletCount: walletList.length,
+      requestBudget: runFetch ? maintenanceRequestBudget : null,
+      requestBudgetExhausted: Boolean(fetchResult.budgetExhausted),
       requestCount: fetchResult.requestCount,
       rawTradeCount: fetchResult.rawTradeCount,
       normalizedTradeCount: fetchResult.normalizedTradeCount,
@@ -1330,9 +1341,17 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   async function fetchMaintenanceTradesForWallets({ walletList, cutoff, maxPagesForRun, shadowSelections }) {
     const result = emptyMaintenanceFetchResult();
     for (const wallet of walletList) {
+      if (result.requestCount >= maintenanceRequestBudget) {
+        result.budgetExhausted = true;
+        break;
+      }
       try {
         let reachedCutoff = false;
-        for (let page = 0; page < maxPagesForRun && !reachedCutoff; page += 1) {
+        for (
+          let page = 0;
+          page < maxPagesForRun && !reachedCutoff && result.requestCount < maintenanceRequestBudget;
+          page += 1
+        ) {
           const offset = page * Math.max(1, maintenancePageLimit);
           result.requestCount += 1;
           const rawTrades = await fetchTrades({
@@ -1363,6 +1382,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
             }
           }
         }
+        if (result.requestCount >= maintenanceRequestBudget) result.budgetExhausted = true;
       } catch (error) {
         result.errors.push({ wallet, error: error.message });
       }
@@ -1637,6 +1657,8 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     state.service.candidates.maintenanceLastStartedAt = summary.startedAt || state.service.candidates.maintenanceLastStartedAt;
     state.service.candidates.maintenanceLastFinishedAt = summary.finishedAt || null;
     state.service.candidates.maintenanceLastWalletCount = Number(summary.walletCount || 0);
+    state.service.candidates.maintenanceRequestBudget = summary.requestBudget ?? state.service.candidates.maintenanceRequestBudget;
+    state.service.candidates.maintenanceLastRequestBudgetExhausted = Boolean(summary.requestBudgetExhausted);
     state.service.candidates.maintenanceLastRequestCount = Number(summary.requestCount || 0);
     state.service.candidates.maintenanceLastInsertedTradeCount = Number(summary.insertedTradeCount || 0);
     state.service.candidates.maintenanceLastResolvedTradeCount = Number(summary.resolvedTradeCount || 0);
@@ -1861,6 +1883,7 @@ function observeShadowTrade(state, trade, shadowSelections, source = 'shadow-mai
 function emptyMaintenanceFetchResult() {
   return {
     requestCount: 0,
+    budgetExhausted: false,
     rawTradeCount: 0,
     normalizedTradeCount: 0,
     insertedTradeCount: 0,

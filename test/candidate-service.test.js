@@ -312,6 +312,58 @@ describe('candidate tracker service', () => {
     expect(state.service.candidates.maintenanceLastScoredWalletCount).toBe(2);
   });
 
+  it('stops maintenance wallet fetches at the configured request budget', async () => {
+    const state = createAppState();
+    const calls = { fetches: [] };
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({
+        ok: true,
+        summary: { total: 0, scored: 0, eligible: 0 },
+        rows: [],
+      }),
+      getServiceState: async () => null,
+      saveServiceState: async () => {},
+      getMaintenanceWallets: async () => [
+        '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      ],
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertTrade: async () => ({ insertedTrade: true }),
+      getOpenTrades: async () => [],
+      evaluateCopyPool: async () => ({ changed: [], snapshot: {} }),
+      recalculateRealCopyQuality: async () => ({ ok: true, scored: 0, summary: { total: 0, scored: 0 } }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: true,
+      maintenanceRunOnStart: false,
+      maintenanceRequestBudget: 2,
+      maintenancePageLimit: 2,
+      maintenanceMaxPagesPerWallet: 4,
+      shadowPollingEnabled: false,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        return [
+          rawTrade(calls.fetches.length, { proxyWallet: params.user, timestamp: nowSeconds, size: 3_000, price: 0.5 }),
+        ];
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runMaintenance({ force: true });
+    await tracker.close();
+
+    expect(calls.fetches).toHaveLength(2);
+    expect(calls.fetches.every((call) => call.user && !call.side)).toBe(true);
+    expect(summary.requestBudget).toBe(2);
+    expect(summary.requestBudgetExhausted).toBe(true);
+    expect(summary.requestCount).toBe(2);
+    expect(state.service.candidates.maintenanceLastRequestBudgetExhausted).toBe(true);
+  });
+
   it('observes selected shadow wallets during maintenance fetches', async () => {
     const state = createAppState();
     const wallet = '0xcccccccccccccccccccccccccccccccccccccccc';
