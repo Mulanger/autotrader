@@ -282,7 +282,7 @@ describe('candidate tracker service', () => {
 
     expect(state.service.candidates.status).toBe('disabled');
     expect(calls.locked).toBe(true);
-    expect(calls.scope).toBe('active_scored');
+    expect(calls.scope).toBe('followed_plus_top');
     expect(calls.baselineCount).toBeGreaterThan(0);
     expect(calls.fetches).toHaveLength(2);
     expect(calls.fetches.every((call) => call.user)).toBe(true);
@@ -298,7 +298,7 @@ describe('candidate tracker service', () => {
     expect(calls.upserts[0].usdSize).toBe(1500);
     expect(calls.resolutionLimits).toEqual([25]);
     expect(calls.copyPoolRuns).toBe(0);
-    expect(calls.scoringScopes).toEqual(['active_scored']);
+    expect(calls.scoringScopes).toEqual(['followed_plus_top']);
     expect(calls.serviceState.map(([key]) => key)).toEqual([
       'maintenance:last_fetch',
       'maintenance:last_score',
@@ -624,6 +624,13 @@ describe('candidate tracker service', () => {
         calls.scoringWallets.push(wallet);
         return { ok: true, scored: 1, summary: { total: 1, scored: 1, eligible: 1 } };
       },
+      getRealCopyQualityScore: async (wallet) => ({
+        wallet,
+        eligible: true,
+        copyableResolvedMarkets30d: 24,
+        copyablePnlTradeCount30d: 24,
+        copyableWinCount30d: 16,
+      }),
     });
     const tracker = createCandidateTracker(state, () => {}, {
       enabled: false,
@@ -816,6 +823,163 @@ describe('candidate tracker service', () => {
     expect(summary.stage1Promoted).toBe(0);
     expect(summary.deepPromoted).toBe(0);
     expect(summary.scored).toBe(0);
+  });
+
+  it('only deep-backfills discovery wallets returned by storage after known-wallet dedup', async () => {
+    const state = createAppState();
+    const knownWallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const newWallet = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const calls = { fetches: [], marks: [], scoringWallets: [] };
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      getServiceState: async () => null,
+      saveServiceState: async () => {},
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertDiscoveryTrade: async () => ({ insertedTrade: true }),
+      saveDiscoverySignals: async () => [newWallet],
+      markDiscoveryWallets: async (wallets, status) => {
+        calls.marks.push({ wallets, status });
+        return wallets;
+      },
+      recalculateRealCopyQuality: async ({ wallet }) => {
+        calls.scoringWallets.push(wallet);
+        return { ok: true, scored: 1, summary: { total: 1, scored: 1, eligible: 1 } };
+      },
+      getRealCopyQualityScore: async (wallet) => ({
+        wallet,
+        eligible: true,
+        copyableResolvedMarkets30d: 24,
+        copyablePnlTradeCount30d: 24,
+        copyableWinCount30d: 16,
+      }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      discoveryEnabled: true,
+      discoveryRunOnStart: false,
+      discoveryGlobalPages: 1,
+      discoveryMaxStage1Wallets: 10,
+      discoveryMaxDeepBackfills: 10,
+      discoveryRequestBudget: 10,
+      maintenancePageLimit: 2,
+      shadowPollingEnabled: false,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        calls.fetches.push(params);
+        if (!params.user) {
+          return [
+            rawTrade(30, { proxyWallet: knownWallet, conditionId: 'known-1', eventSlug: 'event-a', timestamp: nowSeconds, price: 0.5 }),
+            rawTrade(31, { proxyWallet: knownWallet, conditionId: 'known-2', eventSlug: 'event-b', timestamp: nowSeconds, price: 0.55 }),
+            rawTrade(32, { proxyWallet: newWallet, conditionId: 'new-1', eventSlug: 'event-a', timestamp: nowSeconds, price: 0.5 }),
+            rawTrade(33, { proxyWallet: newWallet, conditionId: 'new-2', eventSlug: 'event-b', timestamp: nowSeconds, price: 0.55 }),
+          ];
+        }
+        if (params.user === newWallet) {
+          return params.offset === 0
+            ? [
+                rawTrade(34, { proxyWallet: newWallet, conditionId: 'new-3', eventSlug: 'event-a', timestamp: nowSeconds, price: 0.5 }),
+                rawTrade(35, { proxyWallet: newWallet, conditionId: 'new-4', eventSlug: 'event-b', timestamp: nowSeconds, price: 0.55 }),
+              ]
+            : [];
+        }
+        throw new Error(`known wallet should not be backfilled: ${JSON.stringify(params)}`);
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runDiscovery({ force: true });
+    await tracker.close();
+
+    expect(calls.fetches.some((call) => call.user === knownWallet)).toBe(false);
+    expect(calls.fetches.some((call) => call.user === newWallet)).toBe(true);
+    expect(calls.scoringWallets).toEqual([newWallet]);
+    expect(calls.marks.map((mark) => mark.status)).toEqual(['stage1_promoted', 'deep_promoted', 'scored']);
+    expect(summary).toMatchObject({
+      walletsSeen: 2,
+      walletsHeld: 1,
+      stage1Promoted: 1,
+      deepPromoted: 1,
+      scored: 1,
+    });
+  });
+
+  it('observes promising discovery wallets that are not scoreable yet', async () => {
+    const state = createAppState();
+    const wallet = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const calls = { marks: [] };
+    const storage = fakeStorage({
+      getRealCopyQualityLeaderboard: async () => ({ ok: true, summary: { total: 0, scored: 0, eligible: 0 }, rows: [] }),
+      getServiceState: async () => null,
+      saveServiceState: async () => {},
+      withMaintenanceLock: async (callback) => ({ acquired: true, result: await callback() }),
+      upsertDiscoveryTrade: async () => ({ insertedTrade: true }),
+      saveDiscoverySignals: async (signals) => signals.map((signal) => signal.wallet),
+      markDiscoveryWallets: async (wallets, status, options) => {
+        calls.marks.push({ wallets, status, options });
+        return wallets;
+      },
+      recalculateRealCopyQuality: async () => ({ ok: true, scored: 1, summary: { total: 1, scored: 1, eligible: 0 } }),
+      getRealCopyQualityScore: async () => ({
+        wallet,
+        eligible: false,
+        reason: 'too_few_copyable_markets, too_few_copyable_wins',
+        copyableResolvedMarkets30d: 5,
+        copyablePnlTradeCount30d: 5,
+        copyableWinCount30d: 2,
+      }),
+    });
+    const tracker = createCandidateTracker(state, () => {}, {
+      enabled: false,
+      maintenanceEnabled: false,
+      discoveryEnabled: true,
+      discoveryRunOnStart: false,
+      discoveryGlobalPages: 1,
+      discoveryMaxStage1Wallets: 1,
+      discoveryMaxDeepBackfills: 1,
+      discoveryRequestBudget: 10,
+      discoveryObserveIntervalMs: 60_000,
+      maintenancePageLimit: 2,
+      shadowPollingEnabled: false,
+      copyPoolEnabled: false,
+      storageFactory: async () => storage,
+      fetchDataApiTrades: async (params) => {
+        if (!params.user) {
+          return [
+            rawTrade(40, { proxyWallet: wallet, conditionId: 'thin-1', eventSlug: 'event-a', timestamp: nowSeconds, price: 0.5 }),
+            rawTrade(41, { proxyWallet: wallet, conditionId: 'thin-2', eventSlug: 'event-b', timestamp: nowSeconds, price: 0.55 }),
+          ];
+        }
+        if (params.user === wallet) {
+          return params.offset === 0
+            ? [
+                rawTrade(42, { proxyWallet: wallet, conditionId: 'thin-3', eventSlug: 'event-a', timestamp: nowSeconds, price: 0.5 }),
+                rawTrade(43, { proxyWallet: wallet, conditionId: 'thin-4', eventSlug: 'event-b', timestamp: nowSeconds, price: 0.55 }),
+              ]
+            : [];
+        }
+        throw new Error(`unexpected fetch ${JSON.stringify(params)}`);
+      },
+    });
+
+    await tracker.start();
+    const summary = await tracker.runDiscovery({ force: true });
+    await tracker.close();
+
+    expect(calls.marks.map((mark) => mark.status)).toEqual(['stage1_promoted', 'deep_promoted', 'observe']);
+    expect(calls.marks.at(-1).options).toEqual(expect.objectContaining({
+      rejectReason: 'Promising signal, waiting for more resolved markets',
+      cooldownUntil: expect.any(String),
+    }));
+    expect(summary).toMatchObject({
+      scored: 0,
+      observed: 1,
+      rejected: 0,
+    });
+    expect(state.service.candidates.discoveryLastObserved).toBe(1);
   });
 
   it('skips startup maintenance when the last successful run is still fresh', async () => {

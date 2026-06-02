@@ -337,6 +337,30 @@ async function saveDiscoverySignals(pool, signals = []) {
     for (const signal of rows) {
       const wallet = normalizeWallet(signal.wallet);
       if (!wallet) continue;
+      const knownResult = await client.query(
+        `
+          select
+            exists (
+              select 1
+              from real_copy_quality_scores
+              where wallet = $1
+            ) as already_scored,
+            exists (
+              select 1
+              from candidate_traders
+              where wallet = $1
+                and (
+                  backfilled_at is not null
+                  or backfilled_since is not null
+                  or backfill_status in ('done', 'partial', 'queued', 'running')
+                )
+            ) as already_backfilled
+        `,
+        [wallet]
+      );
+      const alreadyKnown = Boolean(
+        knownResult.rows[0]?.already_scored || knownResult.rows[0]?.already_backfilled
+      );
       const firstSeenAt = isoOrNull(signal.firstSeenAt) || isoOrNull(signal.lastSeenAt) || new Date().toISOString();
       const lastSeenAt = isoOrNull(signal.lastSeenAt) || firstSeenAt;
       await client.query(
@@ -363,16 +387,18 @@ async function saveDiscoverySignals(pool, signals = []) {
             reject_reason, raw_metrics, updated_at
           )
           values (
-            $1, 'held', $2, $3, $4, $5,
+            $1, $11::text, $2, $3, $4, $5,
             $6, $7, $8, $9, now(),
-            null, $10::jsonb, now()
+            $12::text, $10::jsonb, now()
           )
           on conflict (wallet)
           do update set
             status = case
-              when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
+              when excluded.status = 'known'
+                then 'known'
+              when candidate_discovery_wallets.status in ('known', 'scored')
                 then candidate_discovery_wallets.status
-              when candidate_discovery_wallets.status in ('deep_promoted', 'scored')
+              when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
                 then candidate_discovery_wallets.status
               else 'held'
             end,
@@ -385,7 +411,20 @@ async function saveDiscoverySignals(pool, signals = []) {
             first_seen_at = coalesce(candidate_discovery_wallets.first_seen_at, excluded.first_seen_at),
             last_seen_at = greatest(coalesce(candidate_discovery_wallets.last_seen_at, excluded.last_seen_at), excluded.last_seen_at),
             last_discovered_at = now(),
+            cooldown_until = case
+              when excluded.status = 'known'
+                then null
+              when candidate_discovery_wallets.status in ('known', 'scored')
+                then candidate_discovery_wallets.cooldown_until
+              when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
+                then candidate_discovery_wallets.cooldown_until
+              else null
+            end,
             reject_reason = case
+              when excluded.status = 'known'
+                then excluded.reject_reason
+              when candidate_discovery_wallets.status in ('known', 'scored')
+                then candidate_discovery_wallets.reject_reason
               when candidate_discovery_wallets.cooldown_until is not null and candidate_discovery_wallets.cooldown_until > now()
                 then candidate_discovery_wallets.reject_reason
               else null
@@ -405,6 +444,8 @@ async function saveDiscoverySignals(pool, signals = []) {
           firstSeenAt,
           lastSeenAt,
           JSON.stringify(signal.rawMetrics || signal),
+          alreadyKnown ? 'known' : 'held',
+          alreadyKnown ? 'Already scored or backfilled' : null,
         ]
       );
       if (discoveryResult.rows[0]?.status === 'held') saved.push(wallet);
@@ -733,10 +774,60 @@ export async function getMaintenanceWallets(pool, {
   scope = 'active_scored',
   baselineWallets = [],
   limit = 10_000,
+  topLimit = 100,
 } = {}) {
   const normalizedScope = normalizeMaintenanceScope(scope);
   const normalizedBaseline = [...new Set((baselineWallets || []).map(normalizeWallet).filter(Boolean))];
   const boundedLimit = boundedInteger(limit, 10_000, 1, 100_000);
+  const boundedTopLimit = boundedInteger(topLimit, 100, 0, boundedLimit);
+  if (normalizedScope === 'followed_plus_top') {
+    const hasRealFollows = await tableExists(pool, 'real_followed_traders');
+    const activeFollowSql = hasRealFollows
+      ? `
+        select wallet
+        from real_followed_traders
+        where status = 'active'
+      `
+      : `
+        select null::text as wallet
+        where false
+      `;
+    const result = await pool.query(
+      `
+        with active_follows as (
+          ${activeFollowSql}
+        ),
+        top_scores as (
+          select wallet
+          from real_copy_quality_scores
+          where eligible = true
+          order by
+            coalesce(nullif(payload->'score'->>'expectedCopyProfitUsd', '')::numeric, 0) desc,
+            score desc,
+            wallet asc
+          limit $2
+        ),
+        baseline as (
+          select lower(baseline_wallet.wallet)::text as wallet
+          from unnest($1::text[]) as baseline_wallet(wallet)
+        ),
+        scope_wallets as (
+          select wallet from active_follows
+          union
+          select wallet from top_scores
+          union
+          select wallet from baseline
+        )
+        select distinct lower(trim(wallet)) as wallet
+        from scope_wallets
+        where wallet is not null and trim(wallet) <> ''
+        order by wallet asc
+        limit $3
+      `,
+      [normalizedBaseline, boundedTopLimit, boundedLimit]
+    );
+    return result.rows.map((row) => row.wallet);
+  }
   const result = await pool.query(
     `
       with scope_wallets as (
@@ -764,6 +855,13 @@ export async function getMaintenanceWallets(pool, {
     [normalizedScope, normalizedBaseline, boundedLimit]
   );
   return result.rows.map((row) => row.wallet);
+}
+
+async function tableExists(pool, tableName) {
+  const safeTableName = String(tableName || '').replace(/[^a-zA-Z0-9_]/g, '');
+  if (!safeTableName) return false;
+  const result = await pool.query('select to_regclass($1) as table_name', [`public.${safeTableName}`]);
+  return Boolean(result.rows[0]?.table_name);
 }
 
 async function withMaintenanceLock(pool, callback) {
@@ -1190,9 +1288,24 @@ async function recalculateRealCopyQuality(pool, {
   scope = 'all_candidates',
   wallet = null,
   baselineWallets = [],
+  topLimit = 100,
 } = {}) {
-  const normalizedScope = wallet ? 'wallet' : normalizeMaintenanceScope(scope);
-  const rows = await getRealCopyQualityMetricRows(pool, { scope: normalizedScope, wallet, baselineWallets });
+  const requestedScope = wallet ? 'wallet' : normalizeMaintenanceScope(scope);
+  let metricScope = requestedScope;
+  let metricBaselineWallets = baselineWallets;
+  if (requestedScope === 'followed_plus_top') {
+    metricScope = 'wallet_list';
+    metricBaselineWallets = await getMaintenanceWallets(pool, {
+      scope: requestedScope,
+      baselineWallets,
+      topLimit,
+    });
+  }
+  const rows = await getRealCopyQualityMetricRows(pool, {
+    scope: metricScope,
+    wallet,
+    baselineWallets: metricBaselineWallets,
+  });
   let scored = 0;
   for (const row of rows) {
     const score = scoreCopyTrader(row);
@@ -1202,7 +1315,7 @@ async function recalculateRealCopyQuality(pool, {
   const summary = await getRealCopyQualitySummary(pool);
   return {
     ok: true,
-    scope: wallet ? 'wallet' : normalizedScope,
+    scope: requestedScope,
     wallet: wallet ? normalizeWallet(wallet) : null,
     scored,
     summary,
@@ -2649,6 +2762,7 @@ function normalizeMaintenanceScope(scope) {
   const text = String(scope || '').trim().toLowerCase();
   if (text === 'all_candidates') return 'all_candidates';
   if (text === 'active_copy_pool') return 'active_copy_pool';
+  if (text === 'followed_plus_top') return 'followed_plus_top';
   return 'active_scored';
 }
 

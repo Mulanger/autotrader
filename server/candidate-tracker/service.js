@@ -14,6 +14,7 @@ import {
   CANDIDATE_DISCOVERY_INTERVAL_MS,
   CANDIDATE_DISCOVERY_MAX_DEEP_BACKFILLS,
   CANDIDATE_DISCOVERY_MAX_STAGE1_WALLETS,
+  CANDIDATE_DISCOVERY_OBSERVE_INTERVAL_MS,
   CANDIDATE_DISCOVERY_REQUEST_BUDGET,
   CANDIDATE_MAINTENANCE_ENABLED,
   CANDIDATE_MAINTENANCE_INTERVAL_MS,
@@ -24,6 +25,7 @@ import {
   CANDIDATE_MAINTENANCE_SCORING_INTERVAL_MS,
   CANDIDATE_MAINTENANCE_SCOPE,
   CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS,
+  CANDIDATE_MAINTENANCE_TOP_LIMIT,
   CANDIDATE_MAX_USD,
   CANDIDATE_MIN_USD,
   CANDIDATE_POLL_INTERVAL_MS,
@@ -68,6 +70,12 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     options.maintenanceStartupCatchupHours ?? CANDIDATE_MAINTENANCE_STARTUP_CATCHUP_HOURS
   );
   const maintenanceScope = normalizeMaintenanceScope(options.maintenanceScope ?? CANDIDATE_MAINTENANCE_SCOPE);
+  const maintenanceTopLimit = boundedNumber(
+    options.maintenanceTopLimit ?? CANDIDATE_MAINTENANCE_TOP_LIMIT,
+    100,
+    0,
+    10_000
+  );
   const maintenancePageLimit = Number(options.maintenancePageLimit ?? CANDIDATE_MAINTENANCE_PAGE_LIMIT);
   const maintenanceMaxPagesPerWallet = Number(
     options.maintenanceMaxPagesPerWallet ?? CANDIDATE_MAINTENANCE_MAX_PAGES_PER_WALLET
@@ -77,7 +85,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   );
   const maintenanceRunOnStart = options.maintenanceRunOnStart ?? true;
   const discoveryIntervalMs = Number(options.discoveryIntervalMs ?? CANDIDATE_DISCOVERY_INTERVAL_MS);
-  const discoveryGlobalPages = boundedNumber(options.discoveryGlobalPages ?? CANDIDATE_DISCOVERY_GLOBAL_PAGES, 2, 1, 25);
+  const discoveryGlobalPages = boundedNumber(options.discoveryGlobalPages ?? CANDIDATE_DISCOVERY_GLOBAL_PAGES, 10, 1, 25);
   const discoveryMaxStage1Wallets = boundedNumber(
     options.discoveryMaxStage1Wallets ?? CANDIDATE_DISCOVERY_MAX_STAGE1_WALLETS,
     25,
@@ -98,6 +106,9 @@ export function createCandidateTracker(state, broadcast, options = {}) {
   );
   const discoveryRunOnStart = options.discoveryRunOnStart ?? true;
   const discoveryCooldownMs = Number(options.discoveryCooldownMs ?? 7 * 24 * HOUR_MS);
+  const discoveryObserveIntervalMs = Number(
+    options.discoveryObserveIntervalMs ?? CANDIDATE_DISCOVERY_OBSERVE_INTERVAL_MS
+  );
   const shadowPollingEnabled = options.shadowPollingEnabled ?? SHADOW_POLLING_ENABLED;
   const shadowPollIntervalMs = Number(options.shadowPollIntervalMs ?? SHADOW_FOLLOW_POLL_INTERVAL_MS);
   const shadowPollLimit = Number(options.shadowPollLimit ?? SHADOW_FOLLOW_POLL_LIMIT);
@@ -177,6 +188,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     maintenanceEnabled,
     maintenanceStatus: maintenanceEnabled ? 'starting' : 'disabled',
     maintenanceScope,
+    maintenanceTopLimit,
     maintenanceIntervalMs,
     maintenanceScoringIntervalMs,
     maintenanceLookbackHours,
@@ -209,6 +221,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     discoveryLastStage1Promoted: 0,
     discoveryLastDeepPromoted: 0,
     discoveryLastScored: 0,
+    discoveryLastObserved: 0,
     discoveryLastRejected: 0,
     discoveryLastError: null,
     lastError: null,
@@ -1002,6 +1015,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     }
 
     const scoredWallets = [];
+    const observedWallets = [];
     for (const wallet of deepFetchedWallets) {
       const scoring = await runRealCopyQualityScoring({ wallet });
       if (scoring?.ok === false) {
@@ -1009,10 +1023,28 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         rejectedDeep.push(wallet);
         continue;
       }
-      scoredWallets.push(wallet);
+      const scoreRow = await storage.getRealCopyQualityScore?.(wallet).catch((error) => {
+        errors.push({ wallet, phase: 'score_lookup', error: error.message });
+        return null;
+      });
+      if (!scoreRow) {
+        rejectedDeep.push(wallet);
+      } else if (scoreRow.eligible) {
+        scoredWallets.push(wallet);
+      } else if (shouldObserveDiscoveryScore(scoreRow)) {
+        observedWallets.push(wallet);
+      } else {
+        rejectedDeep.push(wallet);
+      }
     }
 
     if (scoredWallets.length) await storage.markDiscoveryWallets?.(scoredWallets, 'scored');
+    if (observedWallets.length) {
+      await storage.markDiscoveryWallets?.(observedWallets, 'observe', {
+        rejectReason: 'Promising signal, waiting for more resolved markets',
+        cooldownUntil: new Date(Date.now() + discoveryObserveIntervalMs).toISOString(),
+      });
+    }
     if (rejectedDeep.length) {
       await storage.markDiscoveryWallets?.(rejectedDeep, 'rejected', {
         rejectReason: 'No deep copyable activity available for scoring',
@@ -1040,6 +1072,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       stage1Promoted: stage1Wallets.length,
       deepPromoted: deepWallets.length,
       scored: scoredWallets.length,
+      observed: observedWallets.length,
       rejected: rejectedStage1.length + rejectedDeep.length,
       errorCount: errors.length,
       errors: errors.slice(0, 10),
@@ -1146,6 +1179,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
       ? await storage.getMaintenanceWallets?.({
           scope: maintenanceScope,
           baselineWallets: WATCHED_WALLETS,
+          topLimit: maintenanceTopLimit,
         })
       : [];
     const walletList = runFetch && Array.isArray(wallets) ? uniqueWallets([...wallets, ...shadowSelectedWallets]) : [];
@@ -1503,6 +1537,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
         scope: wallet ? 'wallet' : scope,
         wallet,
         baselineWallets: WATCHED_WALLETS,
+        topLimit: maintenanceTopLimit,
       });
       realCopyQualityLeaderboardCache.clear();
       applyRealCopyQualitySummary(result?.summary, result?.summary?.total || result?.scored || 0);
@@ -1625,6 +1660,7 @@ export function createCandidateTracker(state, broadcast, options = {}) {
     state.service.candidates.discoveryLastStage1Promoted = Number(summary.stage1Promoted || 0);
     state.service.candidates.discoveryLastDeepPromoted = Number(summary.deepPromoted || 0);
     state.service.candidates.discoveryLastScored = Number(summary.scored || 0);
+    state.service.candidates.discoveryLastObserved = Number(summary.observed || 0);
     state.service.candidates.discoveryLastRejected = Number(summary.rejected || 0);
     state.service.candidates.discoveryLastError = Array.isArray(summary.errors) && summary.errors.length
       ? summary.errors[0]?.error || null
@@ -1672,6 +1708,23 @@ function selectedShadowWalletsForMaintenance(state) {
     });
   }
   return selected;
+}
+
+function shouldObserveDiscoveryScore(scoreRow = {}) {
+  if (scoreRow.eligible) return false;
+  const reason = String(scoreRow.reason || scoreRow.explanation || '').toLowerCase();
+  if (
+    reason.includes('too_few_copyable_markets') ||
+    reason.includes('too_few_copyable_wins') ||
+    reason.includes('too_few_resolved') ||
+    reason.includes('too_few_pnl')
+  ) {
+    return true;
+  }
+  const resolved = Number(scoreRow.copyableResolvedMarkets30d ?? scoreRow.distinctResolvedMarkets30d ?? 0);
+  const pnlTrades = Number(scoreRow.copyablePnlTradeCount30d ?? scoreRow.pnlTradeCount30d ?? 0);
+  const wins = Number(scoreRow.copyableWinCount30d ?? scoreRow.winCount30d ?? 0);
+  return resolved > 0 && (resolved < 20 || pnlTrades < 20 || wins < 12);
 }
 
 function isDiscoveryCopyableTrade(trade) {
@@ -1892,6 +1945,7 @@ function normalizeMaintenanceScope(scope) {
   const text = String(scope || '').trim().toLowerCase();
   if (text === 'all_candidates') return 'all_candidates';
   if (text === 'active_copy_pool') return 'active_copy_pool';
+  if (text === 'followed_plus_top') return 'followed_plus_top';
   return 'active_scored';
 }
 

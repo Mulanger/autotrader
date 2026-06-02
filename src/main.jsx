@@ -2522,8 +2522,8 @@ function DiscoveryStatusPanel({ service, pending, error, onRun }) {
         </div>
         <div className="candidateStat">
           <CheckCircle2 size={17} />
-          <span>Scored / rejected</span>
-          <strong>{service?.discoveryLastScored || 0} / {service?.discoveryLastRejected || 0}</strong>
+          <span>Scored / observe</span>
+          <strong>{service?.discoveryLastScored || 0} / {service?.discoveryLastObserved || 0}</strong>
         </div>
       </div>
       <div className="candidateToolbar discoveryToolbar">
