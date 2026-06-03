@@ -944,28 +944,28 @@ function RealScoredTradersView({ realState }) {
 
       <div className="candidateToolbar realQualityToolbar">
         <label>
-          <span>View</span>
+          <span>Pick list</span>
           <select value={scoreView} onChange={(event) => setScoreView(event.target.value)}>
             <option value="eligible">eligible picks</option>
-            <option value="top">strongest</option>
-            <option value="candidate">good candidates</option>
-            <option value="review">review list</option>
-            <option value="manual_review">manual review</option>
-            <option value="rejected">rejected</option>
+            <option value="top">core picks</option>
+            <option value="candidate">candidate picks</option>
+            <option value="review">near misses</option>
+            <option value="manual_review">manual check</option>
+            <option value="rejected">failed gates</option>
             <option value="all">all scored</option>
           </select>
         </label>
         <label>
-          <span>Sort</span>
+          <span>Rank by</span>
           <select value={sort} onChange={(event) => setSort(event.target.value)}>
-            <option value="expectedProfit">expected profit</option>
-            <option value="score">score</option>
+            <option value="expectedProfit">expected profit / trade</option>
+            <option value="score">overall score</option>
             <option value="edge">copy edge</option>
             <option value="fill">fill rate</option>
-            <option value="entry">entry</option>
-            <option value="profit">profit</option>
-            <option value="drawdown">drawdown</option>
-            <option value="updated">updated</option>
+            <option value="entry">lowest entry</option>
+            <option value="profit">historical profit</option>
+            <option value="drawdown">lowest drawdown risk</option>
+            <option value="updated">last scored</option>
           </select>
         </label>
         <input
@@ -3265,8 +3265,12 @@ function copyPoolBadge(entry) {
 
 function copyQualityTierLabel(tier) {
   const value = String(tier || 'ignore');
+  if (value === 'core') return 'core pick';
+  if (value === 'candidate') return 'candidate';
+  if (value === 'watchlist') return 'near miss';
   if (value === 'manual_review') return 'manual review';
-  return value;
+  if (value === 'ignore') return 'failed gates';
+  return value.replace(/_/g, ' ');
 }
 
 function copyQualityTierTone(tier) {
