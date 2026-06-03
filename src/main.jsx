@@ -949,7 +949,7 @@ function RealScoredTradersView({ realState }) {
             <option value="eligible">eligible picks</option>
             <option value="top">core picks</option>
             <option value="candidate">candidate picks</option>
-            <option value="review">near misses</option>
+            <option value="review">watchlist</option>
             <option value="manual_review">manual check</option>
             <option value="rejected">failed gates</option>
             <option value="all">all scored</option>
@@ -2492,7 +2492,7 @@ function DiscoveryStatusPanel({ service, pending, error, onRun }) {
     <section className="discoveryPanel">
       <div className="discoveryHead">
         <div>
-          <p className="eyebrow">Low-cost discovery</p>
+          <p className="eyebrow">Discovery growth</p>
           <h3>Daily bounded trader scan</h3>
         </div>
         <div className="sectionActions">
@@ -2512,7 +2512,7 @@ function DiscoveryStatusPanel({ service, pending, error, onRun }) {
         </div>
         <div className="candidateStat">
           <Users size={17} />
-          <span>Seen / held</span>
+          <span>Seen / held new</span>
           <strong>{service?.discoveryLastWalletsSeen || 0} / {service?.discoveryLastWalletsHeld || 0}</strong>
         </div>
         <div className="candidateStat">
@@ -2522,7 +2522,7 @@ function DiscoveryStatusPanel({ service, pending, error, onRun }) {
         </div>
         <div className="candidateStat">
           <CheckCircle2 size={17} />
-          <span>Scored / observe</span>
+          <span>Scored / watchlist</span>
           <strong>{service?.discoveryLastScored || 0} / {service?.discoveryLastObserved || 0}</strong>
         </div>
       </div>
@@ -3267,7 +3267,7 @@ function copyQualityTierLabel(tier) {
   const value = String(tier || 'ignore');
   if (value === 'core') return 'core pick';
   if (value === 'candidate') return 'candidate';
-  if (value === 'watchlist') return 'near miss';
+  if (value === 'watchlist') return 'watchlist';
   if (value === 'manual_review') return 'manual review';
   if (value === 'ignore') return 'failed gates';
   return value.replace(/_/g, ' ');
