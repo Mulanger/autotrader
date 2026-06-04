@@ -2022,7 +2022,7 @@ button {
 }
 
 .realFollowRow {
-  grid-template-columns: 34px minmax(180px, 1fr) repeat(5, minmax(86px, 0.35fr)) minmax(100px, auto);
+  grid-template-columns: 34px minmax(180px, 1fr) repeat(6, minmax(80px, 0.32fr)) minmax(100px, auto);
 }
 
 .realFollowList.compact .realFollowRow {
@@ -2125,6 +2125,43 @@ button {
 
 .realMiniStat strong {
   font-size: 0.92rem;
+}
+
+.traderSizingBadge {
+  width: fit-content;
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--soft);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  font-weight: 850;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.traderSizingBadge.inline {
+  max-width: 126px;
+}
+
+.traderSizingBadge.positive {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.traderSizingBadge.negative {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.traderSizingBadge.neutral {
+  background: var(--soft);
+  color: var(--muted);
 }
 
 .realOrderStatus {

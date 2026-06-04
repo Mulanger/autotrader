@@ -13,10 +13,10 @@ afterEach(async () => {
   server = null;
 });
 
-function startApp(realService, candidateTracker = null) {
+function startApp(realService, candidateTracker = null, options = {}) {
   const app = express();
   app.use(express.json());
-  app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService, candidateTracker));
+  app.use('/api/real', requireConfiguredDashboardAuth, createRealRoutes(realService, candidateTracker, options));
   return new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
       resolve(`http://127.0.0.1:${server.address().port}`);
@@ -190,6 +190,51 @@ describe('real routes', () => {
     expect(response.status).toBe(200);
     expect(getStateCalled).toBe(false);
     expect(payload.rows[0].realFollowStatus).toBe('active');
+  });
+
+  it('serves authenticated batch sizing lookups', async () => {
+    process.env.DASHBOARD_AUTH_TOKEN = 'secret-token';
+    const received = [];
+    const sizingService = {
+      getBatchSizing: async (items) => {
+        received.push(...items);
+        return {
+          ok: true,
+          items: items.map((item) => ({
+            id: item.id,
+            wallet: item.wallet,
+            status: 'ok',
+            label: 'normal',
+            multiple: 1,
+          })),
+        };
+      },
+    };
+    const base = await startApp(fakeService(), null, { sizingService });
+
+    const denied = await fetch(`${base}/api/real/sizing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [{ id: 'order-1' }] }),
+    });
+    const response = await fetch(`${base}/api/real/sizing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer secret-token' },
+      body: JSON.stringify({
+        items: [{
+          id: 'order-1',
+          wallet: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          conditionId: 'condition-1',
+          outcome: 'YES',
+        }],
+      }),
+    });
+    const payload = await response.json();
+
+    expect(denied.status).toBe(401);
+    expect(response.status).toBe(200);
+    expect(received).toHaveLength(1);
+    expect(payload.items[0]).toMatchObject({ id: 'order-1', status: 'ok', label: 'normal' });
   });
 
   it('exposes a PIN-gated bulk unfollow route', async () => {

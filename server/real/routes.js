@@ -1,8 +1,10 @@
 import express from 'express';
 import { assertPin } from './service.js';
+import { createTraderSizingService } from './sizing.js';
 
-export function createRealRoutes(realService, candidateTracker = null) {
+export function createRealRoutes(realService, candidateTracker = null, options = {}) {
   const router = express.Router();
+  const sizingService = options.sizingService || createTraderSizingService();
 
   router.get('/state', async (_request, response) => {
     try {
@@ -25,6 +27,16 @@ export function createRealRoutes(realService, candidateTracker = null) {
     try {
       const state = await realService.getState();
       response.json({ ok: true, positions: state.positions || [] });
+    } catch (error) {
+      response.status(statusCode(error)).json({ ok: false, error: error.message });
+    }
+  });
+
+  router.post('/sizing', async (request, response) => {
+    try {
+      const items = Array.isArray(request.body?.items) ? request.body.items : [];
+      const payload = await sizingService.getBatchSizing(items.slice(0, 50));
+      response.json(payload);
     } catch (error) {
       response.status(statusCode(error)).json({ ok: false, error: error.message });
     }

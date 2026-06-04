@@ -338,6 +338,7 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
   const realState = useRealState();
   const mobileLayout = useMobileLayoutQuery();
   const real = realState.real;
+  const sizing = useRealSizing(real?.orders || []);
 
   if (realState.error) {
     return (
@@ -358,11 +359,11 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
     return <section className="panel fullPanel"><EmptyState title="Loading real dashboard" text="Fetching real follow state." /></section>;
   }
 
-  let desktopView = <RealOverview real={real} />;
-  if (tab === 'following') desktopView = <RealFollowingView real={real} realState={realState} />;
+  let desktopView = <RealOverview real={real} sizing={sizing} />;
+  if (tab === 'following') desktopView = <RealFollowingView real={real} realState={realState} sizing={sizing} />;
   if (tab === 'real-traders') desktopView = <RealScoredTradersView realState={realState} />;
   if (tab === 'positions') desktopView = <RealPositionsView real={real} />;
-  if (tab === 'orders') desktopView = <RealOrdersView real={real} />;
+  if (tab === 'orders') desktopView = <RealOrdersView real={real} sizing={sizing} />;
 
   return (
     <div className={`realWorkspaceRoot realTab-${tab}`}>
@@ -373,13 +374,14 @@ function RealWorkspace({ data, tab, setTab, setMode }) {
         setTab={setTab}
         setMode={setMode}
         mobileLayout={mobileLayout}
+        sizing={sizing}
       />
       <div className="realDesktopWorkspace">{desktopView}</div>
     </div>
   );
 }
 
-function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayout }) {
+function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayout, sizing }) {
   const [orderFilter, setOrderFilter] = React.useState('all');
   const runtime = real.runtime || {};
   const service = real.service || {};
@@ -403,12 +405,13 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayo
         activeFollowCount={activeFollowCount}
         openPositionCount={openPositionCount}
         setTab={setTab}
+        sizing={sizing}
       />
     );
   } else if (mobileLayout && tab === 'following') {
     mobileMain = (
       <div className="realMobileInlinePanel">
-        <RealFollowingView real={real} realState={realState} />
+        <RealFollowingView real={real} realState={realState} sizing={sizing} />
       </div>
     );
   } else if (mobileLayout && tab === 'positions') {
@@ -492,7 +495,7 @@ function RealMobileDashboard({ real, realState, tab, setTab, setMode, mobileLayo
   );
 }
 
-function RealMobileOrderFeed({ real, filter, setFilter, activeFollowCount, openPositionCount, setTab }) {
+function RealMobileOrderFeed({ real, filter, setFilter, activeFollowCount, openPositionCount, setTab, sizing }) {
   const orders = real.orders || [];
   const live = isLiveRealMode(real);
   const filledOrders = orders.filter(isFilledRealOrder);
@@ -537,7 +540,13 @@ function RealMobileOrderFeed({ real, filter, setFilter, activeFollowCount, openP
 
       <div className="realMobileOrderStack">
         {filteredOrders.slice(0, 30).map((order) => (
-          <RealMobileOrderCard key={order.id} order={order} real={real} />
+          <RealMobileOrderCard
+            key={order.id}
+            order={order}
+            real={real}
+            sizingSignal={sizing?.signalsByOrderId?.[order.id]}
+            sizingLoading={Boolean(sizing?.loading && sizing?.requestedOrderIds?.[order.id])}
+          />
         ))}
         {!filteredOrders.length && (
           <EmptyState
@@ -569,7 +578,7 @@ function RealMobileOrderFeed({ real, filter, setFilter, activeFollowCount, openP
   );
 }
 
-function RealMobileOrderCard({ order, real }) {
+function RealMobileOrderCard({ order, real, sizingSignal, sizingLoading }) {
   const tone = mobileRealOrderTone(order);
   const live = order.dryRun === false || order.liveExecution || isLiveRealMode(real);
   const status = mobileRealOrderStatus(order, live);
@@ -589,6 +598,7 @@ function RealMobileOrderCard({ order, real }) {
         <div className="realMobileMini"><span>Stake</span><strong>{usd(stakeUsd)}</strong></div>
       </div>
       <div className="realMobileReason">{order.reason || order.reasonCode || (isFilledRealOrder(order) ? 'Order passed the configured guard checks.' : 'Order did not pass the configured guard checks.')}</div>
+      <TraderSizingBadge signal={sizingSignal} loading={sizingLoading} />
     </article>
   );
 }
@@ -620,7 +630,7 @@ function tabLabel(tab) {
   return tab;
 }
 
-function RealOverview({ real }) {
+function RealOverview({ real, sizing }) {
   const summary = real.summary || {};
   const live = isLiveRealMode(real);
   const activeFollows = (real.follows || []).filter((follow) => follow.status === 'active');
@@ -639,7 +649,7 @@ function RealOverview({ real }) {
             </div>
             <ListFilter size={18} />
           </div>
-          <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact live={live} dryRun={isRealDryRunMode(real)} />
+          <RealOrdersList orders={(real.orders || []).slice(0, 8)} compact live={live} dryRun={isRealDryRunMode(real)} sizing={sizing} />
         </section>
         <section className="panel realFollowPanel">
           <div className="sectionHead">
@@ -649,7 +659,7 @@ function RealOverview({ real }) {
             </div>
             <Users size={18} />
           </div>
-          <RealFollowList follows={activeFollows.slice(0, 6)} compact />
+          <RealFollowList follows={activeFollows.slice(0, 6)} compact sizing={sizing} />
         </section>
         <RealPositionsPreview real={real} positions={openPositions} />
       </div>
@@ -1233,7 +1243,7 @@ function RealScoredTraderRow({ row, onAdd, onRemove, pending, actionsLocked = fa
   );
 }
 
-function RealFollowingView({ real, realState }) {
+function RealFollowingView({ real, realState, sizing }) {
   const [pinRequest, setPinRequest] = React.useState(null);
   const [actionError, setActionError] = React.useState(null);
   const [pendingWallet, setPendingWallet] = React.useState(null);
@@ -1316,7 +1326,7 @@ function RealFollowingView({ real, realState }) {
         </div>
       </div>
       {actionError && <div className="candidateTradeMessage negative">{actionError}</div>}
-      <RealFollowList follows={real.follows || []} onRemove={requestRemove} pendingWallet={pendingWallet} />
+      <RealFollowList follows={real.follows || []} onRemove={requestRemove} pendingWallet={pendingWallet} sizing={sizing} />
       <PinPromptModal
         request={pinRequest}
         error={actionError}
@@ -1330,7 +1340,7 @@ function RealFollowingView({ real, realState }) {
   );
 }
 
-function RealFollowList({ follows, compact = false, onRemove, pendingWallet }) {
+function RealFollowList({ follows, compact = false, onRemove, pendingWallet, sizing }) {
   if (!follows.length) {
     return <EmptyState title="No real follows yet" text="Use Add on a candidate row to start tracking from that moment forward." />;
   }
@@ -1343,13 +1353,16 @@ function RealFollowList({ follows, compact = false, onRemove, pendingWallet }) {
           compact={compact}
           onRemove={onRemove}
           pending={pendingWallet === follow.wallet}
+          sizingSignal={sizing?.latestByWallet?.[String(follow.wallet || '').toLowerCase()]}
+          sizingLoading={Boolean(sizing?.loading && sizing?.latestOrderIdByWallet?.[String(follow.wallet || '').toLowerCase()])}
+          hasSizingTarget={Boolean(sizing?.latestOrderIdByWallet?.[String(follow.wallet || '').toLowerCase()])}
         />
       ))}
     </div>
   );
 }
 
-function RealFollowRow({ follow, compact, onRemove, pending }) {
+function RealFollowRow({ follow, compact, onRemove, pending, sizingSignal, sizingLoading, hasSizingTarget }) {
   const metrics = follow.metrics || {};
   const active = follow.status === 'active';
   const wallet = follow.wallet || '';
@@ -1362,6 +1375,10 @@ function RealFollowRow({ follow, compact, onRemove, pending }) {
     { label: 'Attempts', value: `${metrics.wouldFillCount || 0}/${metrics.attemptedCount || 0}` },
     { label: 'Avg slip', value: formatNullableCents(metrics.avgSlippageCents), tone: pnlTone(-Number(metrics.avgSlippageCents || 0)) },
     { label: 'Open', value: usd(metrics.openValueUsd || 0) },
+    {
+      label: 'Sizing',
+      value: <TraderSizingBadge signal={sizingSignal} loading={sizingLoading} emptyText={hasSizingTarget ? 'Sizing pending' : 'No sizing signal yet'} inline />,
+    },
   ];
 
   React.useEffect(() => {
@@ -1430,6 +1447,27 @@ function RealMiniStat({ label, value, tone }) {
   );
 }
 
+function TraderSizingBadge({ signal, loading = false, emptyText = 'Sizing unavailable', inline = false }) {
+  if (loading && !signal) {
+    return <span className={`traderSizingBadge neutral ${inline ? 'inline' : ''}`}>Sizing...</span>;
+  }
+  if (!signal) {
+    return <span className={`traderSizingBadge neutral ${inline ? 'inline' : ''}`}>{emptyText}</span>;
+  }
+
+  const ok = signal.status === 'ok' && Number.isFinite(Number(signal.multiple));
+  const text = ok
+    ? `${formatSizingMultiple(signal.multiple)} ${signal.label || 'sizing'}`
+    : signal.label || emptyText;
+  const title = sizingTitle(signal);
+  return (
+    <span className={`traderSizingBadge ${signal.tone || 'neutral'} ${inline ? 'inline' : ''}`} title={title}>
+      {text}
+      {signal.partial ? ' *' : ''}
+    </span>
+  );
+}
+
 function RecentForm({ results = [], className = '', label = 'Recent 10' }) {
   const form = (Array.isArray(results) ? results : [])
     .filter(isResolvedFormResult)
@@ -1486,7 +1524,7 @@ function RealPositionsView({ real }) {
   );
 }
 
-function RealOrdersView({ real }) {
+function RealOrdersView({ real, sizing }) {
   const live = isLiveRealMode(real);
   const dryRun = isRealDryRunMode(real);
   return (
@@ -1498,23 +1536,31 @@ function RealOrdersView({ real }) {
         </div>
         <ListFilter size={18} />
       </div>
-      <RealOrdersList orders={real.orders || []} live={live} dryRun={dryRun} />
+      <RealOrdersList orders={real.orders || []} live={live} dryRun={dryRun} sizing={sizing} />
     </section>
   );
 }
 
-function RealOrdersList({ orders, compact = false, live = false, dryRun = false }) {
+function RealOrdersList({ orders, compact = false, live = false, dryRun = false, sizing }) {
   if (!orders.length) {
     return <EmptyState title={live ? 'No live orders yet' : dryRun ? 'No dry-run orders yet' : 'No real orders yet'} text="The real follow poller will log filled/would-fill and rejected entries after a followed trader buys." />;
   }
   return (
     <div className={compact ? 'realOrderList compact' : 'realOrderList'}>
-      {orders.map((order) => <RealOrderRow key={order.id} order={order} compact={compact} />)}
+      {orders.map((order) => (
+        <RealOrderRow
+          key={order.id}
+          order={order}
+          compact={compact}
+          sizingSignal={sizing?.signalsByOrderId?.[order.id]}
+          sizingLoading={Boolean(sizing?.loading && sizing?.requestedOrderIds?.[order.id])}
+        />
+      ))}
     </div>
   );
 }
 
-function RealOrderRow({ order, compact }) {
+function RealOrderRow({ order, compact, sizingSignal, sizingLoading }) {
   const filled = isFilledRealOrder(order);
   const live = order.dryRun === false || order.liveExecution;
   return (
@@ -1531,6 +1577,7 @@ function RealOrderRow({ order, compact }) {
       </div>
       <div className="realOrderStatus">
         <span className={`statusBadge ${filled ? 'positive' : 'negative'}`}>{filled ? (live ? 'filled' : 'would fill') : 'rejected'}</span>
+        <TraderSizingBadge signal={sizingSignal} loading={sizingLoading} />
         <small title={order.reason}>{order.reason || order.reasonCode || 'ok'}</small>
       </div>
     </article>
@@ -2224,6 +2271,111 @@ function useRealState() {
   }, [refresh]);
 
   return { real, loading, error, refresh, setReal };
+}
+
+function useRealSizing(orders = []) {
+  const [state, setState] = React.useState({
+    signalsByOrderId: {},
+    loading: false,
+    error: null,
+  });
+  const signature = buildSizingSignature(orders);
+
+  React.useEffect(() => {
+    const items = buildSizingRequestItems(orders);
+    if (!items.length) {
+      setState({ signalsByOrderId: {}, loading: false, error: null });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    setState((current) => ({ ...current, loading: true, error: null }));
+
+    fetch(`${API_BASE}/api/real/sizing`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      signal: controller.signal,
+      body: JSON.stringify({ items }),
+    })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok || payload.ok === false) throw new Error(payload.error || 'Sizing lookup failed');
+        const next = {};
+        for (const item of payload.items || []) {
+          if (item?.id) next[item.id] = item;
+        }
+        setState({ signalsByOrderId: next, loading: false, error: null });
+      })
+      .catch((fetchError) => {
+        if (fetchError.name === 'AbortError') return;
+        setState((current) => ({ ...current, loading: false, error: fetchError.message }));
+      });
+
+    return () => controller.abort();
+  }, [signature]);
+
+  const requestedOrderIds = React.useMemo(() => {
+    const ids = {};
+    for (const item of buildSizingRequestItems(orders)) ids[item.id] = true;
+    return ids;
+  }, [signature]);
+
+  const latestOrderIdByWallet = React.useMemo(() => {
+    const latest = {};
+    for (const order of orders || []) {
+      const wallet = String(order?.traderWallet || '').toLowerCase();
+      if (!wallet || latest[wallet]) continue;
+      if (requestedOrderIds[order.id]) latest[wallet] = order.id;
+    }
+    return latest;
+  }, [orders, requestedOrderIds]);
+
+  const latestByWallet = React.useMemo(() => {
+    const latest = {};
+    for (const [wallet, orderId] of Object.entries(latestOrderIdByWallet)) {
+      if (state.signalsByOrderId[orderId]) latest[wallet] = state.signalsByOrderId[orderId];
+    }
+    return latest;
+  }, [latestOrderIdByWallet, state.signalsByOrderId]);
+
+  return {
+    ...state,
+    requestedOrderIds,
+    latestOrderIdByWallet,
+    latestByWallet,
+  };
+}
+
+function buildSizingRequestItems(orders = []) {
+  return (orders || [])
+    .slice(0, 40)
+    .map((order) => ({
+      id: order.id,
+      wallet: order.traderWallet,
+      asset: order.asset,
+      conditionId: order.conditionId,
+      marketSlug: order.marketSlug,
+      marketTitle: order.marketTitle,
+      outcome: order.outcome,
+      outcomeIndex: order.sourceTrade?.outcomeIndex,
+      sourcePriceCents: order.sourcePriceCents,
+    }))
+    .filter((item) => item.id && item.wallet && (item.conditionId || item.marketSlug || item.marketTitle || item.asset) && (item.outcome || item.outcomeIndex !== null && item.outcomeIndex !== undefined || item.asset));
+}
+
+function buildSizingSignature(orders = []) {
+  return buildSizingRequestItems(orders)
+    .map((item) => [
+      item.id,
+      item.wallet,
+      item.asset || '',
+      item.conditionId || '',
+      item.marketSlug || '',
+      item.outcome || '',
+      item.outcomeIndex ?? '',
+      item.sourcePriceCents ?? '',
+    ].join(':'))
+    .join('|');
 }
 
 function useRealCopyQuality({ tier = 'all', eligibleOnly = true, sort = 'expectedProfit', query = '' } = {}) {
@@ -3162,6 +3314,34 @@ function formatPlainProfitFactor(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return EMPTY_METRIC;
   return `${number.toFixed(number >= 10 ? 1 : 2)}x`;
+}
+
+function formatSizingMultiple(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return EMPTY_METRIC;
+  return `${number.toFixed(number >= 10 ? 0 : 1)}x`;
+}
+
+function sizingTitle(signal = {}) {
+  if (!signal) return 'No sizing signal yet';
+  const details = [];
+  if (signal.status !== 'ok') {
+    details.push(signal.reason || 'Sizing signal unavailable');
+  }
+  if (Number.isFinite(Number(signal.currentExposureUsd))) {
+    details.push(`Current exposure: ${usd(signal.currentExposureUsd)}`);
+  }
+  if (Number.isFinite(Number(signal.usualUnitUsd))) {
+    details.push(`Usual unit: ${usd(signal.usualUnitUsd)}`);
+  }
+  if (Number.isFinite(Number(signal.baselineMarketCount))) {
+    details.push(`Baseline markets: ${signal.baselineMarketCount}`);
+  }
+  if (Number.isFinite(Number(signal.historyTradeCount))) {
+    details.push(`Fetched trades: ${signal.historyTradeCount}`);
+  }
+  if (signal.partial) details.push('History may be partial');
+  return details.join(' | ') || 'Sizing signal unavailable';
 }
 
 function formatNullablePct(value) {
