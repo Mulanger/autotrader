@@ -15,6 +15,7 @@
     "preview": "vite preview --host 127.0.0.1",
     "start": "node server/index.js",
     "worker:real": "node server/real-worker.js",
+    "real:portfolio:sync": "node scripts/sync-real-portfolio.js",
     "test": "vitest run",
     "backtest:gates": "node scripts/backtest-copy-gates.js"
   },

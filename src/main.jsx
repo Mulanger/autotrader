@@ -41,6 +41,7 @@ const CANDIDATE_TRADE_PAGE_SIZE = 80;
 const DASHBOARD_TOKEN_KEY = 'AUTOTRADER_DASHBOARD_TOKEN';
 const EMPTY_METRIC = '\u2014';
 const REAL_COPY_QUALITY_CACHE_MS = 60_000;
+const REAL_SCORE_PAGE_ACTIONS_LOCKED = true;
 const realCopyQualitySessionCache = new Map();
 
 function dashboardAuthToken() {
@@ -823,6 +824,7 @@ function RealScoredTradersView({ realState }) {
   const topPickCount = Number(summary.core || 0) + Number(summary.candidate || 0);
 
   const requestRealAdd = React.useCallback((row) => {
+    if (REAL_SCORE_PAGE_ACTIONS_LOCKED) return;
     setActionError(null);
     setPinRequest({
       title: 'Add real follow',
@@ -857,6 +859,7 @@ function RealScoredTradersView({ realState }) {
   }, [quality, realState]);
 
   const requestRealRemove = React.useCallback((row) => {
+    if (REAL_SCORE_PAGE_ACTIONS_LOCKED) return;
     setActionError(null);
     setPinRequest({
       title: 'Remove real follow',
@@ -885,6 +888,7 @@ function RealScoredTradersView({ realState }) {
   }, [quality, realState]);
 
   const requestRecalculate = React.useCallback(() => {
+    if (REAL_SCORE_PAGE_ACTIONS_LOCKED) return;
     setActionError(null);
     setPinRequest({
       title: 'Recalculate copy quality',
@@ -922,7 +926,12 @@ function RealScoredTradersView({ realState }) {
           <button type="button" className="iconButton" onClick={() => setMetricsHelpOpen(true)} aria-label="Explain score metrics">
             <Info size={16} />
           </button>
-          <button className="textButton" onClick={requestRecalculate} disabled={pendingWallet === '__recalculate__'}>
+          <button
+            className={`textButton ${REAL_SCORE_PAGE_ACTIONS_LOCKED ? 'scoreActionLocked' : ''}`}
+            onClick={requestRecalculate}
+            disabled={REAL_SCORE_PAGE_ACTIONS_LOCKED || pendingWallet === '__recalculate__'}
+            title={REAL_SCORE_PAGE_ACTIONS_LOCKED ? 'Score actions are locked while the copy portfolio UI is being redesigned.' : undefined}
+          >
             <RefreshCcw size={14} /> {pendingWallet === '__recalculate__' ? 'Scoring' : 'Recalculate'}
           </button>
           <button type="button" className="iconButton" onClick={quality.refresh} aria-label="Refresh scored traders"><RefreshCcw size={16} /></button>
@@ -990,6 +999,7 @@ function RealScoredTradersView({ realState }) {
               onAdd={() => requestRealAdd(row)}
               onRemove={() => requestRealRemove(row)}
               pending={pendingWallet === row.wallet}
+              actionsLocked={REAL_SCORE_PAGE_ACTIONS_LOCKED}
             />
           ))}
           {!rows.length && (
@@ -1132,7 +1142,7 @@ function CopyQualityStat({ icon: Icon, label, value }) {
   );
 }
 
-function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
+function RealScoredTraderRow({ row, onAdd, onRemove, pending, actionsLocked = false }) {
   const display = row.displayName || row.pseudonym || shortWallet(row.wallet);
   const active = row.realFollowStatus === 'active';
   const copyableProfit = row.copyableProfitUsd30d ?? row.profitUsd30d;
@@ -1205,7 +1215,11 @@ function RealScoredTraderRow({ row, onAdd, onRemove, pending }) {
         {!(row.flags || []).length && <span>clean</span>}
       </div>
       <div className="candidateRealAction">
-        {active ? (
+        {actionsLocked ? (
+          <span className="statusBadge neutral realActionLocked" title="Score actions are locked while the copy portfolio UI is being redesigned.">
+            Locked
+          </span>
+        ) : active ? (
           <button className="textButton realRemoveButton" onClick={onRemove} disabled={pending}>
             <UserMinus size={14} /> {pending ? 'Removing' : 'Remove'}
           </button>
