@@ -160,13 +160,21 @@ export const REAL_DRY_RUN_STAKE_USD = Number(process.env.REAL_DRY_RUN_STAKE_USD 
 
 export const REAL_STAKE_USD = Number(process.env.REAL_STAKE_USD || process.env.REAL_DRY_RUN_STAKE_USD || 10);
 
+export const EMERGENCY_REAL_COPY_PAUSED = parseBoolean(process.env.EMERGENCY_REAL_COPY_PAUSED, true);
+
 export const REAL_TRADING_MODE = normalizeRealTradingMode(
-  process.env.REAL_TRADING_MODE || (parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false) ? 'live' : 'dry_run')
+  EMERGENCY_REAL_COPY_PAUSED
+    ? 'dry_run'
+    : process.env.REAL_TRADING_MODE || (parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false) ? 'live' : 'dry_run')
 );
 
-export const REAL_LIVE_TRADING_ENABLED = parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false);
+export const REAL_LIVE_TRADING_ENABLED = EMERGENCY_REAL_COPY_PAUSED
+  ? false
+  : parseBoolean(process.env.REAL_LIVE_TRADING_ENABLED, false);
 
-export const REAL_POLLING_ENABLED = parseBoolean(process.env.REAL_POLLING_ENABLED, true);
+export const REAL_POLLING_ENABLED = EMERGENCY_REAL_COPY_PAUSED
+  ? false
+  : parseBoolean(process.env.REAL_POLLING_ENABLED, true);
 
 export const REAL_PRICE_GUARD_CENTS = Number(process.env.REAL_PRICE_GUARD_CENTS || 4);
 
